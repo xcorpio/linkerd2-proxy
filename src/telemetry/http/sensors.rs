@@ -51,6 +51,14 @@ impl Sensors {
         }))
     }
 
+    #[cfg(test)]
+    pub fn for_test() -> Self {
+        Sensors(Some(Inner {
+            metrics: Record::for_test(),
+            taps: Default::default(),
+        }))
+    }
+
     pub fn null() -> Sensors {
         Sensors(None)
     }

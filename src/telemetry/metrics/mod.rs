@@ -19,7 +19,7 @@ pub use self::serve::Serve;
 use super::{http, process, tls_config_reload, transport};
 
 /// The root scope for all runtime metrics.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Report {
     http: http::Report,
     transports: transport::Report,

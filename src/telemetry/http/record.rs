@@ -15,6 +15,11 @@ impl Record {
         Self { metrics }
     }
 
+    #[cfg(test)]
+    pub fn for_test() -> Self {
+        Self { metrics: Registry::for_test() }
+    }
+
     /// Observe the given event.
     pub fn record_event(&mut self, event: &Event) {
         trace!("Root::record({:?})", event);
@@ -49,12 +54,11 @@ impl Record {
 
 #[cfg(test)]
 mod test {
-    use telemetry::{
-        event,
-        metrics::{self, labels},
-        Event,
-    };
+    use super::*;
+    use super::super::event;
+    use super::super::labels::{RequestLabels, ResponseLabels};
     use ctx::{self, test_util::*, transport::TlsStatus};
+    use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
     use conditional::Conditional;
     use tls;
@@ -63,14 +67,9 @@ mod test {
     const TLS_DISABLED: Conditional<(), tls::ReasonForNoTls> =
         Conditional::None(tls::ReasonForNoTls::Disabled);
 
-    fn new_record() -> super::Record {
-        let (r, _) = metrics::new(
-            Duration::from_secs(100),
-            Default::default(),
-            Default::default(),
-            Default::default()
-        );
-        r
+    fn new_record() -> (Record, Arc<Mutex<super::super::Inner>>) {
+        let inner = Arc::new(Mutex::new(super::super::Inner::default()));
+        (Record::new(Registry(inner.clone())), inner)
     }
 
     fn test_record_response_end_outbound(client_tls: TlsStatus, server_tls: TlsStatus) {
@@ -99,23 +98,17 @@ mod test {
             frames_sent: 0,
         };
 
-        let mut r = new_record();
+        let (mut r, i) = new_record();
         let ev = Event::StreamResponseEnd(rsp.clone(), end.clone());
-        let labels = labels::ResponseLabels::new(&rsp, None);
+        let labels = ResponseLabels::new(&rsp, None);
 
         assert_eq!(labels.tls_status(), client_tls);
 
-        assert!(r.metrics.lock()
-            .expect("lock")
-            .responses
-            .get(&labels)
-            .is_none()
-        );
+        assert!(i.lock().unwrap().responses.get(&labels).is_none());
 
         r.record_event(&ev);
         {
-            let lock = r.metrics.lock()
-                .expect("lock");
+            let lock = i.lock().unwrap();
             let scope = lock
                 .responses
                 .get(&labels)
@@ -127,12 +120,10 @@ mod test {
             scope.latency().assert_lt_exactly(200, 0);
             scope.latency().assert_gt_exactly(200, 0);
         }
-
     }
 
     fn test_record_one_conn_request_outbound(client_tls: TlsStatus, server_tls: TlsStatus) {
         use self::Event::*;
-        use self::labels::*;
 
         let proxy = ctx::Proxy::Outbound;
         let server = server(proxy, server_tls);
@@ -172,7 +163,7 @@ mod test {
             }),
        ];
 
-        let mut r = new_record();
+        let (mut r, i) = new_record();
 
         let req_labels = RequestLabels::new(&req);
         let rsp_labels = ResponseLabels::new(&rsp, None);
@@ -181,7 +172,7 @@ mod test {
         assert_eq!(client_tls, rsp_labels.tls_status());
 
         {
-            let lock = r.metrics.lock().expect("lock");
+            let lock = i.lock().unwrap();
             assert!(lock.requests.get(&req_labels).is_none());
             assert!(lock.responses.get(&rsp_labels).is_none());
         }
@@ -191,7 +182,7 @@ mod test {
         }
 
         {
-            let lock = r.metrics.lock().expect("lock");
+            let lock = i.lock().unwrap();
 
             // === request scope ====================================
             assert_eq!(

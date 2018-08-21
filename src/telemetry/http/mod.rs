@@ -40,10 +40,10 @@ pub fn new(metrics_retain_idle: Duration, taps: &Arc<Mutex<Taps>>) -> (Sensors, 
     (sensors, Report(inner))
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 struct Registry(Arc<Mutex<Inner>>);
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Report(Arc<Mutex<Inner>>);
 
 #[derive(Debug, Default)]
@@ -74,7 +74,19 @@ struct Stamped<T> {
     inner: T,
 }
 
+impl Inner {
+    fn retain_since(&mut self, epoch: Instant) {
+        self.requests.retain(|_, v| v.stamp >= epoch);
+        self.responses.retain(|_, v| v.stamp >= epoch);
+    }
+}
+
 impl Registry {
+
+    #[cfg(test)]
+    fn for_test() -> Self {
+        Registry(Arc::new(Mutex::new(Inner::default())))
+    }
 
     fn end_request(&mut self, labels: RequestLabels) {
         let mut inner = match self.0.lock() {
@@ -99,16 +111,15 @@ impl Registry {
 
 impl FmtMetrics for Report {
     fn fmt_metrics(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut inner = match self.0.lock() {
+        let now = Instant::now();
+        let inner = match self.0.lock() {
             Err(_) => return Ok(()),
-            Ok(lock) => lock,
+            Ok(mut inner) => {
+                let epoch = now - inner.retain_idle;
+                inner.retain_since(epoch);
+                inner
+            }
         };
-
-        let epoch = Instant::now() - inner.retain_idle;
-        inner.requests.retain(|_, v| v.stamp >= epoch);
-        inner.responses.retain(|_, v| v.stamp >= epoch);
-
-        let inner = inner;
 
         if !inner.requests.is_empty() {
             request_total.fmt_help(f)?;
@@ -192,6 +203,8 @@ impl<T> ::std::ops::Deref for Stamped<T> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
     use ctx;
     use ctx::test_util::*;
     use super::*;
@@ -202,15 +215,15 @@ mod tests {
         Conditional::None(tls::ReasonForNoTls::Disabled);
 
     fn mock_route(
-        registry: &mut http::Registry,
+        registry: &mut Registry,
         proxy: ctx::Proxy,
         server: &Arc<ctx::transport::Server>,
         team: &str
     ) {
         let client = client(proxy, indexmap!["team".into() => team.into(),], TLS_DISABLED);
         let (req, rsp) = request("http://nba.com", &server, &client);
-        registry.request(http::RequestLabels::new(&req)).end();
-        registry.response(http::ResponseLabels::new(&rsp, None)).end(Duration::from_millis(10));
+        registry.end_request(RequestLabels::new(&req));
+        registry.end_response(ResponseLabels::new(&rsp, None), Duration::from_millis(10));
    }
 
     #[test]
@@ -219,29 +232,31 @@ mod tests {
 
         let server = server(proxy, TLS_DISABLED);
 
-        let mut report = Report::default();
+        let inner = Arc::new(Mutex::new(Inner::default()));
+        let mut registry = Registry(inner.clone());
 
         let t0 = Instant::now();
 
-        mock_route(&mut report, proxy, &server, "warriors");
+        mock_route(&mut registry, proxy, &server, "warriors");
         let t1 = Instant::now();
 
-        mock_route(&mut report, proxy, &server, "sixers");
+        mock_route(&mut registry, proxy, &server, "sixers");
         let t2 = Instant::now();
 
-        assert_eq!(report.requests.len(), 2);
-        assert_eq!(report.responses.len(), 2);
+        let mut inner = inner.lock().unwrap();
+        assert_eq!(inner.requests.len(), 2);
+        assert_eq!(inner.responses.len(), 2);
 
-        report.retain_since(t0);
-        assert_eq!(report.requests.len(), 2);
-        assert_eq!(report.responses.len(), 2);
+        inner.retain_since(t0);
+        assert_eq!(inner.requests.len(), 2);
+        assert_eq!(inner.responses.len(), 2);
 
-        report.retain_since(t1);
-        assert_eq!(report.requests.len(), 1);
-        assert_eq!(report.responses.len(), 1);
+        inner.retain_since(t1);
+        assert_eq!(inner.requests.len(), 1);
+        assert_eq!(inner.responses.len(), 1);
 
-        report.retain_since(t2);
-        assert_eq!(report.requests.len(), 0);
-        assert_eq!(report.responses.len(), 0);
+        inner.retain_since(t2);
+        assert_eq!(inner.requests.len(), 0);
+        assert_eq!(inner.responses.len(), 0);
     }
 }
