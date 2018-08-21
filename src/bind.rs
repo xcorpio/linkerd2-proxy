@@ -12,7 +12,7 @@ use tower_reconnect::{Reconnect, Error as ReconnectError};
 use control;
 use control::destination::Endpoint;
 use ctx;
-use telemetry::{self, sensor};
+use telemetry;
 use transparency::{self, HttpBody, h1, orig_proto};
 use transport;
 use tls;
@@ -28,7 +28,7 @@ use watch_service::{WatchService, Rebind};
 /// Buffering is not bounded and no timeouts are applied.
 pub struct Bind<C, B> {
     ctx: C,
-    sensors: telemetry::Sensors,
+    sensors: telemetry::http::Sensors,
     transport_registry: telemetry::transport::Registry,
     tls_client_config: tls::ClientConfigWatch,
     _p: PhantomData<fn() -> B>,
@@ -143,11 +143,11 @@ pub type Stack<B> = WatchService<tls::ConditionalClientConfig, RebindTls<B>>;
 
 type StackInner<B> = Reconnect<orig_proto::Upgrade<NormalizeUri<NewHttp<B>>>>;
 
-pub type NewHttp<B> = sensor::NewHttp<Client<B>, B, HttpBody>;
+pub type NewHttp<B> = telemetry::http::service::NewHttp<Client<B>, B, HttpBody>;
 
-pub type HttpResponse = http::Response<sensor::http::ResponseBody<HttpBody>>;
+pub type HttpResponse = http::Response<telemetry::http::service::ResponseBody<HttpBody>>;
 
-pub type HttpRequest<B> = http::Request<sensor::http::RequestBody<B>>;
+pub type HttpRequest<B> = http::Request<telemetry::http::service::RequestBody<B>>;
 
 pub type Client<B> = transparency::Client<
     telemetry::transport::Connect<transport::Connect>,
@@ -183,22 +183,16 @@ impl Error for BufferSpawnError {
 
 impl<B> Bind<(), B> {
     pub fn new(
+        sensors: telemetry::http::Sensors,
         transport_registry: telemetry::transport::Registry,
         tls_client_config: tls::ClientConfigWatch
     ) -> Self {
         Self {
             ctx: (),
-            sensors: telemetry::Sensors::null(),
+            sensors,
             transport_registry,
             tls_client_config,
             _p: PhantomData,
-        }
-    }
-
-    pub fn with_sensors(self, sensors: telemetry::Sensors) -> Self {
-        Self {
-            sensors,
-            ..self
         }
     }
 

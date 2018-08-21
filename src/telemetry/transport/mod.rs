@@ -36,7 +36,7 @@ pub fn new() -> (Registry, Report) {
 }
 
 /// Implements `FmtMetrics` to render prometheus-formatted metrics for all transports.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Report(Arc<Mutex<Inner>>);
 
 /// Instruments transports to record telemetry.

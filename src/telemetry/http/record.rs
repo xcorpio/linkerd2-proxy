@@ -1,30 +1,18 @@
-use std::sync::{Arc, Mutex};
-
-use telemetry::event::Event;
-use super::Root;
-use super::labels::{
-    RequestLabels,
-    ResponseLabels,
-};
+use super::Registry;
+use super::event::Event;
+use super::labels::{RequestLabels, ResponseLabels};
 
 /// Tracks Prometheus metrics
 #[derive(Clone, Debug)]
 pub struct Record {
-    metrics: Arc<Mutex<Root>>,
+    metrics: Registry,
 }
 
 // ===== impl Record =====
 
 impl Record {
-    pub(super) fn new(metrics: &Arc<Mutex<Root>>) -> Self {
-        Self { metrics: metrics.clone() }
-    }
-
-    #[inline]
-    fn update<F: Fn(&mut Root)>(&mut self, f: F) {
-        let mut lock = self.metrics.lock()
-            .expect("metrics lock poisoned");
-        f(&mut *lock);
+    pub(super) fn new(metrics: Registry) -> Self {
+        Self { metrics }
     }
 
     /// Observe the given event.
@@ -35,34 +23,25 @@ impl Record {
             Event::StreamRequestOpen(_) => {},
 
             Event::StreamRequestFail(ref req, _) => {
-                self.update(|metrics| {
-                    metrics.request(RequestLabels::new(req)).end();
-                })
+                self.metrics.end_request(RequestLabels::new(req));
             },
 
             Event::StreamRequestEnd(ref req, _) => {
-                self.update(|metrics| {
-                    metrics.request(RequestLabels::new(req)).end();
-                })
+                self.metrics.end_request(RequestLabels::new(req));
             },
 
             Event::StreamResponseOpen(_, _) => {},
 
             Event::StreamResponseEnd(ref res, ref end) => {
                 let latency = end.response_first_frame_at - end.request_open_at;
-                self.update(|metrics| {
-                    metrics.response(ResponseLabels::new(res, end.grpc_status))
-                        .end(latency);
-                });
+                self.metrics.end_response(ResponseLabels::new(res, end.grpc_status), latency);
             },
 
             Event::StreamResponseFail(ref res, ref fail) => {
                 // TODO: do we care about the failure's error code here?
                 let first_frame_at = fail.response_first_frame_at.unwrap_or(fail.response_fail_at);
                 let latency = first_frame_at - fail.request_open_at;
-                self.update(|metrics| {
-                    metrics.response(ResponseLabels::fail(res)).end(latency)
-                });
+                self.metrics.end_response(ResponseLabels::fail(res), latency);
             },
         };
     }

@@ -286,8 +286,7 @@ where
 
         let (drain_tx, drain_rx) = drain::channel();
 
-        let bind = Bind::new(transport_registry.clone(), tls_client_config)
-            .with_sensors(sensors.clone());
+        let bind = Bind::new(sensors, transport_registry.clone(), tls_client_config);
 
         // Setup the public listener. This will listen on a publicly accessible
         // address and listen for inbound connections that should be forwarded
@@ -447,7 +446,7 @@ where
         // Install the request open timestamp module at the very top
         // of the stack, in order to take the timestamp as close as
         // possible to the beginning of the request's lifetime.
-        telemetry::sensor::http::TimestampRequestOpen::new(map_err)
+        telemetry::http::service::TimestampRequestOpen::new(map_err)
     }));
 
     let listen_addr = bound_port.local_addr();

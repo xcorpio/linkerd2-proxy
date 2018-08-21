@@ -11,19 +11,16 @@ use hyper::{
 use std::error::Error;
 use std::fmt;
 use std::io::{self, Write};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
 use tokio::executor::current_thread::TaskExecutor;
 
-use super::{prom::FmtMetrics, Root};
+use super::prom::FmtMetrics;
 use task;
 use transport::BoundPort;
 
 /// Serve Prometheues metrics.
 #[derive(Debug, Clone)]
-pub struct Serve {
-    metrics: Arc<Mutex<Root>>,
-    idle_retain: Duration,
+pub struct Serve<M: FmtMetrics> {
+    metrics: M,
 }
 
 #[derive(Debug)]
@@ -34,11 +31,10 @@ enum ServeError {
 
 // ===== impl Serve =====
 
-impl Serve {
-    pub(super) fn new(metrics: &Arc<Mutex<Root>>, idle_retain: Duration) -> Self {
-        Serve {
-            metrics: metrics.clone(),
-            idle_retain,
+impl<M: FmtMetrics> Serve<M> {
+    pub fn new(metrics: M) -> Self {
+        Self {
+            metrics,
         }
     }
 
@@ -51,7 +47,9 @@ impl Serve {
                     .unwrap_or(false)
             })
     }
+}
 
+impl<M: FmtMetrics + Clone + Send + 'static> Serve<M> {
     pub fn serve(self, bound_port: BoundPort) -> impl Future<Item = (), Error = ()> {
         use hyper;
 
@@ -85,7 +83,7 @@ impl Serve {
     }
 }
 
-impl Service for Serve {
+impl<M: FmtMetrics> Service for Serve<M> {
     type ReqBody = Body;
     type ResBody = Body;
     type Error = io::Error;
@@ -100,16 +98,10 @@ impl Service for Serve {
             return future::ok(rsp);
         }
 
-        let mut metrics = self.metrics.lock()
-            .expect("metrics lock poisoned");
-
-        metrics.retain_since(Instant::now() - self.idle_retain);
-        let metrics = metrics;
-
         let resp = if Self::is_gzip(&req) {
             trace!("gzipping metrics");
             let mut writer = GzEncoder::new(Vec::<u8>::new(), CompressionOptions::fast());
-            write!(&mut writer, "{}", (*metrics).as_display())
+            write!(&mut writer, "{}", self.metrics.as_display())
                 .and_then(|_| writer.finish())
                 .map_err(ServeError::from)
                 .and_then(|body| {
@@ -121,7 +113,7 @@ impl Service for Serve {
                 })
         } else {
             let mut writer = Vec::<u8>::new();
-            write!(&mut writer, "{}", (*metrics).as_display())
+            write!(&mut writer, "{}", self.metrics.as_display())
                 .map_err(ServeError::from)
                 .and_then(|_| {
                     Response::builder()

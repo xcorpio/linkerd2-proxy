@@ -40,7 +40,7 @@ pub fn new() -> (Sensor, Report) {
 pub struct Sensor(Arc<Mutex<Inner>>);
 
 /// Formats metrics for Prometheus for a corresonding `Sensor`.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Report(Weak<Mutex<Inner>>);
 
 #[derive(Debug, Default)]
