@@ -14,8 +14,8 @@ use telemetry::tap::Taps;
 pub mod event;
 mod labels;
 mod record;
-pub mod service;
 mod sensors;
+pub mod service;
 
 use self::labels::{RequestLabels, ResponseLabels};
 use self::record::Record;
