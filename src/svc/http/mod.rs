@@ -26,7 +26,7 @@ use watch_service::{WatchService, Rebind};
 /// # TODO
 ///
 /// Buffering is not bounded and no timeouts are applied.
-pub struct Bind<C, B> {
+pub struct NewEndpoint<C, B> {
     ctx: C,
     sensors: telemetry::Sensors,
     transport_registry: transport::metrics::Registry,

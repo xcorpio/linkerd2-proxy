@@ -74,7 +74,6 @@ use tower_fn::*;
 use linkerd2_proxy_router::{Recognize, Router, Error as RouteError};
 
 pub mod app;
-mod bind;
 pub mod config;
 pub mod conditional;
 pub mod control;
