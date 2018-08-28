@@ -16,10 +16,8 @@
 //! - As an outbound load balancer dispatches a request to an endpoint, or as
 //!   the inbound proxy fowards an inbound request, a client service models an
 //!   individual `SocketAddr`.
-//!
-//! ## TODO
-//!
-//! * Move HTTP-specific service infrastructure into `svc::http`.
+
+pub mod http;
 
 pub use tower_service::Service;
 

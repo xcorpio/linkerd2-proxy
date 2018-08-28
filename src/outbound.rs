@@ -14,10 +14,10 @@ use tower_h2;
 use tower_h2_balance::{PendingUntilFirstData, PendingUntilFirstDataBody};
 use linkerd2_proxy_router::Recognize;
 
-use bind::{self, Bind, Protocol};
 use control::destination::{self, Resolution};
-use svc::NewClient;
 use ctx;
+use svc::NewClient;
+use svc::http::{self, Bind, Protocol};
 use telemetry::http::service::{ResponseBody as SensorBody};
 use timeout::Timeout;
 use transparency::{h1, HttpBody};
@@ -251,7 +251,6 @@ impl fmt::Display for BindError {
                 write!(f, "binding internal service failed"),
         }
     }
-
 }
 
 impl error::Error for BindError {
