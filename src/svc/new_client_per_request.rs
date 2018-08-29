@@ -1,90 +1,91 @@
-use super::NewClient;
+use super::{MakeClient, NewClient, Service};
 
-#[derive(Debug)]
-pub struct NewClientPerRequest<N: NewClient>(Inner<N>);
+pub struct Make;
 
-#[derive(Debug)]
-pub enum Inner<N: NewClient> {
-    Reusable(N::Client),
-    Disposable {
-        // When `poll_ready` is called, the _next_ service to be used may be bound
-        // ahead-of-time. This stack is used only to serve the next request to this
-        // service.
-        next: Option<N::Client>,
-        target: N::Target,
-        new_client: N,
-    },
+/// A `NewClient` that builds a single-serving client for each request.
+#[derive(Clone, Debug)]
+pub struct NewClientPerRequest<N: NewClient>(N);
+
+/// A `Service` that optionally uses a
+///
+/// `ClientPerRequest` does not handle any underlying errors and it is expected that an
+/// instance will not be used after an error is returned.
+#[derive(Clone, Debug)]
+pub struct ClientPerRequest<N: NewClient> {
+    // When `poll_ready` is called, the _next_ service to be used may be bound
+    // ahead-of-time. This stack is used only to serve the next request to this
+    // service.
+    next: Option<N::Client>,
+    new_client: ValidNewClient<N>,
 }
 
-impl<N: NewClient> NewClientPerRequest {
-    pub fn reusable(svc: N::Client) -> Self {
-        NewClientPerRequest(Inner::Reusable(svc))
+/// A `NewClient` and target that infallibly build services.
+#[derive(Clone, Debug)]
+struct ValidNewClient<N: NewClient> {
+    new_client: N,
+    target: N::Target,
+}
+
+// ==== ValidNewClient ====
+
+impl<N: NewClient> ValidNewClient<N> {
+    fn mk(&mut self) -> N::Client {
+        self.new_client
+            .new_client(&self.target)
+            .expect("target must be valid")
     }
+}
 
-    pub fn disposable(mut new_client: N, target: N::Target) -> Result<Self, N::Error> {
-        let next = new_client.new_client(&target)?;
+// ==== NewClientPerRequest====
 
-        Ok(NewClientPerRequest(Inner::Disposable {
+impl<N: NewClient> MakeClient<N> for Make {
+    type NewClient = NewClientPerRequest<N>;
+
+    fn make_client(&self, next: N) -> Self::NewClient {
+        NewClientPerRequest(next)
+    }
+}
+
+impl<N: NewClient + Clone> NewClient for NewClientPerRequest<N> {
+    type Target = N::Target;
+    type Error = N::Error;
+    type Client = ClientPerRequest<N>;
+
+    pub fn new_client(&mut self, target: N::Target) -> Result<Self, N::Error> {
+        let next = self.0.new_client(&target)?;
+        let valid = ValidNewClient(self.0.clone(), target);
+        Ok(ClientPerRequest {
             next: Some(next),
-            new_client,
-            target,
-        }))
+            new_client: valid,
+        })
     }
 }
 
-impl<N: NewClient> tower::Service for NewClientPerRequest<N> {
+// ==== ClientPerRequest ====
+
+impl<N: NewClient> Service for ClientPerRequest<N> {
     type Request = <<N as NewClient>::Service as Service>::Request;
     type Response = <<N as NewClient>::Service as Service>::Response;
     type Error = <<N as NewClient>::Service as Service>::Error;
     type Future = <<N as NewClient>::Service as Service>::Future;
 
     fn poll_ready(&mut self) -> Poll<(), Self::Error> {
-        let ready = match self.0 {
-            // A service is already bound, so poll its readiness.
-            Inner::Reusable(ref mut svc) |
-            Inner::Displosable { next: Some(ref mut svc), .. } => {
-                trace!("poll_ready: reusing client");
-                svc.poll_ready()
-            }
-
-            // If no stack has been bound, bind it now so that its readiness can be
-            // checked. Store it so it can be consumed to dispatch the next request.
-            Inner::Displosable { ref mut next, ref mut new_client, ref target } => {
-                trace!("poll_ready: new disposable client");
-
-                let mut svc = new_client.new_client(&target)
-                    .expect("invalid target should be caught by constructor");
-
-                let ready = svc.poll_ready();
-                *next = Some(svc);
-                ready
-            }
-        };
-
-        if ready.is_err() {
-            if let Inner::Disposable { ref mut next, .. } = self.0 {
-                drop(next.take());
-            }
+        if let Some(ref mut svc) = self.next {
+            return svc.poll_ready();
         }
 
-        ready
+        trace!("poll_ready: new disposable client");
+        let mut svc = self.new_client.mk();
+        let ready = svc.poll_ready()?;
+        self.next = Some(svc);
+        Ok(ready)
     }
 
     fn call(&mut self, request: Self::Request) -> Self::Future {
-        match self.0 {
-            Inner::Reusable(ref mut svc) => svc.call(request),
-            Inner::Displosable { ref mut next } => {
-                // If a service has already been bound in `poll_ready`, consume it.
-                // Otherwise, bind a new service on-the-spot.
-                let bind = &self.bind;
-                let endpoint = &self.endpoint;
-                let protocol = &self.protocol;
-                let mut svc = next.take()
-                    .unwrap_or_else(|| {
-                        bind.bind_stack(endpoint, protocol)
-                    });
-                svc.call(request)
-            }
-        }
+        // If a service has already been bound in `poll_ready`, consume it.
+        // Otherwise, bind a new service on-the-spot.
+        self.next.take()
+            .unwrap_or_else(|| self.new_client.new_client())
+            .call(request)
     }
 }
