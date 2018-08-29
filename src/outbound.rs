@@ -17,16 +17,14 @@ use linkerd2_proxy_router::Recognize;
 use control::destination::{self, Resolution};
 use ctx;
 use svc::NewClient;
-use svc::http::{self, Bind, Protocol};
+use svc::http::{NewEndpoint, BindProtocol, Protocol};
 use telemetry::http::service::{ResponseBody as SensorBody};
 use timeout::Timeout;
 use transparency::{h1, HttpBody};
 use transport::{DnsNameAndPort, Host, HostAndPort};
 
-type BindProtocol<B> = bind::BindProtocol<ctx::Proxy, B>;
-
 pub struct Outbound<B> {
-    bind: Bind<ctx::Proxy, B>,
+    new_endpoint: NewEndpoint<B>,
     discovery: destination::Resolver,
     bind_timeout: Duration,
 }
@@ -49,7 +47,7 @@ pub enum Destination {
 // ===== impl Outbound =====
 
 impl<B> Outbound<B> {
-    pub fn new(bind: Bind<ctx::Proxy, B>,
+    pub fn new(new_endpoint: NewEndpoint<B>,
                discovery: destination::Resolver,
                bind_timeout: Duration)
                -> Outbound<B> {

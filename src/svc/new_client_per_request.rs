@@ -1,3 +1,5 @@
+use futures::Poll;
+
 use super::{MakeClient, NewClient, Service};
 
 pub struct Make;
@@ -53,7 +55,10 @@ impl<N: NewClient + Clone> NewClient for NewClientPerRequest<N> {
 
     pub fn new_client(&mut self, target: N::Target) -> Result<Self, N::Error> {
         let next = self.0.new_client(&target)?;
-        let valid = ValidNewClient(self.0.clone(), target);
+        let valid = ValidNewClient {
+            new_client: self.0.clone(),
+            target,
+        };
         Ok(ClientPerRequest {
             next: Some(next),
             new_client: valid,
@@ -64,10 +69,10 @@ impl<N: NewClient + Clone> NewClient for NewClientPerRequest<N> {
 // ==== ClientPerRequest ====
 
 impl<N: NewClient> Service for ClientPerRequest<N> {
-    type Request = <<N as NewClient>::Service as Service>::Request;
-    type Response = <<N as NewClient>::Service as Service>::Response;
-    type Error = <<N as NewClient>::Service as Service>::Error;
-    type Future = <<N as NewClient>::Service as Service>::Future;
+    type Request = <<N as NewClient>::Client as Service>::Request;
+    type Response = <<N as NewClient>::Client as Service>::Response;
+    type Error = <<N as NewClient>::Client as Service>::Error;
+    type Future = <<N as NewClient>::Client as Service>::Future;
 
     fn poll_ready(&mut self) -> Poll<(), Self::Error> {
         if let Some(ref mut svc) = self.next {

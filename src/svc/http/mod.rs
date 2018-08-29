@@ -1,9 +1,8 @@
 use std::error::Error;
 use std::fmt;
-use std::marker::PhantomData;
 use std::net::SocketAddr;
 
-use futures::{Async, Future, Poll, future, task};
+use futures::{Async, Future, Poll, task};
 use http::{self, uri};
 use tower_service as tower;
 use tower_h2;
@@ -21,12 +20,12 @@ mod new_endpoint;
 mod normalize_uri;
 pub mod orig_proto;
 
-pub use new_endpoint::NewEndpoint;
-pub use normalize_uri::NormalizeUri;
+pub use self::new_endpoint::NewEndpoint;
+pub use self::normalize_uri::NormalizeUri;
 
 /// Binds a `Service` from a `SocketAddr` for a pre-determined protocol.
-pub struct BindProtocol<C, B> {
-    bind: Bind<C, B>,
+pub struct BindProtocol<B> {
+    new_endpoint: NewEndpoint<B>,
     protocol: Protocol,
 }
 
@@ -43,7 +42,7 @@ where
     B: tower_h2::Body + Send + 'static,
     <B::Data as ::bytes::IntoBuf>::Buf: Send,
 {
-    bind: Bind<ctx::Proxy, B>,
+    new_endpoint: NewEndpoint<B>,
     binding: Binding<B>,
     /// Prevents logging repeated connect errors.
     ///

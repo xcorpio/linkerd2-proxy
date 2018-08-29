@@ -7,7 +7,7 @@ use std::{
 };
 
 use ctx;
-use control::destination;
+use endpoint;
 use transport::tls;
 use conditional::Conditional;
 
@@ -32,7 +32,7 @@ pub struct Server {
 pub struct Client {
     pub proxy: ctx::Proxy,
     pub remote: SocketAddr,
-    pub metadata: destination::Metadata,
+    pub metadata: endpoint::Metadata,
     pub tls_status: TlsStatus,
 }
 
@@ -126,7 +126,7 @@ impl Client {
     pub fn new(
         proxy: ctx::Proxy,
         remote: &SocketAddr,
-        metadata: destination::Metadata,
+        metadata: endpoint::Metadata,
         tls_status: TlsStatus,
     ) -> Arc<Client> {
         let c = Client {

@@ -24,7 +24,6 @@
 //! - We need some means to limit the number of endpoints that can be returned for a
 //!   single resolution so that `control::Cache` is not effectively unbounded.
 
-use indexmap::IndexMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Weak};
 use std::time::Duration;

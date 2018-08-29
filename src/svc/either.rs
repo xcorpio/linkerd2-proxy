@@ -1,6 +1,8 @@
+use futures::Poll;
+use futures::future::Either as EitherFuture;
 use tower_service::Service;
 
-use super::{NewClient, MakeClient};
+use super::NewClient;
 
 /// A client that may be one of two concrete types.
 pub enum Either<A, B> {

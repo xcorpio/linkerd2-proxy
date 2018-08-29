@@ -1,6 +1,5 @@
-use futures::future::Either as EitherFuture;
-
 use super::{NewClient, MakeClient};
+use super::either::Either;
 
 pub struct Make<M: MakeClient>(Option<M>);
 

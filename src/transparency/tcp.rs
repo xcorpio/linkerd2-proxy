@@ -8,11 +8,11 @@ use tokio_connect::Connect;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use conditional::Conditional;
-use control::destination;
 use ctx::transport::{
     Client as ClientCtx,
     Server as ServerCtx,
 };
+use endpoint;
 use timeout::Timeout;
 use transport::{self, tls};
 use ctx::transport::TlsStatus;
@@ -67,7 +67,7 @@ impl Proxy {
         let client_ctx = ClientCtx::new(
             srv_ctx.proxy,
             &orig_dst,
-            destination::Metadata::no_metadata(),
+            endpoint::Metadata::no_metadata(),
             TlsStatus::from(&tls),
         );
         let c = Timeout::new(
