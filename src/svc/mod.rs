@@ -18,6 +18,7 @@
 //!   individual `SocketAddr`.
 
 pub mod http;
+pub mod new_client_per_request;
 
 pub use tower_service::Service;
 

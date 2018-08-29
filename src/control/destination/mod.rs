@@ -45,11 +45,9 @@ use tls;
 use transport::{DnsNameAndPort, HostAndPort};
 
 pub mod background;
-mod endpoint;
 
-pub use self::endpoint::Endpoint;
 use config::Namespaces;
-use conditional::Conditional;
+use endpoint::{Endpoint, Metadata, ProtocolHint};
 
 /// A handle to request resolutions from the background discovery task.
 #[derive(Clone, Debug)]
@@ -88,29 +86,6 @@ pub struct Resolution<N> {
 
     /// Creates clients for each new endpoint in the resolution.
     new_endpoint: N,
-}
-
-/// Metadata describing an endpoint.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Metadata {
-    /// Arbitrary endpoint labels. Primarily used for telemetry.
-    labels: IndexMap<String, String>,
-
-    /// A hint from the controller about what protocol (HTTP1, HTTP2, etc) the
-    /// destination understands.
-    protocol_hint: ProtocolHint,
-
-    /// How to verify TLS for the endpoint.
-    tls_identity: Conditional<tls::Identity, tls::ReasonForNoIdentity>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ProtocolHint {
-    /// We don't what the destination understands, so forward messages in the
-    /// protocol we received them in.
-    Unknown,
-    /// The destination can receive HTTP2 messages.
-    Http2,
 }
 
 #[derive(Debug, Clone)]
@@ -229,45 +204,5 @@ where
 impl Responder {
     fn is_active(&self) -> bool {
         self.active.upgrade().is_some()
-    }
-}
-
-// ===== impl Metadata =====
-
-impl Metadata {
-    /// Construct a Metadata struct representing an endpoint with no metadata.
-    pub fn no_metadata() -> Self {
-        Self {
-            labels: IndexMap::default(),
-            protocol_hint: ProtocolHint::Unknown,
-            // If we have no metadata on an endpoint, assume it does not support TLS.
-            tls_identity:
-                Conditional::None(tls::ReasonForNoIdentity::NotProvidedByServiceDiscovery),
-        }
-    }
-
-    pub fn new(
-        labels: IndexMap<String, String>,
-        protocol_hint: ProtocolHint,
-        tls_identity: Conditional<tls::Identity, tls::ReasonForNoIdentity>
-    ) -> Self {
-        Self {
-            labels,
-            protocol_hint,
-            tls_identity,
-        }
-    }
-
-    /// Returns the endpoint's labels from the destination service, if it has them.
-    pub fn labels(&self) -> &IndexMap<String, String> {
-        &self.labels
-    }
-
-    pub fn protocol_hint(&self) -> ProtocolHint {
-        self.protocol_hint
-    }
-
-    pub fn tls_identity(&self) -> Conditional<&tls::Identity, tls::ReasonForNoIdentity> {
-        self.tls_identity.as_ref()
     }
 }

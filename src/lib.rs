@@ -81,6 +81,7 @@ pub mod convert;
 pub mod ctx;
 mod dns;
 mod drain;
+mod endpoint;
 pub mod fs_watch;
 mod inbound;
 mod logging;

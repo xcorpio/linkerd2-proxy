@@ -9,30 +9,20 @@ use tower_service as tower;
 use tower_h2;
 use tower_reconnect::{Reconnect, Error as ReconnectError};
 
-use control::destination::Endpoint;
 use ctx;
-use svc::NewClient;
+use endpoint::Endpoint;
 use telemetry;
-use transparency::{self, HttpBody, h1, orig_proto};
+use transparency::{self, HttpBody, h1};
 use transport;
 use tls;
-use ctx::transport::TlsStatus;
 use watch_service::{WatchService, Rebind};
 
-/// Binds a `Service` from a `SocketAddr`.
-///
-/// The returned `Service` buffers request until a connection is established.
-///
-/// # TODO
-///
-/// Buffering is not bounded and no timeouts are applied.
-pub struct NewEndpoint<C, B> {
-    ctx: C,
-    sensors: telemetry::Sensors,
-    transport_registry: transport::metrics::Registry,
-    tls_client_config: tls::ClientConfigWatch,
-    _p: PhantomData<fn() -> B>,
-}
+mod new_endpoint;
+mod normalize_uri;
+pub mod orig_proto;
+
+pub use new_endpoint::NewEndpoint;
+pub use normalize_uri::NormalizeUri;
 
 /// Binds a `Service` from a `SocketAddr` for a pre-determined protocol.
 pub struct BindProtocol<C, B> {
@@ -61,27 +51,6 @@ where
     debounce_connect_error_log: bool,
     endpoint: Endpoint,
     protocol: Protocol,
-}
-
-/// A type of service binding.
-///
-/// Some services, for various reasons, may not be able to be used to serve multiple
-/// requests. The `BindsPerRequest` binding ensures that a new stack is bound for each
-/// request.
-///
-/// `Bound` services may be used to process an arbitrary number of requests.
-pub enum Binding<B>
-where
-    B: tower_h2::Body + Send + 'static,
-    <B::Data as ::bytes::IntoBuf>::Buf: Send,
-{
-    Bound(WatchService<tls::ConditionalClientConfig, RebindTls<B>>),
-    BindsPerRequest {
-        // When `poll_ready` is called, the _next_ service to be used may be bound
-        // ahead-of-time. This stack is used only to serve the next request to this
-        // service.
-        next: Option<Stack<B>>
-    },
 }
 
 /// Protocol portion of the `Recognize` key for a request.
@@ -117,22 +86,8 @@ pub enum Host {
     NoAuthority,
 }
 
-/// Rewrites HTTP/1.x requests so that their URIs are in a canonical form.
-///
-/// The following transformations are applied:
-/// - If an absolute-form URI is received, it must replace
-///   the host header (in accordance with RFC7230#section-5.4)
-/// - If the request URI is not in absolute form, it is rewritten to contain
-///   the authority given in the `Host:` header, or, failing that, from the
-///   request's original destination according to `SO_ORIGINAL_DST`.
-#[derive(Copy, Clone, Debug)]
-pub struct NormalizeUri<S> {
-    inner: S,
-    was_absolute_form: bool,
-}
-
 pub struct RebindTls<B> {
-    bind: Bind<ctx::Proxy, B>,
+    bind: NewEndpoint<B>,
     protocol: Protocol,
     endpoint: Endpoint,
 }
@@ -181,272 +136,6 @@ impl Error for BufferSpawnError {
     fn cause(&self) -> Option<&Error> { None }
 }
 
-impl<B> Bind<(), B> {
-    pub fn new(
-        sensors: telemetry::Sensors,
-        transport_registry: transport::metrics::Registry,
-        tls_client_config: tls::ClientConfigWatch
-    ) -> Self {
-        Self {
-            ctx: (),
-            sensors,
-            transport_registry,
-            tls_client_config,
-            _p: PhantomData,
-        }
-    }
-
-    pub fn with_ctx<C>(self, ctx: C) -> Bind<C, B> {
-        Bind {
-            ctx,
-            sensors: self.sensors,
-            transport_registry: self.transport_registry,
-            tls_client_config: self.tls_client_config,
-            _p: PhantomData,
-        }
-    }
-}
-
-impl<C: Clone, B> Clone for Bind<C, B> {
-    fn clone(&self) -> Self {
-        Self {
-            ctx: self.ctx.clone(),
-            sensors: self.sensors.clone(),
-            transport_registry: self.transport_registry.clone(),
-            tls_client_config: self.tls_client_config.clone(),
-            _p: PhantomData,
-        }
-    }
-}
-
-impl<B> Bind<ctx::Proxy, B>
-where
-    B: tower_h2::Body + Send + 'static,
-    <B::Data as ::bytes::IntoBuf>::Buf: Send,
-{
-    /// Binds the "inner" layers of the stack.
-    ///
-    /// This binds a service stack that comprises the client for that individual
-    /// endpoint. It will have to be rebuilt if the TLS configuration changes.
-    ///
-    /// This includes:
-    /// + Reconnects
-    /// + URI normalization
-    /// + HTTP sensors
-    ///
-    /// When the TLS client configuration is invalidated, this function will
-    /// be called again to bind a new stack.
-    fn bind_inner_stack(
-        &self,
-        ep: &Endpoint,
-        protocol: &Protocol,
-        tls_client_config: &tls::ConditionalClientConfig,
-    )-> StackInner<B> {
-        debug!("bind_inner_stack endpoint={:?}, protocol={:?}", ep, protocol);
-        let addr = ep.address();
-
-        let tls = ep.tls_identity().and_then(|identity| {
-            tls_client_config.as_ref().map(|config| {
-                tls::ConnectionConfig {
-                    server_identity: identity.clone(),
-                    config: config.clone(),
-                }
-            })
-        });
-
-        let client_ctx = ctx::transport::Client::new(
-            self.ctx,
-            &addr,
-            ep.metadata().clone(),
-            TlsStatus::from(&tls),
-        );
-
-        // Map a socket address to a connection.
-        let connect = self.transport_registry
-            .new_connect(client_ctx.as_ref(), transport::Connect::new(addr, tls));
-
-
-        let log = ::logging::Client::proxy(self.ctx, addr)
-            .with_protocol(protocol.clone());
-        let client = transparency::Client::new(
-            protocol,
-            connect,
-            log.executor(),
-        );
-
-        let sensors = self.sensors.http(
-            client,
-            &client_ctx
-        );
-
-        // Rewrite the HTTP/1 URI, if the authorities in the Host header
-        // and request URI are not in agreement, or are not present.
-        let normalize_uri = NormalizeUri::new(sensors, protocol.was_absolute_form());
-        let upgrade_orig_proto = orig_proto::Upgrade::new(normalize_uri, protocol.is_http2());
-
-        // Automatically perform reconnects if the connection fails.
-        //
-        // TODO: Add some sort of backoff logic.
-        Reconnect::new(upgrade_orig_proto)
-    }
-
-    /// Binds the endpoint stack used to construct a bound service.
-    ///
-    /// This will wrap the service stack returned by `bind_inner_stack`
-    /// with a middleware layer that causes it to be re-constructed when
-    /// the TLS client configuration changes.
-    ///
-    /// This function will itself be called again by `BoundService` if the
-    /// service binds per request, or if the initial connection to the
-    /// endpoint fails.
-    fn bind_stack(&self, ep: &Endpoint, protocol: &Protocol) -> Stack<B> {
-        debug!("bind_stack: endpoint={:?}, protocol={:?}", ep, protocol);
-        // TODO: Since `BindsPerRequest` bindings are only used for a
-        // single request, it seems somewhat unnecessary to wrap them in a
-        // `WatchService` middleware so that they can be rebound when the TLS
-        // config changes, since they _always_ get rebound regardless. For now,
-        // we still add the `WatchService` layer so that the per-request and
-        // bound service stacks have the same type.
-        let rebind = RebindTls {
-            bind: self.clone(),
-            endpoint: ep.clone(),
-            protocol: protocol.clone(),
-        };
-        WatchService::new(self.tls_client_config.clone(), rebind)
-    }
-
-    pub fn bind_service(&self, ep: &Endpoint, protocol: &Protocol) -> BoundService<B> {
-        // If the endpoint is another instance of this proxy, AND the usage
-        // of HTTP/1.1 Upgrades are not needed, then bind to an HTTP2 service
-        // instead.
-        //
-        // The related `orig_proto` middleware will automatically translate
-        // if the protocol was originally HTTP/1.
-        let protocol = if ep.can_use_orig_proto() && !protocol.is_h1_upgrade() {
-            &Protocol::Http2
-        } else {
-            protocol
-        };
-
-        let binding = if protocol.can_reuse_clients() {
-            Binding::Bound(self.bind_stack(ep, protocol))
-        } else {
-            Binding::BindsPerRequest {
-                next: None
-            }
-        };
-
-        BoundService {
-            bind: self.clone(),
-            binding,
-            debounce_connect_error_log: false,
-            endpoint: ep.clone(),
-            protocol: protocol.clone(),
-        }
-    }
-}
-
-// ===== impl BindProtocol =====
-
-
-impl<C, B> Bind<C, B> {
-    pub fn with_protocol(self, protocol: Protocol)
-        -> BindProtocol<C, B>
-    {
-        BindProtocol {
-            bind: self,
-            protocol,
-        }
-    }
-}
-
-impl<B> NewClient for BindProtocol<ctx::Proxy, B>
-where
-    B: tower_h2::Body + Send + 'static,
-    <B::Data as ::bytes::IntoBuf>::Buf: Send,
-{
-    type Target = Endpoint;
-    type Error = ();
-    type Client = Service<B>;
-
-    fn new_client(&mut self, ep: &Endpoint) -> Result<Self::Client, ()> {
-        Ok(self.bind.bind_service(ep, &self.protocol))
-    }
-}
-
-
-// ===== impl NormalizeUri =====
-
-
-impl<S> NormalizeUri<S> {
-    fn new(inner: S, was_absolute_form: bool) -> Self {
-        Self { inner, was_absolute_form }
-    }
-}
-
-impl<S, B> tower::NewService for NormalizeUri<S>
-where
-    S: tower::NewService<
-        Request=http::Request<B>,
-        Response=HttpResponse,
-    >,
-    S::Service: tower::Service<
-        Request=http::Request<B>,
-        Response=HttpResponse,
-    >,
-    NormalizeUri<S::Service>: tower::Service,
-    B: tower_h2::Body,
-{
-    type Request = <Self::Service as tower::Service>::Request;
-    type Response = <Self::Service as tower::Service>::Response;
-    type Error = <Self::Service as tower::Service>::Error;
-    type Service = NormalizeUri<S::Service>;
-    type InitError = S::InitError;
-    type Future = future::Map<
-        S::Future,
-        fn(S::Service) -> NormalizeUri<S::Service>
-    >;
-    fn new_service(&self) -> Self::Future {
-        let s = self.inner.new_service();
-        // This weird dance is so that the closure doesn't have to
-        // capture `self` and can just be a `fn` (so the `Map`)
-        // can be returned unboxed.
-        if self.was_absolute_form {
-            s.map(|inner| NormalizeUri::new(inner, true))
-        } else {
-            s.map(|inner| NormalizeUri::new(inner, false))
-        }
-    }
-}
-
-impl<S, B> tower::Service for NormalizeUri<S>
-where
-    S: tower::Service<
-        Request=http::Request<B>,
-        Response=HttpResponse,
-    >,
-    B: tower_h2::Body,
-{
-    type Request = S::Request;
-    type Response = HttpResponse;
-    type Error = S::Error;
-    type Future = S::Future;
-
-    fn poll_ready(&mut self) -> Poll<(), S::Error> {
-        self.inner.poll_ready()
-    }
-
-    fn call(&mut self, mut request: S::Request) -> Self::Future {
-        if request.version() != http::Version::HTTP_2 &&
-            // Skip normalizing the URI if it was received in
-            // absolute form.
-            !self.was_absolute_form
-        {
-            h1::normalize_our_view_of_uri(&mut request);
-        }
-        self.inner.call(request)
-    }
-}
 // ===== impl Binding =====
 
 impl<B> tower::Service for BoundService<B>
@@ -623,6 +312,7 @@ where
     <B::Data as ::bytes::IntoBuf>::Buf: Send,
 {
     type Service = StackInner<B>;
+
     fn rebind(&mut self, tls: &tls::ConditionalClientConfig) -> Self::Service {
         debug!(
             "rebinding endpoint stack for {:?}:{:?} on TLS config change",
