@@ -53,7 +53,7 @@ impl<N: NewClient + Clone> NewClient for NewClientPerRequest<N> {
     type Error = N::Error;
     type Client = ClientPerRequest<N>;
 
-    pub fn new_client(&mut self, target: N::Target) -> Result<Self, N::Error> {
+    fn new_client(&mut self, target: N::Target) -> Result<Self, N::Error> {
         let next = self.0.new_client(&target)?;
         let valid = ValidNewClient {
             new_client: self.0.clone(),
@@ -90,7 +90,7 @@ impl<N: NewClient> Service for ClientPerRequest<N> {
         // If a service has already been bound in `poll_ready`, consume it.
         // Otherwise, bind a new service on-the-spot.
         self.next.take()
-            .unwrap_or_else(|| self.new_client.new_client())
+            .unwrap_or_else(|| self.new_client.mk())
             .call(request)
     }
 }
