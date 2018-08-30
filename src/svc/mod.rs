@@ -16,12 +16,17 @@
 //! - As an outbound load balancer dispatches a request to an endpoint, or as
 //!   the inbound proxy fowards an inbound request, a client service models an
 //!   individual `SocketAddr`.
-//!
-//! ## TODO
-//!
-//! * Move HTTP-specific service infrastructure into `svc::http`.
 
 pub use tower_service::Service;
+
+pub mod and_then;
+pub mod either;
+pub mod new_client_per_request;
+pub mod optional;
+pub mod reconnect;
+mod valid;
+
+use self::valid::ValidNewClient;
 
 pub trait NewClient {
 
@@ -53,4 +58,14 @@ pub trait NewClient {
     /// become ready lazily, i.e. as the target is resolved and connections are
     /// established.
     fn new_client(&mut self, t: &Self::Target) -> Result<Self::Client, Self::Error>;
+}
+
+/// Builds `NewClient`s that decorate another `NewClient`.
+pub trait MakeClient<Next: NewClient> {
+    type Target;
+    type Error;
+    type Client: Service;
+    type NewClient: NewClient<Target = Self::Target, Error = Self::Error, Client = Self::Client>;
+
+    fn make_client(&self, next: Next) -> Self::NewClient;
 }
