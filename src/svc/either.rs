@@ -24,7 +24,7 @@ where
     type Error = A::Error;
     type Client = Either<A::Client, B::Client>;
 
-    fn new_client(&mut self, target: &Self::Target) -> Result<Self::Client, Self::Error> {
+    fn new_client(&self, target: &Self::Target) -> Result<Self::Client, Self::Error> {
         match self {
             Either::A(ref mut a) => a.new_client(target).map(Either::A),
             Either::B(ref mut b) => b.new_client(target).map(Either::B),

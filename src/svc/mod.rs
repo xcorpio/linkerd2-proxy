@@ -17,7 +17,8 @@
 //!   the inbound proxy fowards an inbound request, a client service models an
 //!   individual `SocketAddr`.
 
-pub use tower_service::Service;
+use futures::future::{self, FutureResult};
+pub use tower_service::{NewService, Service};
 
 pub mod and_then;
 pub mod either;
@@ -57,7 +58,14 @@ pub trait NewClient {
     /// If the provided `Target` is valid, immediately return a `Client` that may
     /// become ready lazily, i.e. as the target is resolved and connections are
     /// established.
-    fn new_client(&mut self, t: &Self::Target) -> Result<Self::Client, Self::Error>;
+    fn new_client(&self, t: &Self::Target) -> Result<Self::Client, Self::Error>;
+
+    fn into_new_service(self, target: Self::Target) -> IntoNewService<Self> where Self: Sized {
+        IntoNewService {
+            new_client: self,
+            target,
+        }
+    }
 }
 
 /// Builds `NewClient`s that decorate another `NewClient`.
@@ -68,4 +76,23 @@ pub trait MakeClient<Next: NewClient> {
     type NewClient: NewClient<Target = Self::Target, Error = Self::Error, Client = Self::Client>;
 
     fn make_client(&self, next: Next) -> Self::NewClient;
+}
+
+#[derive(Clone, Debug)]
+pub struct IntoNewService<N: NewClient> {
+    new_client: N,
+    target: N::Target,
+}
+
+impl<N: NewClient> NewService for IntoNewService<N> {
+    type Request = <N::Client as Service>::Request;
+    type Response = <N::Client as Service>::Response;
+    type Error = <N::Client as Service>::Error;
+    type Service = N::Client;
+    type InitError = N::Error;
+    type Future = FutureResult<Self::Service, Self::InitError>;
+
+    fn new_service(&self) -> Self::Future {
+        future::result(self.new_client.new_client(&self.target))
+    }
 }

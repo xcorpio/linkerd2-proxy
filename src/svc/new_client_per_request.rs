@@ -49,7 +49,7 @@ where
     type Error = N::Error;
     type Client = ClientPerRequest<N>;
 
-    fn new_client(&mut self, target: &N::Target) -> Result<Self::Client, N::Error> {
+    fn new_client(&self, target: &N::Target) -> Result<Self::Client, N::Error> {
         let next = self.0.new_client(&target)?;
         let valid = ValidNewClient {
             new_client: self.0.clone(),
