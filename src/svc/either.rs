@@ -26,8 +26,8 @@ where
 
     fn new_client(&self, target: &Self::Target) -> Result<Self::Client, Self::Error> {
         match self {
-            Either::A(ref mut a) => a.new_client(target).map(Either::A),
-            Either::B(ref mut b) => b.new_client(target).map(Either::B),
+            Either::A(ref a) => a.new_client(target).map(Either::A),
+            Either::B(ref b) => b.new_client(target).map(Either::B),
         }
     }
 }

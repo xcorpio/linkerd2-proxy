@@ -14,6 +14,21 @@ where
     _p: PhantomData<N>,
 }
 
+impl<A, B, N> AndThen<A, B, N>
+where
+    A: MakeClient<B::NewClient>,
+    B: MakeClient<N>,
+    N: NewClient,
+{
+    pub(super) fn new(outer: A, inner: B) -> Self {
+        Self {
+            outer,
+            inner,
+            _p: PhantomData,
+        }
+    }
+}
+
 impl<A, B, N> MakeClient<N> for AndThen<A, B, N>
 where
     A: MakeClient<B::NewClient>,

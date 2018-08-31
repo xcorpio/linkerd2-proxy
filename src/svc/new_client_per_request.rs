@@ -50,11 +50,7 @@ where
     type Client = ClientPerRequest<N>;
 
     fn new_client(&self, target: &N::Target) -> Result<Self::Client, N::Error> {
-        let next = self.0.new_client(&target)?;
-        let valid = ValidNewClient {
-            new_client: self.0.clone(),
-            target: target.clone(),
-        };
+        let (next, valid) = ValidNewClient::try(&self.0, target)?;
         Ok(ClientPerRequest {
             next: Some(next),
             new_client: valid,

@@ -11,12 +11,16 @@ pub(super) struct ValidNewClient<N: NewClient> {
 
 impl<N> ValidNewClient<N>
 where
-    N: NewClient,
+    N: NewClient + Clone,
+    N::Target: Clone,
     N::Error: fmt::Debug,
 {
-    pub fn try(new_client: N, target: N::Target) -> Result<(N::Client, Self), N::Error> {
-        let client = new_client.new_client(&target)?;
-        let valid = ValidNewClient { new_client, target };
+    pub fn try(new_client: &N, target: &N::Target) -> Result<(N::Client, Self), N::Error> {
+        let client = new_client.new_client(target)?;
+        let valid = ValidNewClient {
+            new_client: new_client.clone(),
+            target: target.clone(),
+        };
         Ok((client, valid))
     }
 
