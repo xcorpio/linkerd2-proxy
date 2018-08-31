@@ -377,7 +377,7 @@ where
     type Error = ();
     type Client = Service<B>;
 
-    fn new_client(&mut self, ep: &Endpoint) -> Result<Self::Client, ()> {
+    fn new_client(&self, ep: &Endpoint) -> Result<Self::Client, ()> {
         Ok(self.bind.bind_service(ep, &self.protocol))
     }
 }

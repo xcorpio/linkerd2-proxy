@@ -3,7 +3,7 @@ use std::fmt;
 use super::NewClient;
 
 /// A utility that stores a validated `NewClient` and target.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(super) struct ValidNewClient<N: NewClient> {
     new_client: N,
     target: N::Target,
@@ -14,7 +14,7 @@ where
     N: NewClient,
     N::Error: fmt::Debug,
 {
-    pub fn new(new_client: N, target: N::Target) -> Result<(N::Client, Self), N::Error> {
+    pub fn try(new_client: N, target: N::Target) -> Result<(N::Client, Self), N::Error> {
         let client = new_client.new_client(&target)?;
         let valid = ValidNewClient { new_client, target };
         Ok((client, valid))
@@ -32,10 +32,9 @@ where
     N: NewClient,
     N::Error: fmt::Debug,
 {
-    pub fn new_client(&mut self) -> N::Client {
+    pub fn new_client(&self) -> N::Client {
         self.new_client
             .new_client(&self.target)
             .expect("target must be valid")
     }
 }
-

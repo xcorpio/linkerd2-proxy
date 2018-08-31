@@ -1,18 +1,15 @@
 use std::fmt;
-use std::marker::PhantomData;
 
-use futures::{Async, Future, Poll, future, task};
+use futures::{Async, Poll, task};
 use tower_reconnect;
-use tower_service::Service;
 
-use super::{NewClient, Service, ValidNewClient};
+use super::{NewClient, Service, NewService, IntoNewService};
 
 pub struct Reconnect<N: NewClient>(N);
 
-pub struct ReconnectService<N: NewClient> {
-    new_client: ValidNewClient<N>,
-
-    current: tower_reconnect::Reconnect<N::Client>,
+pub struct ReconnectService<N: NewService + Clone> {
+    new_service: N,
+    inner: tower_reconnect::Reconnect<N>,
 
     /// Prevents logging repeated connect errors.
     ///
@@ -25,17 +22,19 @@ pub struct ReconnectService<N: NewClient> {
 impl<N> NewClient for Reconnect<N>
 where
     N: NewClient + Clone,
+    N::Error: fmt::Debug,
     N::Target: Clone,
 {
     type Target = N::Target;
     type Error = N::Error;
-    type Client = ReconnectService<N>;
+    type Client = ReconnectService<IntoNewService<N>>;
 
-    fn new_client(&mut self, target: &N::Target) -> Result<Self::Client, N::Error> {
-        let (current, new_client) = ValidNewClient::new(self.clone(), target.clone())?;
+    fn new_client(&self, target: &N::Target) -> Result<Self::Client, N::Error> {
+        let new_service = self.0.clone().into_new_service(target.clone())?;
+        let inner = tower_reconnect::Reconnect::new(new_service.clone());
         Ok(ReconnectService {
-            new_client,
-            current: tower_reconnect::Reconnect::new(current),
+            new_service,
+            inner,
             mute_connect_error_log: false,
         })
     }
@@ -45,18 +44,22 @@ where
 
 impl<N> Service for ReconnectService<N>
 where
-    N: NewClient,
+    N: NewService + Clone,
 {
-    type Request = <N::Client as Service>::Request;
-    type Response = <N::Client as Service>::Response;
-    type Error = <N::Client as Service>::Error;
-    type Future = <N::Client as Service>::Future;
+    type Request = N::Request;
+    type Response = N::Response;
+    type Error = N::Error;
+    type Future = <tower_reconnect::Reconnect<N> as Service>::Future;
 
     fn poll_ready(&mut self) -> Poll<(), Self::Error> {
-        match self.current.poll_ready() {
+        match self.inner.poll_ready() {
             Ok(Async::NotReady) => Ok(Async::NotReady),
 
             Err(tower_reconnect::Error::Connect(err)) => {
+                // A connection could not be established to the target.
+
+                // This is only logged as a warning at most once. Subsequent
+                // errors are logged at debug.
                 if !self.mute_connect_error_log {
                     self.mute_connect_error_log = true;
                     warn!("connect error to {:?}: {}", self.endpoint, err);
@@ -64,9 +67,12 @@ where
                     debug!("connect error to {:?}: {}", self.endpoint, err);
                 }
 
-                let new = self.new_client.new_client();
-                self.current = tower_reconnect::Reconnect::new(new);
-
+                // Replace the inner service, but don't poll it immediately.
+                // Instead, reschedule the task to be polled again only if the
+                // caller decides not to drop it.
+                //
+                // This may prevent busy-looping in some situations, as well.
+                self.inner = tower_reconnect::Reconnect::new(self.new_service.clone());
                 task::current().notify();
                 Ok(Async::NotReady)
             }
@@ -77,15 +83,15 @@ where
                 Err(err)
             },
 
-            ready @ Ok(Async::Reaady(_)) => {
+            Ok(ready) => {
                 trace!("poll_ready: ready for business");
                 self.mute_connect_error_log = false;
-                ready
+                Ok(ready)
             },
         }
     }
 
     fn call(&mut self, request: Self::Request) -> Self::Future {
-        self.current.call(request)
+        ResponseFuture(self.inner.call(request)
     }
 }
