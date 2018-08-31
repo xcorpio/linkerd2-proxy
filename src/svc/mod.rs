@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Infrastructure for proxying request-response message streams
 //!
 //! This module contains utilities for proxying request-response streams. This
@@ -76,12 +78,28 @@ pub trait MakeClient<Next: NewClient> {
     type NewClient: NewClient<Target = Self::Target, Error = Self::Error, Client = Self::Client>;
 
     fn make_client(&self, next: Next) -> Self::NewClient;
+
+    fn and_then<M, N>(self, inner: M) -> and_then::AndThen<Self, M, N>
+    where
+        Self: Sized + MakeClient<M::NewClient>,
+        M: MakeClient<N>,
+        N: NewClient,
+    {
+        and_then::AndThen::new(self, inner)
+    }
+
 }
 
 #[derive(Clone, Debug)]
 pub struct IntoNewService<N: NewClient> {
     new_client: N,
     target: N::Target,
+}
+
+impl<N: NewClient> IntoNewService<N> {
+    fn target(&self) -> &N::Target {
+        &self.target
+    }
 }
 
 impl<N: NewClient> NewService for IntoNewService<N> {
