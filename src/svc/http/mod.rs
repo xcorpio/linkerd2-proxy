@@ -1,10 +1,7 @@
 use http::{self, uri};
 
-mod h1;
-mod normalize_uri;
-pub mod orig_proto;
-
-pub use self::normalize_uri::NormalizeUri;
+pub mod h1;
+pub mod transparent_h2;
 
 /// Marks whether to use HTTP/2 or HTTP/1.x for a request.
 ///

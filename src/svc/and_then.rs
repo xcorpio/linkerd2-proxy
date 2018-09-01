@@ -3,24 +3,24 @@ use std::marker::PhantomData;
 use super::{MakeClient, NewClient};
 
 /// Combines two `MakeClients` into one layer.
-pub struct AndThen<A, B, N>
+pub struct AndThen<Outer, Inner, Next>
 where
-    A: MakeClient<B::NewClient>,
-    B: MakeClient<N>,
-    N: NewClient,
+    Outer: MakeClient<Inner::NewClient>,
+    Inner: MakeClient<Next>,
+    Next: NewClient,
 {
-    outer: A,
-    inner: B,
-    _p: PhantomData<N>,
+    outer: Outer,
+    inner: Inner,
+    _p: PhantomData<Next>,
 }
 
-impl<A, B, N> AndThen<A, B, N>
+impl<Outer, Inner, Next> AndThen<Outer, Inner, Next>
 where
-    A: MakeClient<B::NewClient>,
-    B: MakeClient<N>,
-    N: NewClient,
+    Outer: MakeClient<Inner::NewClient>,
+    Inner: MakeClient<Next>,
+    Next: NewClient,
 {
-    pub(super) fn new(outer: A, inner: B) -> Self {
+    pub(super) fn new(outer: Outer, inner: Inner) -> Self {
         Self {
             outer,
             inner,
@@ -29,18 +29,18 @@ where
     }
 }
 
-impl<A, B, N> MakeClient<N> for AndThen<A, B, N>
+impl<Outer, Inner, Next> MakeClient<Next> for AndThen<Outer, Inner, Next>
 where
-    A: MakeClient<B::NewClient>,
-    B: MakeClient<N>,
-    N: NewClient,
+    Outer: MakeClient<Inner::NewClient>,
+    Inner: MakeClient<Next>,
+    Next: NewClient,
 {
-    type Target = A::Target;
-    type Error = A::Error;
-    type Client = A::Client;
-    type NewClient = A::NewClient;
+    type Target = Outer::Target;
+    type Error = Outer::Error;
+    type Client = Outer::Client;
+    type NewClient = Outer::NewClient;
 
-    fn make_client(&self, next: N) -> Self::NewClient {
+    fn make_client(&self, next: Next) -> Self::NewClient {
         self.outer.make_client(self.inner.make_client(next))
     }
 }
