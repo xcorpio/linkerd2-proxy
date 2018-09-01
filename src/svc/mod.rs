@@ -24,6 +24,7 @@ pub use tower_service::{NewService, Service};
 
 pub mod and_then;
 pub mod either;
+pub mod http;
 pub mod new_client_per_request;
 pub mod optional;
 pub mod reconnect;
