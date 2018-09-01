@@ -1,7 +1,7 @@
-use futures::{Future, Poll, future};
+use futures::{future, Future, Poll};
 use http;
 
-use svc::{Service, NewService, http::h1};
+use svc::{http::h1, NewClient, NewService, Service};
 
 /// Rewrites HTTP/1.x requests so that their URIs are in a canonical form.
 ///
@@ -21,31 +21,25 @@ pub struct NormalizeUri<T> {
 
 impl<T> NormalizeUri<T> {
     pub fn new(inner: T, was_absolute_form: bool) -> Self {
-        Self { inner, was_absolute_form }
+        Self {
+            inner,
+            was_absolute_form,
+        }
     }
 }
 
 impl<N, A, B> NewService for NormalizeUri<N>
 where
-    N: NewService<
-        Request = http::Request<A>,
-        Response = http::Response<B>,
-    >,
-    NormalizeUri<N::Service>: Service<
-        Request = N::Request,
-        Response = N::Response,
-        Error = N::Error,
-    >,
+    N: NewService<Request = http::Request<A>, Response = http::Response<B>>,
+    NormalizeUri<N::Service>:
+        Service<Request = N::Request, Response = N::Response, Error = N::Error>,
 {
     type Request = <N as NewService>::Request;
     type Response = <N as NewService>::Response;
     type Error = <N as NewService>::Error;
     type Service = NormalizeUri<N::Service>;
     type InitError = N::InitError;
-    type Future = future::Map<
-        N::Future,
-        fn(N::Service) -> NormalizeUri<N::Service>
-    >;
+    type Future = future::Map<N::Future, fn(N::Service) -> NormalizeUri<N::Service>>;
 
     fn new_service(&self) -> Self::Future {
         let fut = self.inner.new_service();
@@ -62,10 +56,7 @@ where
 
 impl<S, A, B> Service for NormalizeUri<S>
 where
-    S: Service<
-        Request = http::Request<A>,
-        Response = http::Response<B>,
-    >,
+    S: Service<Request = http::Request<A>, Response = http::Response<B>>,
 {
     type Request = S::Request;
     type Response = S::Response;

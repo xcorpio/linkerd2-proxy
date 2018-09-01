@@ -1,5 +1,5 @@
-use futures::Poll;
 use futures::future::Either as EitherFuture;
+use futures::Poll;
 use tower_service::Service;
 
 use super::NewClient;
@@ -35,11 +35,7 @@ where
 impl<A, B> Service for Either<A, B>
 where
     A: Service,
-    B: Service<
-        Request = A::Request,
-        Response = A::Response,
-        Error = A::Error,
-    >,
+    B: Service<Request = A::Request, Response = A::Response, Error = A::Error>,
 {
     type Request = A::Request;
     type Response = A::Response;

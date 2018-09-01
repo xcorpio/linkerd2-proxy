@@ -1,9 +1,9 @@
 use std::fmt;
 
-use futures::{Async, Future, Poll, task};
+use futures::{task, Async, Future, Poll};
 use tower_reconnect;
 
-use super::{MakeClient, NewClient, Service, IntoNewService};
+use super::{IntoNewService, MakeClient, NewClient, Service};
 
 #[derive(Copy, Clone, Debug)]
 pub struct Make;
@@ -93,13 +93,13 @@ where
                 trace!("poll_ready: ready for business");
                 self.mute_connect_error_log = false;
                 Ok(ready)
-            },
+            }
 
             Err(tower_reconnect::Error::Inner(err)) => {
                 trace!("poll_ready: inner error, debouncing");
                 self.mute_connect_error_log = false;
                 Err(err)
-            },
+            }
 
             Err(tower_reconnect::Error::Connect(err)) => {
                 // A connection could not be established to the target.

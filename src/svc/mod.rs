@@ -33,7 +33,6 @@ mod valid;
 use self::valid::ValidNewClient;
 
 pub trait NewClient {
-
     /// Describes a resource to which the client will be attached.
     ///
     /// Depending on the implementation, the target may describe a logical name
@@ -63,7 +62,10 @@ pub trait NewClient {
     /// established.
     fn new_client(&self, t: &Self::Target) -> Result<Self::Client, Self::Error>;
 
-    fn into_new_service(self, target: Self::Target) -> IntoNewService<Self> where Self: Sized {
+    fn into_new_service(self, target: Self::Target) -> IntoNewService<Self>
+    where
+        Self: Sized,
+    {
         IntoNewService {
             new_client: self,
             target,
@@ -88,7 +90,6 @@ pub trait MakeClient<Next: NewClient> {
     {
         and_then::AndThen::new(self, inner)
     }
-
 }
 
 #[derive(Clone, Debug)]

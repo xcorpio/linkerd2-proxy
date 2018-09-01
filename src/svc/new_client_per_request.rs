@@ -86,7 +86,8 @@ where
     fn call(&mut self, request: Self::Request) -> Self::Future {
         // If a service has already been bound in `poll_ready`, consume it.
         // Otherwise, bind a new service on-the-spot.
-        self.next.take()
+        self.next
+            .take()
             .unwrap_or_else(|| self.new_client.new_client())
             .call(request)
     }

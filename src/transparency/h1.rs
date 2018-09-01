@@ -7,8 +7,8 @@ use http;
 use http::header::{CONNECTION, HOST, UPGRADE};
 use http::uri::{Authority, Parts, Scheme, Uri};
 
-use ctx::transport::{Server as ServerCtx};
 use super::upgrade::HttpConnect;
+use ctx::transport::Server as ServerCtx;
 
 /// Tries to make sure the `Uri` of the request is in a form needed by
 /// hyper's Client.
@@ -26,16 +26,15 @@ pub fn normalize_our_view_of_uri<B>(req: &mut http::Request<B>) {
     }
 
     // last resort is to use the so_original_dst
-    let orig_dst = req.extensions()
+    let orig_dst = req
+        .extensions()
         .get::<Arc<ServerCtx>>()
         .and_then(|ctx| ctx.orig_dst_if_not_local());
     if let Some(orig_dst) = orig_dst {
         let mut bytes = BytesMut::with_capacity(31);
-        write!(&mut bytes, "{}", orig_dst)
-            .expect("socket address display is under 31 bytes");
+        write!(&mut bytes, "{}", orig_dst).expect("socket address display is under 31 bytes");
         let bytes = bytes.freeze();
-        let auth = Authority::from_shared(bytes)
-            .expect("socket address is valid authority");
+        let auth = Authority::from_shared(bytes).expect("socket address is valid authority");
         set_authority(req.uri_mut(), auth);
     }
 }
@@ -45,23 +44,20 @@ pub fn set_origin_form(uri: &mut Uri) {
     let mut parts = mem::replace(uri, Uri::default()).into_parts();
     parts.scheme = None;
     parts.authority = None;
-    *uri = Uri::from_parts(parts)
-        .expect("path only is valid origin-form uri")
+    *uri = Uri::from_parts(parts).expect("path only is valid origin-form uri")
 }
 
 /// Returns an Authority from a request's Host header.
 pub fn authority_from_host<B>(req: &http::Request<B>) -> Option<Authority> {
-    req.headers().get(HOST)
-        .and_then(|host| {
-             host.to_str().ok()
-                .and_then(|s| {
-                    if s.is_empty() {
-                        None
-                    } else {
-                        s.parse::<Authority>().ok()
-                    }
-                })
+    req.headers().get(HOST).and_then(|host| {
+        host.to_str().ok().and_then(|s| {
+            if s.is_empty() {
+                None
+            } else {
+                s.parse::<Authority>().ok()
+            }
         })
+    })
 }
 
 fn set_authority(uri: &mut http::Uri, auth: Authority) {
@@ -79,8 +75,7 @@ fn set_authority(uri: &mut http::Uri, auth: Authority) {
         parts.scheme = Some(Scheme::HTTP);
     }
 
-    let new = Uri::from_parts(parts)
-        .expect("absolute uri");
+    let new = Uri::from_parts(parts).expect("absolute uri");
 
     *uri = new;
 }
@@ -97,7 +92,6 @@ pub fn strip_connection_headers(headers: &mut http::HeaderMap) {
                 let name = name.trim();
                 headers.remove(name);
             }
-
         }
     }
 
@@ -145,8 +139,7 @@ pub fn is_upgrade<B>(res: &http::Response<B>) -> bool {
     }
 
     // CONNECT requests are complete if status code is 2xx.
-    if res.extensions().get::<HttpConnect>().is_some()
-        && res.status().is_success() {
+    if res.extensions().get::<HttpConnect>().is_some() && res.status().is_success() {
         return true;
     }
 
@@ -167,11 +160,8 @@ pub fn is_absolute_form(uri: &Uri) -> bool {
     // it's required in absolute-form, and `http::Uri` doesn't
     // allow URIs with the other parts missing when the scheme is set.
     debug_assert!(
-        uri.scheme_part().is_none() ||
-        (
-            uri.authority_part().is_some() &&
-            uri.path_and_query().is_some()
-        ),
+        uri.scheme_part().is_none()
+            || (uri.authority_part().is_some() && uri.path_and_query().is_some()),
         "is_absolute_form http::Uri invariants: {:?}",
         uri
     );
@@ -183,8 +173,7 @@ pub fn is_absolute_form(uri: &Uri) -> bool {
 ///
 /// This is `origin-form`: `example.com`
 fn is_origin_form(uri: &Uri) -> bool {
-    uri.scheme_part().is_none() &&
-        uri.path_and_query().is_none()
+    uri.scheme_part().is_none() && uri.path_and_query().is_none()
 }
 
 /// Returns if the received request is definitely bad.

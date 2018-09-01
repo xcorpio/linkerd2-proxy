@@ -31,7 +31,7 @@ pub enum Protocol {
         /// used to determine what URI normalization will be necessary.
         was_absolute_form: bool,
     },
-    Http2
+    Http2,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -44,8 +44,7 @@ pub enum Host {
 
 impl Host {
     fn from_request<B>(req: &http::Request<B>) -> Self {
-        req
-            .uri()
+        req.uri()
             .authority_part()
             .cloned()
             .or_else(|| h1::authority_from_host(req))
@@ -65,7 +64,8 @@ impl Protocol {
         let was_absolute_form = h1::is_absolute_form(req.uri());
         trace!(
             "Protocol::detect(); req.uri='{:?}'; was_absolute_form={:?};",
-            req.uri(), was_absolute_form
+            req.uri(),
+            was_absolute_form
         );
         // If the request has an authority part, use that as the host part of
         // the key for an HTTP/1.x request.
@@ -83,21 +83,30 @@ impl Protocol {
     /// Returns true if the request was originally received in absolute form.
     pub fn was_absolute_form(&self) -> bool {
         match self {
-            &Protocol::Http1 { was_absolute_form, .. } => was_absolute_form,
+            &Protocol::Http1 {
+                was_absolute_form, ..
+            } => was_absolute_form,
             _ => false,
         }
     }
 
     pub fn can_reuse_clients(&self) -> bool {
         match *self {
-            Protocol::Http2 | Protocol::Http1 { host: Host::Authority(_), .. } => true,
+            Protocol::Http2
+            | Protocol::Http1 {
+                host: Host::Authority(_),
+                ..
+            } => true,
             _ => false,
         }
     }
 
     pub fn is_h1_upgrade(&self) -> bool {
         match *self {
-            Protocol::Http1 { is_h1_upgrade: true, .. } => true,
+            Protocol::Http1 {
+                is_h1_upgrade: true,
+                ..
+            } => true,
             _ => false,
         }
     }

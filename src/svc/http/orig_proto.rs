@@ -1,9 +1,9 @@
 use futures::{future, Future, Poll};
 use http;
-use http::header::{TRANSFER_ENCODING, HeaderValue};
-use tower_service::{Service, NewService};
+use http::header::{HeaderValue, TRANSFER_ENCODING};
+use tower_service::{NewService, Service};
 
-use super::{Host, Protocol, h1};
+use super::{h1, Host, Protocol};
 
 const L5D_ORIG_PROTO: &str = "l5d-orig-proto";
 
@@ -40,15 +40,11 @@ pub fn protocol<B>(req: &http::Request<B>) -> Protocol {
     Protocol::from_request(req)
 }
 
-
 // ===== impl Upgrade =====
 
 impl<S> Upgrade<S> {
     pub fn new(inner: S, upgrade_h1: bool) -> Self {
-        Self {
-            inner,
-            upgrade_h1,
-        }
+        Self { inner, upgrade_h1 }
     }
 }
 
@@ -59,10 +55,7 @@ where
     type Request = S::Request;
     type Response = S::Response;
     type Error = S::Error;
-    type Future = future::Map<
-        S::Future,
-        fn(S::Response) -> S::Response
-    >;
+    type Future = future::Map<S::Future, fn(S::Response) -> S::Response>;
 
     fn poll_ready(&mut self) -> Poll<(), Self::Error> {
         self.inner.poll_ready()
@@ -92,10 +85,8 @@ where
                 (http::Version::HTTP_10, true) => "HTTP/1.0; absolute-form",
                 (v, _) => unreachable!("bad orig-proto version: {:?}", v),
             };
-            req.headers_mut().insert(
-                L5D_ORIG_PROTO,
-                HeaderValue::from_static(val)
-            );
+            req.headers_mut()
+                .insert(L5D_ORIG_PROTO, HeaderValue::from_static(val));
 
             // transfer-encoding is illegal in HTTP2
             req.headers_mut().remove(TRANSFER_ENCODING);
@@ -141,10 +132,7 @@ where
     type Error = S::Error;
     type Service = Upgrade<S::Service>;
     type InitError = S::InitError;
-    type Future = future::Map<
-        S::Future,
-        fn(S::Service) -> Upgrade<S::Service>
-    >;
+    type Future = future::Map<S::Future, fn(S::Service) -> Upgrade<S::Service>>;
 
     fn new_service(&self) -> Self::Future {
         let s = self.inner.new_service();
@@ -163,9 +151,7 @@ where
 
 impl<S> Downgrade<S> {
     pub fn new(inner: S) -> Self {
-        Self {
-            inner,
-        }
+        Self { inner }
     }
 }
 
@@ -176,10 +162,7 @@ where
     type Request = S::Request;
     type Response = S::Response;
     type Error = S::Error;
-    type Future = future::Map<
-        S::Future,
-        fn(S::Response) -> S::Response
-    >;
+    type Future = future::Map<S::Future, fn(S::Response) -> S::Response>;
 
     fn poll_ready(&mut self) -> Poll<(), Self::Error> {
         self.inner.poll_ready()
@@ -199,11 +182,7 @@ where
                 } else if val.starts_with(b"HTTP/1.0") {
                     *req.version_mut() = http::Version::HTTP_10;
                 } else {
-                    warn!(
-                        "unknown {} header value: {:?}",
-                        L5D_ORIG_PROTO,
-                        orig_proto,
-                    );
+                    warn!("unknown {} header value: {:?}", L5D_ORIG_PROTO, orig_proto,);
                 }
 
                 if !was_absolute_form(val) {
@@ -225,10 +204,8 @@ where
                     return res;
                 };
 
-                res.headers_mut().insert(
-                    L5D_ORIG_PROTO,
-                    HeaderValue::from_static(orig_proto)
-                );
+                res.headers_mut()
+                    .insert(L5D_ORIG_PROTO, HeaderValue::from_static(orig_proto));
 
                 // transfer-encoding is illegal in HTTP2
                 res.headers_mut().remove(TRANSFER_ENCODING);
@@ -243,7 +220,5 @@ where
 }
 
 fn was_absolute_form(val: &[u8]) -> bool {
-    val.len() >= "HTTP/1.1; absolute-form".len()
-        && &val[10..23] == b"absolute-form"
+    val.len() >= "HTTP/1.1; absolute-form".len() && &val[10..23] == b"absolute-form"
 }
-

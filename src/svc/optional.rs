@@ -1,8 +1,8 @@
 use std::marker::PhantomData;
 use tower_service::Service;
 
-use super::{NewClient, MakeClient};
 use super::either::Either;
+use super::{MakeClient, NewClient};
 
 /// a `MakeClient` that
 pub struct Make<M: MakeClient<N>, N: NewClient>(Option<M>, PhantomData<N>);
