@@ -1,6 +1,7 @@
 use http::{self, uri};
 
 pub mod h1;
+pub mod metrics;
 pub mod transparent_h2;
 
 /// Marks whether to use HTTP/2 or HTTP/1.x for a request.
