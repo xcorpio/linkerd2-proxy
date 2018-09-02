@@ -2,7 +2,6 @@ use indexmap::IndexMap;
 use std::fmt;
 use std::hash::Hash;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
 
 use linkerd2_metrics::{
     latency,
@@ -28,38 +27,33 @@ metrics! {
     }
 }
 
-pub fn new<Base, Svc>(base: Base) -> (Make<Svc>, Report<Base, Svc>)
+pub fn new<B, S>(base: B) -> (Make<S>, Report<B, S>)
 where
-    Base: FmtLabels + Clone,
-    Svc: FmtLabels + Hash + Eq,
+    B: FmtLabels + Clone,
+    S: FmtLabels + Clone + Hash + Eq,
 {
-    let metrics = Default::default();
+    let metrics = Arc::new(Mutex::new(Metrics::<S>::default()));
     (Make::new(metrics.clone()), Report { base, metrics })
 }
 
 /// Reports HTTP metrics for prometheus.
 #[derive(Clone, Debug)]
-pub struct Report<Base, Svc>
+pub struct Report<B, S>
 where
-    Base: FmtLabels + Clone,
-    Svc: FmtLabels + Hash + Eq,
+    B: FmtLabels + Clone,
+    S: FmtLabels + Hash + Eq,
 {
-    base: Base,
-    metrics: Arc<Mutex<Metrics<Svc>>>
+    base: B,
+    metrics: Arc<Mutex<Metrics<S>>>,
+}
+
+#[derive(Debug)]
+struct Metrics<T: FmtLabels + Hash + Eq> {
+    by_target: IndexMap<T, Arc<Mutex<TargetMetrics>>>,
 }
 
 #[derive(Debug, Default)]
-struct Metrics<Svc>
-where
-    Svc: FmtLabels + Hash + Eq,
-{
-    by_service: IndexMap<Svc, Arc<Mutex<ServiceMetrics>>>,
-}
-
-#[derive(Debug, Default)]
-struct ServiceMetrics
-where
-{
+struct TargetMetrics {
     total: Counter,
     by_class: IndexMap<class::Class, ClassMetrics>,
 }
@@ -72,24 +66,33 @@ pub struct ClassMetrics {
 
 // ===== impl Metrics =====
 
+impl<S> Default for Metrics<S>
+where
+    S: FmtLabels + Hash + Eq,
+{
+    fn default() -> Self {
+        Metrics { by_target: IndexMap::default() }
+    }
+}
+
 impl<S> Metrics<S>
 where
     S: FmtLabels + Hash + Eq,
 {
      fn is_empty(&self) -> bool {
-        self.by_service.is_empty()
+        self.by_target.is_empty()
     }
 
-    fn fmt_by_service<F, B, M>(&self, f: &mut fmt::Formatter, metric: Metric<M>, base: B, get_metric: F)
+    fn fmt_by_target<F, B, M>(&self, f: &mut fmt::Formatter, metric: Metric<M>, base: B, get_metric: F)
         -> fmt::Result
     where
-        F: Fn(&ServiceMetrics) -> &M,
+        F: Fn(&TargetMetrics) -> &M,
         B: FmtLabels,
         M: FmtMetric,
     {
-        for (svc, sm) in &self.by_service {
-            if let Ok(m) = sm.lock() {
-                let labels = (base, svc);
+        for (tgt, tm) in &self.by_target {
+            if let Ok(m) = tm.lock() {
+                let labels = (&base, tgt);
                 get_metric(&*m).fmt_metric_labeled(f, metric.name, labels)?;
             }
         }
@@ -104,13 +107,11 @@ where
         B: FmtLabels,
         M: FmtMetric,
     {
-        for (svc, sm) in &self.by_service {
-            if let Ok(sm) = sm.lock() {
-                for (tgt, tm) in &sm.by_target {
-                    for (cls, m) in &sm.by_class {
-                        let labels = ((base, svc), cls);
-                        get_metric(&*m).fmt_metric_labeled(f, metric.name, labels)?;
-                    }
+        for (tgt, tm) in &self.by_target {
+            if let Ok(tm) = tm.lock() {
+                for (cls, m) in &tm.by_class {
+                    let labels = ((&base, tgt), cls);
+                    get_metric(&*m).fmt_metric_labeled(f, metric.name, labels)?;
                 }
             }
         }
@@ -121,7 +122,12 @@ where
 
 // ===== impl Report =====
 
-impl<B, S> FmtMetrics for Report<B, S> {
+impl<B, S> FmtMetrics for Report<B, S>
+where
+    B: FmtLabels + Clone,
+    S: FmtLabels + Hash + Eq,
+{
+
     fn fmt_metrics(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let metrics = match self.metrics.lock() {
             Err(_) => return Ok(()),
@@ -133,13 +139,13 @@ impl<B, S> FmtMetrics for Report<B, S> {
         }
 
         request_total.fmt_help(f)?;
-        metrics.fmt_by_service(f, request_total, &self.base, |s| &s.total)?;
+        metrics.fmt_by_target(f, request_total, &self.base, |s| &s.total)?;
 
         response_total.fmt_help(f)?;
-        metrics.fmt_by_class(f, request_total, &self.base, |s| &s.total)?;
+        metrics.fmt_by_class(f, response_total, &self.base, |s| &s.total)?;
 
         response_latency_ms.fmt_help(f)?;
-        metrics.fmt_by_class(f, request_total, &self.base, |s| &s.latency)?;
+        metrics.fmt_by_class(f, response_latency_ms, &self.base, |s| &s.latency)?;
 
         Ok(())
     }
