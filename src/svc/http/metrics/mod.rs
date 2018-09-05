@@ -1,55 +1,80 @@
 use indexmap::IndexMap;
 use std::hash::Hash;
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex};
 
 use linkerd2_metrics::{
     latency,
     Counter,
     FmtLabels,
-    FmtMetric,
-    FmtMetrics,
     Histogram,
-    Metric,
 };
+
+use svc::http::Classify;
 
 mod class;
 mod report;
 mod service;
 
 pub use self::report::Report;
-pub use self::service::{Stack, NewMeasure, Measure};
+pub use self::service::{Mod, Make, Measure};
 
-pub fn new<C, B, S>(base: B) -> (Mod<S, C>, Report<C, B, S>)
+pub fn new<Base, Config, C>(base: Base) -> (Mod<Config, C>, Report<Base, Config, C::Class>)
 where
-    C: FmtLabels + Clone,
-    B: FmtLabels + Clone,
-    S: FmtLabels + Clone + Hash + Eq,
+    Base: FmtLabels + Clone,
+    Config: FmtLabels + Clone + Hash + Eq,
+    C: Classify,
+    C::Class: FmtLabels + Clone + Hash + Eq,
 {
-    let registry = Arc::new(Mutex::new(Registry::<S, C>::default()));
-    (Mod::new(registry.clone()), Report { base, registry })
+    let registry = Arc::new(Mutex::new(Registry::default()));
+    (Mod::new(registry.clone()), Report::new(base, registry))
 }
 
 #[derive(Debug)]
 struct Registry<Config, Class>
 where
-    Config: FmtLabels + Hash + Eq,
-    Class: FmtLabels + Hash + Eq,
+    Config: Hash + Eq,
+    Class: Hash + Eq,
 {
     by_config: IndexMap<Config, Arc<Mutex<Metrics<Class>>>>,
 }
 
 #[derive(Debug)]
-struct Metrics<Class>
+struct Metrics<C>
 where
-    Class: FmtLabels + Hash + Eq,
+    C: Hash + Eq,
 {
-    pending: Arc<()>,
     total: Counter,
-    by_class: IndexMap<Class, ClassMetrics>,
+    by_class: IndexMap<C, ClassMetrics>,
+    unclassified: ClassMetrics,
 }
 
 #[derive(Debug, Default)]
 pub struct ClassMetrics {
     total: Counter,
     latency: Histogram<latency::Ms>,
+}
+
+impl<Config, Class> Default for Registry<Config, Class>
+where
+    Config: Hash + Eq,
+    Class: Hash + Eq,
+{
+    fn default() -> Self {
+        Self {
+            by_config: IndexMap::default(),
+        }
+    }
+}
+
+impl<C> Default for Metrics<C>
+where
+    C: Hash + Eq,
+{
+    fn default() -> Self {
+        Self {
+            total: Counter::default(),
+            by_class: IndexMap::default(),
+            unclassified: ClassMetrics::default(),
+        }
+    }
 }

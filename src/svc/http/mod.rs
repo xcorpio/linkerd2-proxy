@@ -5,6 +5,8 @@ pub mod h1;
 pub mod metrics;
 pub mod transparent_h2;
 
+pub use self::classify::{Classify, ClassifyResponse};
+
 /// Marks whether to use HTTP/2 or HTTP/1.x for a request.
 ///
 /// In the case of HTTP/1.x requests, it also stores a "host" key to ensure

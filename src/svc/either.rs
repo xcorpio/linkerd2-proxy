@@ -5,6 +5,7 @@ use tower_service::Service;
 use super::MakeService;
 
 /// A client that may be one of two concrete types.
+#[derive(Debug)]
 pub enum Either<A, B> {
     A(A),
     B(B),

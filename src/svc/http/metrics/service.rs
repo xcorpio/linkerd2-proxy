@@ -2,150 +2,159 @@ use bytes::IntoBuf;
 use futures::{Async, Future, Poll};
 use h2;
 use http;
+use std::fmt::Debug;
 use std::hash::Hash;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio_timer::clock;
 use tower_h2;
 
-use linkerd2_metrics::FmtLabels;
-
-use svc::{Service, Stack, MakeService};
 use svc::either::Either;
 use svc::http::classify::{Classify, ClassifyResponse};
-use svc::http::metrics::{Registry, Metrics};
-use svc::http::metrics::body::{RequestBody, ResponseBody};
+use svc::http::metrics::{Metrics, Registry};
+use svc::{MakeService, Service, Stack};
 
 const GRPC_STATUS: &str = "grpc-status";
 
 #[derive(Clone, Debug)]
-pub struct Mod<S, C>
+pub struct Mod<T, C>
 where
-    S: FmtLabels + Clone + Hash + Eq,
-    C: Classify + Clone,
+    T: Clone + Hash + Eq,
+    C: Classify,
+    C::Class: Clone + Hash + Eq,
 {
-    classify: C,
-    registry: Arc<Mutex<Registry<S, C::Class>>>,
+    registry: Arc<Mutex<Registry<T, C::Class>>>,
 }
 
 #[derive(Clone, Debug)]
-pub struct NewMeasure<N, C>
+pub struct Make<N, C>
 where
-    C: Classify<<N::Service as Service>::Error>,
     N: MakeService,
-    N::Config: FmtLabels + Clone + Hash + Eq,
+    N::Config: Clone + Hash + Eq,
+    C: Classify<Error = <N::Service as Service>::Error>,
+    C::Class: Clone + Hash + Eq,
 {
-    classify: C,
     registry: Arc<Mutex<Registry<N::Config, C::Class>>>,
     inner: N,
 }
 
 #[derive(Clone, Debug)]
-pub struct Measure<S: Service, C: Classify<S::Error>> {
-    classify: C,
-    metrics: Arc<Mutex<Metrics<C::Class>>>,
+pub struct Measure<S, C>
+where
+    S: Service,
+    C: Classify<Error = S::Error>,
+    C::Class: Clone + Hash + Eq,
+{
+    metrics: Option<Arc<Mutex<Metrics<C::Class>>>>,
     inner: S,
 }
 
-pub struct ResponseFuture<S: Service, C: ClassifyStream> {
-    state: Arc<StreamState<C>>,
+pub struct ResponseFuture<S, C>
+where
+    S: Service<Error = C::Error>,
+    C: ClassifyResponse,
+    C::Class: Clone + Hash + Eq,
+{
+    classify: Option<C>,
+    metrics: Option<Arc<Mutex<Metrics<C::Class>>>>,
+    stream_open_at: Instant,
     inner: S::Future,
 }
 
 #[derive(Debug)]
-pub struct RequestBody<T, C: ClassifyStream> {
-    state: Option<StreamState<C>>,
+pub struct RequestBody<T, C>
+where
+    C: Clone + Hash + Eq,
+{
+    metrics: Option<Arc<Mutex<Metrics<C>>>>,
     inner: T,
 }
 
 #[derive(Debug)]
-pub struct ResponseBody<T, C: ClassifyStream> {
-    metrics: Arc<Mutex<
+pub struct ResponseBody<T, C>
+where
+    C: ClassifyResponse + Debug + Send + Sync + 'static,
+    C::Class: Clone + Hash + Eq,
+{
+    class_or_classify: Either<C::Class, Option<C>>,
+    metrics: Option<Arc<Mutex<Metrics<C::Class>>>>,
+    stream_open_at: Instant,
     inner: T,
-}
-
-struct StreamState<C: ClassifyStream> {
-    init_stamp: Instant,
-    metrics: Arc<Mutex<Metrics<C::Class>>>,
-    classify: Mutex<C>,
 }
 
 // ===== impl Make =====
 
-impl<S, C> Make<S, C>
+impl<T, C> Mod<T, C>
 where
-    S: FmtLabels + Clone + Hash + Eq,
-    C: Classify + Clone,
+    T: Clone + Hash + Eq,
+    C: Classify,
+    C::Class: Clone + Hash + Eq,
+    C::ClassifyResponse: Send + Sync + 'static,
 {
-    pub(super) fn new(
-        classify: C,
-        registry: Arc<Mutex<Registry<S, C::Class>>>,
-    ) -> Self {
-        Self { classify, registry }
+    pub(super) fn new(registry: Arc<Mutex<Registry<T, C::Class>>>) -> Self {
+        Self { registry }
     }
 }
 
-impl<C, N, A, B> Stack<N> for Mod<N::Config, C>
+impl<N, A, B, C> Stack<N> for Mod<N::Config, C>
 where
-    C: Classify + Clone,
     N: MakeService,
-    N::Config: FmtLabels + Clone + Hash + Eq,
+    N::Config: Clone + Hash + Eq,
     N::Service: Service<
-        Request = http::Request<RequestBody<A, C::ClassifyStream>>,
+        Request = http::Request<RequestBody<A, C::Class>>,
         Response = http::Response<B>,
+        Error = C::Error,
     >,
+    C: Classify,
+    C::ClassifyResponse: Debug + Send + Sync + 'static,
+    C::Class: Clone + Hash + Eq,
 {
     type Config = N::Config;
     type Error = N::Error;
-    type Service = <NewMeasure<N, C> as MakeService>::Service;
-    type MakeService = NewMeasure<N, C>;
+    type Service = <Make<N, C> as MakeService>::Service;
+    type MakeService = Make<N, C>;
 
     fn build(&self, inner: N) -> Self::MakeService {
-        NewMeasure {
-            classify: self.classify.clone(),
+        Make {
             registry: self.registry.clone(),
             inner,
         }
     }
 }
 
-// ===== impl NewMeasure =====
+// ===== impl Make =====
 
-impl<C, N, A, B> MakeService for NewMeasure<N, C>
+impl<N, A, B, C> MakeService for Make<N, C>
 where
-    C: Classify + Clone,
     N: MakeService,
-    N::Config: FmtLabels + Clone + Hash + Eq,
+    N::Config: Clone + Hash + Eq,
     N::Service: Service<
-        Request = http::Request<RequestBody<A, C::Clas>>,
+        Request = http::Request<RequestBody<A, C::Class>>,
         Response = http::Response<B>,
+        Error = C::Error,
     >,
+    C: Classify,
+    C::Class: Clone + Hash + Eq,
+    C::ClassifyResponse: Debug + Send + Sync + 'static,
 {
     type Config = N::Config;
     type Error = N::Error;
     type Service = Measure<N::Service, C>;
 
-    fn make_service(&self, target: &Self::Config) -> Result<Self::Service, Self::Error> {
-        let inner = self.inner.make_service(target)?;
+    fn make_service(&self, config: &Self::Config) -> Result<Self::Service, Self::Error> {
+        let inner = self.inner.make_service(config)?;
 
         let metrics = match self.registry.lock() {
-            Ok(mut r) => {
-                r.by_target.entry(target.clone())
-                    .or_insert_with(|| Arc::new(Mutex::new(Metrics::new())))
-                    .clone()
-            }
-            Err(_) => {
-                // If the metrics lock was poisoned, just create a one-off
-                // structure that won't be reported.
-                Arc::new(Mutex::new(Metrics::new()))
-            }
+            Ok(mut r) => Some(
+                r.by_config
+                    .entry(config.clone())
+                    .or_insert_with(|| Arc::new(Mutex::new(Metrics::default())))
+                    .clone(),
+            ),
+            Err(_) => None,
         };
 
-        Ok(Measure {
-            classify: self.classify.clone(),
-            metrics,
-            inner
-       })
+        Ok(Measure { metrics, inner })
     }
 }
 
@@ -153,31 +162,38 @@ where
 
 impl<C, S, A, B> Service for Measure<S, C>
 where
-    C: Classify + Clone,
     S: Service<
-        Request = http::Request<RequestBody<A>>,
+        Request = http::Request<RequestBody<A, C::Class>>,
         Response = http::Response<B>,
+        Error = C::Error,
     >,
+    C: Classify,
+    C::Class: Clone + Hash + Eq,
+    C::ClassifyResponse: Debug + Send + Sync + 'static,
 {
     type Request = http::Request<A>;
-    type Response = http::Response<ResponseBody<B>>;
+    type Response = http::Response<ResponseBody<B, C::ClassifyResponse>>;
     type Error = S::Error;
-    type Future = ResponseFuture<S, C::ClassifyStream>;
+    type Future = ResponseFuture<S, C::ClassifyResponse>;
 
     fn poll_ready(&mut self) -> Poll<(), Self::Error> {
         self.inner.poll_ready()
     }
 
     fn call(&mut self, req: Self::Request) -> Self::Future {
-        let (head, inner) = req.into_parts();
-        let classify = self.classify.classify_response(&head);
+        let classify = req.extensions().get::<C::ClassifyResponse>().cloned();
 
-        let body = RequestBody::new(self.metrics.clone(), inner);
+        let (head, inner) = req.into_parts();
+        let body = RequestBody {
+            metrics: self.metrics.clone(),
+            inner,
+        };
         let req = http::Request::from_parts(head, body);
 
         ResponseFuture {
             classify,
             metrics: self.metrics.clone(),
+            stream_open_at: clock::now(),
             inner: self.inner.call(req),
         }
     }
@@ -185,61 +201,44 @@ where
 
 impl<C, S, B> Future for ResponseFuture<S, C>
 where
-    S: Service<Response = http::Response<B>>,
-    C: ClassifyStream,
+    S: Service<Response = http::Response<B>, Error = C::Error>,
+    C: ClassifyResponse + Debug + Send + Sync + 'static,
+    C::Class: Clone + Hash + Eq,
 {
-    type Item = http::Response<ResponseBody<B>>;
+    type Item = http::Response<ResponseBody<B, C>>;
     type Error = S::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let mut classify = self.classify.take()
-            .expect("future must not be polled after ready");
-        let class_or_classify = match classify.start(&head) {
-            Some(class) => Either::A(class),
-            None => Either::B(classify),
+        let (head, inner) = try_ready!(self.inner.poll()).into_parts();
+
+        let class_or_classify = match self.classify.take() {
+            Some(mut classify) => match classify.start(&head) {
+                Some(class) => Either::A(class),
+                None => Either::B(Some(classify)),
+            },
+            None => Either::B(None),
         };
 
-        let (head, inner) = try_ready!(self.inner.poll()).into_parts();
-        let body = ResponseBody::new(self.metrics.clone(), class_or_classify);
+        let body = ResponseBody {
+            class_or_classify,
+            metrics: self.metrics.clone(),
+            stream_open_at: self.stream_open_at,
+            inner,
+        };
         let rsp = http::Response::from_parts(head, body);
 
         Ok(rsp.into())
     }
 }
 
-#[derive(Debug)]
-struct State {
-    metrics: Arc<Mutex<Metrics>>,
-    stream_open_at: Instant,
-    rx_bytes: usize,
-    tx_bytes: usize,
-}
-
-impl<B> RequestBody<B> {
-    pub(super) fn new(
-        metrics: Arc<Mutex<Metrics>>,
-        stream_open_at: Instant,
-        inner: B
-    ) -> Self {
-        Self {
-            state: Some(State {
-                metrics,
-                stream_open_at,
-                rx_bytes: 0,
-                tx_bytes: 0,
-            }),
-            inner,
-        }
-    }
-}
-
-impl<B> RequestBody<B>
+impl<B, C> RequestBody<B, C>
 where
     B: tower_h2::Body,
+    C: Clone + Hash + Eq,
 {
     fn measure_err(&mut self, err: h2::Error) -> h2::Error {
         if let Some(_reason) = err.reason() {
-            if let Some(_state) = self.state.take() {
+            if let Some(_state) = self.metrics.take() {
                 // TODO
             }
         }
@@ -248,9 +247,10 @@ where
     }
 }
 
-impl<B> tower_h2::Body for RequestBody<B>
+impl<B, C> tower_h2::Body for RequestBody<B, C>
 where
     B: tower_h2::Body,
+    C: Clone + Hash + Eq,
 {
     /// The body chunk type
     type Data = <B::Data as IntoBuf>::Buf;
@@ -260,63 +260,15 @@ where
     }
 
     fn poll_data(&mut self) -> Poll<Option<Self::Data>, h2::Error> {
-        let frame = try_ready!(
-            self.inner
-                .poll_data()
-                .map_err(|e| self.measure_err(e))
-        );
+        let frame = try_ready!(self.inner.poll_data().map_err(|e| self.measure_err(e)));
         let frame = frame.map(|f| f.into_buf());
-
-        if let Some(ref _frame) = frame {
-            if let Some(ref mut _state) = self.state {
-                // TODO
-            }
-        }
-
-        // If the frame ended the stream, send the end of stream event now,
-        // as we may not be polled again.
-        if self.is_end_stream() {
-            if let Some(_state) = self.state.take() {
-                // TODO
-            }
-        }
 
         Ok(Async::Ready(frame))
     }
 
     fn poll_trailers(&mut self) -> Poll<Option<http::HeaderMap>, h2::Error> {
-        let trls = try_ready!(
-            self.inner
-                .poll_trailers()
-                .map_err(|e| self.measure_err(e))
-        );
-
-        if let Some(_state) = self.state.take() {
-            let _grpc_status = trls.as_ref()
-                .and_then(|t| t.get(GRPC_STATUS))
-                .and_then(|v| v.to_str().ok())
-                .and_then(|s| s.parse::<u32>().ok());
-            // TODO
-        }
+        let trls = try_ready!(self.inner.poll_trailers().map_err(|e| self.measure_err(e)));
 
         Ok(Async::Ready(trls))
-    }
-}
-
-impl<B> ResponseBody<B> {
-    pub(super) fn new(
-        metrics: Arc<Mutex<Metrics>>,
-        stream_open_at: Instant,
-        inner: B,
-    ) -> Self {
-        Self {
-            state: Some(State {
-                metrics,
-                stream_open_at,
-                rx_bytes: 0,
-                tx_bytes: 0,
-            }),
-            inner,
-        }
     }
 }

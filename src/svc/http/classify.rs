@@ -2,7 +2,6 @@ use futures::Poll;
 use http;
 use linkerd2_metrics::FmtLabels;
 use std::hash::Hash;
-use std::marker::PhantomData;
 
 use svc::{MakeService, Service, Stack};
 
@@ -65,16 +64,17 @@ pub trait ClassifyResponse {
 }
 
 /// A `Stack` module that adds a `ClassifyResponse` instance to each
-pub struct Mod<C, E>(C);
+pub struct Mod<C: Classify>(C);
 
-pub struct Make<C, N> {
+pub struct Make<C: Classify, N: MakeService> {
     classify: C,
     inner: N,
 }
 
-pub struct ExtendRequest<C, N> {
+/// A service
+pub struct ExtendRequest<C: Classify, S: Service> {
     classify: C,
-    inner: N,
+    inner: S,
 }
 
 impl<C: Classify + Clone> Mod<C> {
@@ -128,7 +128,7 @@ where
 
 impl<S, A, B, C> Service for ExtendRequest<C, S>
 where
-    N::Service: Service<Request = http::Request<A>, Response = http::Response<B>, Error = C::Error>,
+    S: Service<Request = http::Request<A>, Response = http::Response<B>, Error = C::Error>,
     C: Classify + Clone,
 {
     type Request = S::Request;
