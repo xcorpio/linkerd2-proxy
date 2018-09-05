@@ -47,6 +47,14 @@ pub trait ClassifyResponse {
     /// This is expected to be called only once.
     fn end(&mut self, headers: &http::HeaderMap) -> Self::Class;
 
+    /// Update the classifier indicating that the request was canceled.
+    ///
+    /// Because errors indicate an end-of-stream, a classification must be
+    /// returned.
+    ///
+    /// This is expected to be called only once.
+    fn cancel(&mut self) -> Self::Class;
+
     /// Update the classifier with an underlying error.
     ///
     /// Because errors indicate an end-of-stream, a classification must be
