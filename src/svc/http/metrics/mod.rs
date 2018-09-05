@@ -2,12 +2,7 @@ use indexmap::IndexMap;
 use std::hash::Hash;
 use std::sync::{Arc, Mutex};
 
-use linkerd2_metrics::{
-    latency,
-    Counter,
-    FmtLabels,
-    Histogram,
-};
+use linkerd2_metrics::{latency, Counter, FmtLabels, Histogram};
 
 use svc::http::Classify;
 
@@ -16,7 +11,7 @@ mod report;
 mod service;
 
 pub use self::report::Report;
-pub use self::service::{Mod, Make, Measure};
+pub use self::service::{Make, Measure, Mod};
 
 pub fn new<Base, Config, C>(base: Base) -> (Mod<Config, C>, Report<Base, Config, C::Class>)
 where

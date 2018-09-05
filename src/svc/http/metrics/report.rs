@@ -2,15 +2,7 @@ use std::fmt;
 use std::hash::Hash;
 use std::sync::{Arc, Mutex};
 
-use linkerd2_metrics::{
-    latency,
-    Counter,
-    FmtLabels,
-    FmtMetric,
-    FmtMetrics,
-    Histogram,
-    Metric,
-};
+use linkerd2_metrics::{latency, Counter, FmtLabels, FmtMetric, FmtMetrics, Histogram, Metric};
 
 use super::{ClassMetrics, Metrics, Registry};
 
@@ -73,7 +65,9 @@ where
 
         response_latency_ms.fmt_help(f)?;
         registry.fmt_by_class(f, &self.base, response_latency_ms, |s| &s.latency)?;
-        registry.fmt_by_config(f, &self.base, response_latency_ms, |s| &s.unclassified.latency)?;
+        registry.fmt_by_config(f, &self.base, response_latency_ms, |s| {
+            &s.unclassified.latency
+        })?;
 
         Ok(())
     }
@@ -89,7 +83,7 @@ where
         f: &mut fmt::Formatter,
         base: B,
         metric: Metric<M>,
-        get_metric: F
+        get_metric: F,
     ) -> fmt::Result
     where
         B: FmtLabels,
@@ -111,7 +105,7 @@ where
         f: &mut fmt::Formatter,
         base: B,
         metric: Metric<M>,
-        get_metric: F
+        get_metric: F,
     ) -> fmt::Result
     where
         B: FmtLabels,
