@@ -1,5 +1,4 @@
 use indexmap::IndexMap;
-use std::fmt;
 use std::hash::Hash;
 use std::sync::{Arc, Mutex, Weak};
 

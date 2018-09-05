@@ -198,3 +198,117 @@ where
         Ok(rsp.into())
     }
 }
+
+#[derive(Debug)]
+struct State {
+    metrics: Arc<Mutex<Metrics>>,
+    stream_open_at: Instant,
+    rx_bytes: usize,
+    tx_bytes: usize,
+}
+
+impl<B> RequestBody<B> {
+    pub(super) fn new(
+        metrics: Arc<Mutex<Metrics>>,
+        stream_open_at: Instant,
+        inner: B
+    ) -> Self {
+        Self {
+            state: Some(State {
+                metrics,
+                stream_open_at,
+                rx_bytes: 0,
+                tx_bytes: 0,
+            }),
+            inner,
+        }
+    }
+}
+
+impl<B> RequestBody<B>
+where
+    B: tower_h2::Body,
+{
+    fn measure_err(&mut self, err: h2::Error) -> h2::Error {
+        if let Some(_reason) = err.reason() {
+            if let Some(_state) = self.state.take() {
+                // TODO
+            }
+        }
+
+        err
+    }
+}
+
+impl<B> tower_h2::Body for RequestBody<B>
+where
+    B: tower_h2::Body,
+{
+    /// The body chunk type
+    type Data = <B::Data as IntoBuf>::Buf;
+
+    fn is_end_stream(&self) -> bool {
+        self.inner.is_end_stream()
+    }
+
+    fn poll_data(&mut self) -> Poll<Option<Self::Data>, h2::Error> {
+        let frame = try_ready!(
+            self.inner
+                .poll_data()
+                .map_err(|e| self.measure_err(e))
+        );
+        let frame = frame.map(|f| f.into_buf());
+
+        if let Some(ref _frame) = frame {
+            if let Some(ref mut _state) = self.state {
+                // TODO
+            }
+        }
+
+        // If the frame ended the stream, send the end of stream event now,
+        // as we may not be polled again.
+        if self.is_end_stream() {
+            if let Some(_state) = self.state.take() {
+                // TODO
+            }
+        }
+
+        Ok(Async::Ready(frame))
+    }
+
+    fn poll_trailers(&mut self) -> Poll<Option<http::HeaderMap>, h2::Error> {
+        let trls = try_ready!(
+            self.inner
+                .poll_trailers()
+                .map_err(|e| self.measure_err(e))
+        );
+
+        if let Some(_state) = self.state.take() {
+            let _grpc_status = trls.as_ref()
+                .and_then(|t| t.get(GRPC_STATUS))
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.parse::<u32>().ok());
+            // TODO
+        }
+
+        Ok(Async::Ready(trls))
+    }
+}
+
+impl<B> ResponseBody<B> {
+    pub(super) fn new(
+        metrics: Arc<Mutex<Metrics>>,
+        stream_open_at: Instant,
+        inner: B,
+    ) -> Self {
+        Self {
+            state: Some(State {
+                metrics,
+                stream_open_at,
+                rx_bytes: 0,
+                tx_bytes: 0,
+            }),
+            inner,
+        }
+    }
+}
