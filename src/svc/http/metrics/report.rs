@@ -25,21 +25,22 @@ metrics! {
 
 /// Reports HTTP metrics for prometheus.
 #[derive(Clone, Debug)]
-pub struct Report<B, S>
+pub struct Report<Base, Config, Class>
 where
-    B: FmtLabels + Clone,
-    S: FmtLabels + Hash + Eq,
+    Base: FmtLabels + Clone,
+    Config: FmtLabels + Hash + Eq,
+    Class: FmtLabels + Hash + Eq.
 {
     base: B,
-    registry: Arc<Mutex<Registry<S>>>,
+    registry: Arc<Mutex<Registry<S, C>>>,
 }
 
 // ===== impl Report =====
 
-impl<B, S> FmtMetrics for Report<B, S>
+impl<Base, Config> FmtMetrics for Report<Base, Config>
 where
-    B: FmtLabels + Clone,
-    S: FmtLabels + Hash + Eq,
+    Base: FmtLabels + Clone,
+    Config: FmtLabels + Hash + Eq,
 {
 
     fn fmt_metrics(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -73,9 +74,9 @@ fn fmt_by_target<S, F, B, M>(
     get_metric: F
 ) -> fmt::Result
 where
-    S: FmtLabels + Hash + Eq,
+    Config: FmtLabels + Hash + Eq,
     F: Fn(&Metrics) -> &M,
-    B: FmtLabels,
+    Base: FmtLabels,
     M: FmtMetric,
 {
     for (tgt, tm) in &reg.by_target {
@@ -96,9 +97,9 @@ fn fmt_by_class<S, F, B, M>(
     get_metric: F
 ) -> fmt::Result
 where
-    S: FmtLabels + Hash + Eq,
+    Config: FmtLabels + Hash + Eq,
     F: Fn(&ClassMetrics) -> &M,
-    B: FmtLabels,
+    Base: FmtLabels,
     M: FmtMetric,
 {
     for (tgt, tm) in &reg.by_target {

@@ -5,13 +5,19 @@ use tower_reconnect;
 
 use super::{IntoNewService, Stack, MakeService, Service};
 
+/// A stack module that adds a `Reconnect middleware.
 #[derive(Copy, Clone, Debug)]
 pub struct Mod;
 
+/// Wraps services with a `Reconnect` middleware.
 #[derive(Clone, Debug)]
-pub struct Reconnect<N: MakeService>(N);
+pub struct Make<N: MakeService>(N);
 
-pub struct ReconnectService<N>
+/// Wraps `tower_reconnect`, handling errors.
+///
+/// Ensures that the underlying service is ready and, if the underlying service
+/// fails to become ready, rebuilds the inner stack.
+pub struct Reconnect<N>
 where
     N: MakeService,
     N::Config: fmt::Debug,
@@ -19,7 +25,7 @@ where
 {
     inner: tower_reconnect::Reconnect<IntoNewService<N>>,
 
-    /// The connection config, used for debug logging.
+    /// The service config, used for debug logging.
     config: N::Config,
 
     /// Prevents logging repeated connect errors.
@@ -42,17 +48,17 @@ where
 {
     type Config = N::Config;
     type Error = N::Error;
-    type Service = ReconnectService<N>;
-    type MakeService = Reconnect<N>;
+    type Service = Reconnect<N>;
+    type MakeService = Make<N>;
 
     fn build(&self, next: N) -> Self::MakeService {
-        Reconnect(next)
+        Make(next)
     }
 }
 
-// ===== impl Reconnect =====
+// ===== impl Make =====
 
-impl<N> MakeService for Reconnect<N>
+impl<N> MakeService for Make<N>
 where
     N: MakeService + Clone,
     N::Config: Clone + fmt::Debug,
@@ -60,12 +66,12 @@ where
 {
     type Config = N::Config;
     type Error = N::Error;
-    type Service = ReconnectService<N>;
+    type Service = Reconnect<N>;
 
     fn make_service(&self, config: &N::Config) -> Result<Self::Service, N::Error> {
         let new_service = self.0.clone().into_new_service(config.clone());
         let inner = tower_reconnect::Reconnect::new(new_service);
-        Ok(ReconnectService {
+        Ok(Reconnect {
             config: config.clone(),
             inner,
             mute_connect_error_log: false,
@@ -73,9 +79,9 @@ where
     }
 }
 
-// ===== impl ReconnectService =====
+// ===== impl Reconnect =====
 
-impl<N> Service for ReconnectService<N>
+impl<N> Service for Reconnect<N>
 where
     N: MakeService,
     N::Config: fmt::Debug,

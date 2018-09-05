@@ -7,15 +7,16 @@ use std::marker::PhantomData;
 use svc::{MakeService, Service, Stack};
 
 /// Determines how a request's response should be classified.
-pub trait Classify<Error> {
+pub trait Classify {
     type Class;
+    type Error;
 
     /// Classifies responses.
     ///
     /// Instances are intended to be used as an `http::Extension` that may be
     /// cloned to inner stack layers. Cloned instances are **not** intended to
     /// share state. Each clone should maintain its own internal state.
-    type ClassifyResponse: ClassifyResponse<Error, Class = Self::Class>
+    type ClassifyResponse: ClassifyResponse<Class = Self::Class, Error = Self::Error>
         + Clone
         + Send
         + Sync
@@ -25,14 +26,16 @@ pub trait Classify<Error> {
 }
 
 /// Classifies a single response.
-pub trait ClassifyResponse<Error> {
+pub trait ClassifyResponse {
     /// A response classification.
     type Class;
+    type Error;
 
     /// Update the classifier with the response headers.
     ///
     /// If this is enough data to classify a response, a classification may be
-    /// returned.
+    /// returned. Implementations should expect that `end` or `error` may be
+    /// called even when a class is returned.
     ///
     /// This is expected to be called only once.
     fn start(&mut self, headers: &http::response::Parts) -> Option<Self::Class>;
@@ -50,11 +53,11 @@ pub trait ClassifyResponse<Error> {
     /// returned.
     ///
     /// This is expected to be called only once.
-    fn error(&mut self, error: &Error) -> Self::Class;
+    fn error(&mut self, error: &Self::Error) -> Self::Class;
 }
 
 /// A `Stack` module that adds a `ClassifyResponse` instance to each
-pub struct Mod<C, E>(C, PhantomData<E>);
+pub struct Mod<C, E>(C);
 
 pub struct Make<C, N> {
     classify: C,
@@ -66,18 +69,18 @@ pub struct ExtendRequest<C, N> {
     inner: N,
 }
 
-impl<E, C: Classify<E> + Clone> Mod<C, E> {
+impl<C: Classify + Clone> Mod<C> {
     fn new(c: C) -> Self {
-        Mod(c, PhantomData)
+        Mod(c)
     }
 }
 
-impl<N, A, B, C> Stack<N> for Mod<C, <N::Service as Service>::Error>
+impl<N, A, B, C> Stack<N> for Mod<C>
 where
     N: MakeService,
     N::Config: FmtLabels + Clone + Hash + Eq,
-    N::Service: Service<Request = http::Request<A>, Response = http::Response<B>>,
-    C: Classify<<N::Service as Service>::Error> + Clone,
+    N::Service: Service<Request = http::Request<A>, Response = http::Response<B>, Error = C::Error>,
+    C: Classify + Clone,
 {
     type Config = N::Config;
     type Error = N::Error;
@@ -98,8 +101,8 @@ impl<N, A, B, C> MakeService for Make<C, N>
 where
     N: MakeService,
     N::Config: FmtLabels + Clone + Hash + Eq,
-    N::Service: Service<Request = http::Request<A>, Response = http::Response<B>>,
-    C: Classify<<N::Service as Service>::Error> + Clone,
+    N::Service: Service<Request = http::Request<A>, Response = http::Response<B>, Error = C::Error>,
+    C: Classify + Clone,
 {
     type Config = N::Config;
     type Error = N::Error;
@@ -107,10 +110,9 @@ where
 
     fn make_service(&self, config: &Self::Config) -> Result<Self::Service, Self::Error> {
         let inner = self.inner.make_service(config)?;
-        Ok(ExtendRequest {
-            classify: self.classify.clone(),
-            inner,
-        })
+        let classify = self.classify.clone();
+
+        Ok(ExtendRequest { classify, inner })
     }
 }
 
@@ -118,8 +120,8 @@ where
 
 impl<S, A, B, C> Service for ExtendRequest<C, S>
 where
-    S: Service<Request = http::Request<A>, Response = http::Response<B>>,
-    C: Classify<S::Error>,
+    N::Service: Service<Request = http::Request<A>, Response = http::Response<B>, Error = C::Error>,
+    C: Classify + Clone,
 {
     type Request = S::Request;
     type Response = S::Response;

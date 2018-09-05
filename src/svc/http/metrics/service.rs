@@ -1,16 +1,22 @@
-use futures::{Future, Poll};
+use bytes::IntoBuf;
+use futures::{Async, Future, Poll};
+use h2;
 use http;
 use std::hash::Hash;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio_timer::clock;
+use tower_h2;
 
 use linkerd2_metrics::FmtLabels;
 
 use svc::{Service, Stack, MakeService};
-use svc::http::classify::{Classify, ClassifyStream};
+use svc::either::Either;
+use svc::http::classify::{Classify, ClassifyResponse};
 use svc::http::metrics::{Registry, Metrics};
 use svc::http::metrics::body::{RequestBody, ResponseBody};
+
+const GRPC_STATUS: &str = "grpc-status";
 
 #[derive(Clone, Debug)]
 pub struct Mod<S, C>
@@ -25,7 +31,7 @@ where
 #[derive(Clone, Debug)]
 pub struct NewMeasure<N, C>
 where
-    C: Classify,
+    C: Classify<<N::Service as Service>::Error>,
     N: MakeService,
     N::Config: FmtLabels + Clone + Hash + Eq,
 {
@@ -35,7 +41,7 @@ where
 }
 
 #[derive(Clone, Debug)]
-pub struct Measure<S: Service, C: Classify> {
+pub struct Measure<S: Service, C: Classify<S::Error>> {
     classify: C,
     metrics: Arc<Mutex<Metrics<C::Class>>>,
     inner: S,
@@ -54,7 +60,7 @@ pub struct RequestBody<T, C: ClassifyStream> {
 
 #[derive(Debug)]
 pub struct ResponseBody<T, C: ClassifyStream> {
-    state: Option<StreamState<C>>,
+    metrics: Arc<Mutex<
     inner: T,
 }
 
@@ -164,16 +170,14 @@ where
 
     fn call(&mut self, req: Self::Request) -> Self::Future {
         let (head, inner) = req.into_parts();
-        let state = Arc::new(StreamState {
-            init_stamp: clock::now(),
-            classify: Mutex::new(self.classify.classify_stream(&head)),
-            metrics: self.metrics.clone(),
-        });
-        let body = RequestBody::new(state.clone(), inner);
+        let classify = self.classify.classify_response(&head);
+
+        let body = RequestBody::new(self.metrics.clone(), inner);
         let req = http::Request::from_parts(head, body);
 
         ResponseFuture {
-            state,
+            classify,
+            metrics: self.metrics.clone(),
             inner: self.inner.call(req),
         }
     }
@@ -188,13 +192,17 @@ where
     type Error = S::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let (head, inner) = try_ready!(self.inner.poll()).into_parts();
-        if let Ok(ref mut classify) = self.state.classify.lock() {
-            classify.response(&head);
-        }
-        let body = ResponseBody::new(self.state.clone(), inner);
+        let mut classify = self.classify.take()
+            .expect("future must not be polled after ready");
+        let class_or_classify = match classify.start(&head) {
+            Some(class) => Either::A(class),
+            None => Either::B(classify),
+        };
 
+        let (head, inner) = try_ready!(self.inner.poll()).into_parts();
+        let body = ResponseBody::new(self.metrics.clone(), class_or_classify);
         let rsp = http::Response::from_parts(head, body);
+
         Ok(rsp.into())
     }
 }
