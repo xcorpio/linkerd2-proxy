@@ -1,13 +1,13 @@
 use std::marker::PhantomData;
 
-use super::{MakeClient, NewClient};
+use super::{Stack, MakeService};
 
-/// Combines two `MakeClients` into one layer.
+/// Combines two `Stacks` into one layer.
 pub struct AndThen<Outer, Inner, Next>
 where
-    Outer: MakeClient<Inner::NewClient>,
-    Inner: MakeClient<Next>,
-    Next: NewClient,
+    Outer: Stack<Inner::MakeService>,
+    Inner: Stack<Next>,
+    Next: MakeService,
 {
     outer: Outer,
     inner: Inner,
@@ -16,9 +16,9 @@ where
 
 impl<Outer, Inner, Next> AndThen<Outer, Inner, Next>
 where
-    Outer: MakeClient<Inner::NewClient>,
-    Inner: MakeClient<Next>,
-    Next: NewClient,
+    Outer: Stack<Inner::MakeService>,
+    Inner: Stack<Next>,
+    Next: MakeService,
 {
     pub(super) fn new(outer: Outer, inner: Inner) -> Self {
         Self {
@@ -29,18 +29,18 @@ where
     }
 }
 
-impl<Outer, Inner, Next> MakeClient<Next> for AndThen<Outer, Inner, Next>
+impl<Outer, Inner, Next> Stack<Next> for AndThen<Outer, Inner, Next>
 where
-    Outer: MakeClient<Inner::NewClient>,
-    Inner: MakeClient<Next>,
-    Next: NewClient,
+    Outer: Stack<Inner::MakeService>,
+    Inner: Stack<Next>,
+    Next: MakeService,
 {
-    type Target = Outer::Target;
+    type Config = Outer::Config;
     type Error = Outer::Error;
-    type Client = Outer::Client;
-    type NewClient = Outer::NewClient;
+    type Service = Outer::Service;
+    type MakeService = Outer::MakeService;
 
-    fn make_client(&self, next: Next) -> Self::NewClient {
-        self.outer.make_client(self.inner.make_client(next))
+    fn build(&self, next: Next) -> Self::MakeService {
+        self.outer.build(self.inner.build(next))
     }
 }

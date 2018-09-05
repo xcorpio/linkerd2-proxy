@@ -2,43 +2,43 @@ use std::marker::PhantomData;
 use tower_service::Service;
 
 use super::either::Either;
-use super::{MakeClient, NewClient};
+use super::{Stack, MakeService};
 
-/// a `MakeClient` that
-pub struct Make<M: MakeClient<N>, N: NewClient>(Option<M>, PhantomData<N>);
+/// a `Stack` that
+pub struct Mod<M: Stack<N>, N: MakeService>(Option<M>, PhantomData<N>);
 
-impl<M, N> Make<M, N>
+impl<M, N> Mod<M, N>
 where
-    M: MakeClient<N>,
-    N: NewClient<Target = M::Target, Error = M::Error>,
+    M: Stack<N>,
+    N: MakeService<Config = M::Config, Error = M::Error>,
 {
     pub fn some(m: M) -> Self {
-        Make(Some(m), PhantomData)
+        Mod(Some(m), PhantomData)
     }
 
     pub fn none() -> Self {
-        Make(None, PhantomData)
+        Mod(None, PhantomData)
     }
 }
 
-impl<M, N> MakeClient<N> for Make<M, N>
+impl<M, N> Stack<N> for Mod<M, N>
 where
-    M: MakeClient<N>,
-    N: NewClient<Target = M::Target, Error = M::Error>,
-    <M::NewClient as NewClient>::Client: Service<
-        Request = <N::Client as Service>::Request,
-        Response = <N::Client as Service>::Response,
-        Error = <N::Client as Service>::Error,
+    M: Stack<N>,
+    N: MakeService<Config = M::Config, Error = M::Error>,
+    <M::MakeService as MakeService>::Service: Service<
+        Request = <N::Service as Service>::Request,
+        Response = <N::Service as Service>::Response,
+        Error = <N::Service as Service>::Error,
     >,
 {
-    type Target = M::Target;
+    type Config = M::Config;
     type Error = M::Error;
-    type Client = <Either<M::NewClient, N> as NewClient>::Client;
-    type NewClient = Either<M::NewClient, N>;
+    type Service = <Either<M::MakeService, N> as MakeService>::Service;
+    type MakeService = Either<M::MakeService, N>;
 
-    fn make_client(&self, next: N) -> Self::NewClient {
+    fn build(&self, next: N) -> Self::MakeService {
         match self.0.as_ref() {
-            Some(ref m) => Either::A(m.make_client(next)),
+            Some(ref m) => Either::A(m.build(next)),
             None => Either::B(next),
         }
     }

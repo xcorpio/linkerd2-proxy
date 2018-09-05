@@ -7,13 +7,13 @@ use tokio_timer::clock;
 
 use linkerd2_metrics::FmtLabels;
 
-use svc::{Service, MakeClient, NewClient};
+use svc::{Service, Stack, MakeService};
 use svc::http::classify::{Classify, ClassifyStream};
 use svc::http::metrics::{Registry, Metrics};
 use svc::http::metrics::body::{RequestBody, ResponseBody};
 
 #[derive(Clone, Debug)]
-pub struct Make<S, C>
+pub struct Mod<S, C>
 where
     S: FmtLabels + Clone + Hash + Eq,
     C: Classify + Clone,
@@ -26,11 +26,11 @@ where
 pub struct NewMeasure<N, C>
 where
     C: Classify,
-    N: NewClient,
-    N::Target: FmtLabels + Clone + Hash + Eq,
+    N: MakeService,
+    N::Config: FmtLabels + Clone + Hash + Eq,
 {
     classify: C,
-    registry: Arc<Mutex<Registry<N::Target, C::Class>>>,
+    registry: Arc<Mutex<Registry<N::Config, C::Class>>>,
     inner: N,
 }
 
@@ -79,22 +79,22 @@ where
     }
 }
 
-impl<C, N, A, B> MakeClient<N> for Make<N::Target, C>
+impl<C, N, A, B> Stack<N> for Mod<N::Config, C>
 where
     C: Classify + Clone,
-    N: NewClient,
-    N::Target: FmtLabels + Clone + Hash + Eq,
-    N::Client: Service<
+    N: MakeService,
+    N::Config: FmtLabels + Clone + Hash + Eq,
+    N::Service: Service<
         Request = http::Request<RequestBody<A, C::ClassifyStream>>,
         Response = http::Response<B>,
     >,
 {
-    type Target = N::Target;
+    type Config = N::Config;
     type Error = N::Error;
-    type Client = <NewMeasure<N, C> as NewClient>::Client;
-    type NewClient = NewMeasure<N, C>;
+    type Service = <NewMeasure<N, C> as MakeService>::Service;
+    type MakeService = NewMeasure<N, C>;
 
-    fn make_client(&self, inner: N) -> Self::NewClient {
+    fn build(&self, inner: N) -> Self::MakeService {
         NewMeasure {
             classify: self.classify.clone(),
             registry: self.registry.clone(),
@@ -105,22 +105,22 @@ where
 
 // ===== impl NewMeasure =====
 
-impl<C, N, A, B> NewClient for NewMeasure<N, C>
+impl<C, N, A, B> MakeService for NewMeasure<N, C>
 where
     C: Classify + Clone,
-    N: NewClient,
-    N::Target: FmtLabels + Clone + Hash + Eq,
-    N::Client: Service<
+    N: MakeService,
+    N::Config: FmtLabels + Clone + Hash + Eq,
+    N::Service: Service<
         Request = http::Request<RequestBody<A, C::Clas>>,
         Response = http::Response<B>,
     >,
 {
-    type Target = N::Target;
+    type Config = N::Config;
     type Error = N::Error;
-    type Client = Measure<N::Client, C>;
+    type Service = Measure<N::Service, C>;
 
-    fn new_client(&self, target: &Self::Target) -> Result<Self::Client, Self::Error> {
-        let inner = self.inner.new_client(target)?;
+    fn make_service(&self, target: &Self::Config) -> Result<Self::Service, Self::Error> {
+        let inner = self.inner.make_service(target)?;
 
         let metrics = match self.registry.lock() {
             Ok(mut r) => {

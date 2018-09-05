@@ -2,7 +2,7 @@ use futures::future::Either as EitherFuture;
 use futures::Poll;
 use tower_service::Service;
 
-use super::NewClient;
+use super::MakeService;
 
 /// A client that may be one of two concrete types.
 pub enum Either<A, B> {
@@ -10,24 +10,24 @@ pub enum Either<A, B> {
     B(B),
 }
 
-impl<A, B> NewClient for Either<A, B>
+impl<A, B> MakeService for Either<A, B>
 where
-    A: NewClient,
-    B: NewClient<Target = A::Target, Error = A::Error>,
-    B::Client: Service<
-        Request = <A::Client as Service>::Request,
-        Response = <A::Client as Service>::Response,
-        Error = <A::Client as Service>::Error,
+    A: MakeService,
+    B: MakeService<Config = A::Config, Error = A::Error>,
+    B::Service: Service<
+        Request = <A::Service as Service>::Request,
+        Response = <A::Service as Service>::Response,
+        Error = <A::Service as Service>::Error,
     >,
 {
-    type Target = A::Target;
+    type Config = A::Config;
     type Error = A::Error;
-    type Client = Either<A::Client, B::Client>;
+    type Service = Either<A::Service, B::Service>;
 
-    fn new_client(&self, target: &Self::Target) -> Result<Self::Client, Self::Error> {
+    fn make_service(&self, config: &Self::Config) -> Result<Self::Service, Self::Error> {
         match self {
-            Either::A(ref a) => a.new_client(target).map(Either::A),
-            Either::B(ref b) => b.new_client(target).map(Either::B),
+            Either::A(ref a) => a.make_service(config).map(Either::A),
+            Either::B(ref b) => b.make_service(config).map(Either::B),
         }
     }
 }

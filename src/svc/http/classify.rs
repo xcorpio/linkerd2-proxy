@@ -4,12 +4,10 @@ use linkerd2_metrics::FmtLabels;
 use std::hash::Hash;
 use std::marker::PhantomData;
 
-use svc::{MakeClient, NewClient, Service};
+use svc::{Stack, MakeService, Service};
 
 /// Determines how a request's response should be classified.
-///
-///
-pub trait Classify<Error>: Clone {
+pub trait Classify<Error> {
     type Class;
 
     /// Classifies responses.
@@ -34,38 +32,39 @@ pub trait ClassifyResponse<Error> {
     fn error(&mut self, error: &Error) -> Self::Class;
 }
 
-pub struct Make<C>(C);
+/// A `Stack` module that adds a `ClassifyResponse` instance to each
+pub struct Mod<C, E>(C, PhantomData<E>);
 
-pub struct NewRequestExtension<C, N> {
-    inner: N,
+pub struct NewAddRequestExtension<C, N> {
     classify: C,
+    inner: N,
 }
 
-pub struct RequestExtension<C, N> {
-    inner: N,
+pub struct AddRequestExtension<C, N> {
     classify: C,
+    inner: N,
 }
 
-impl<E, C: Classify<E>> Make<C> {
+impl<E, C: Classify<E> + Clone> Mod<C, E> {
     fn new(c: C) -> Self {
-        Make(c)
+        Mod(c, PhantomData)
     }
 }
 
-impl<N, A, B, C> MakeClient<N> for Make<C>
+impl<N, A, B, C> Stack<N> for Mod<C, <N::Service as Service>::Error>
 where
-    N: NewClient,
-    N::Target: FmtLabels + Clone + Hash + Eq,
-    N::Client: Service<Request = http::Request<A>, Response = http::Response<B>>,
-    C: Classify<<N::Client as Service>::Error>,
+    N: MakeService,
+    N::Config: FmtLabels + Clone + Hash + Eq,
+    N::Service: Service<Request = http::Request<A>, Response = http::Response<B>>,
+    C: Classify<<N::Service as Service>::Error> + Clone,
 {
-    type Target = N::Target;
+    type Config = N::Config;
     type Error = N::Error;
-    type Client = <NewRequestExtension<C, N> as NewClient>::Client;
-    type NewClient = NewRequestExtension<C, N>;
+    type Service = <NewAddRequestExtension<C, N> as MakeService>::Service;
+    type MakeService = NewAddRequestExtension<C, N>;
 
-    fn make_client(&self, inner: N) -> Self::NewClient {
-        NewRequestExtension {
+    fn build(&self, inner: N) -> Self::MakeService {
+        NewAddRequestExtension {
             classify: self.0.clone(),
             inner,
         }
@@ -74,29 +73,29 @@ where
 
 // ===== impl NewMeasure =====
 
-impl<N, A, B, C> NewClient for NewRequestExtension<C, N>
+impl<N, A, B, C> MakeService for NewAddRequestExtension<C, N>
 where
-    N: NewClient,
-    N::Target: FmtLabels + Clone + Hash + Eq,
-    N::Client: Service<Request = http::Request<A>, Response = http::Response<B>>,
-    C: Classify<<N::Client as Service>::Error>,
+    N: MakeService,
+    N::Config: FmtLabels + Clone + Hash + Eq,
+    N::Service: Service<Request = http::Request<A>, Response = http::Response<B>>,
+    C: Classify<<N::Service as Service>::Error> + Clone,
 {
-    type Target = N::Target;
+    type Config = N::Config;
     type Error = N::Error;
-    type Client = RequestExtension<C, N::Client>;
+    type Service = AddRequestExtension<C, N::Service>;
 
-    fn new_client(&self, target: &Self::Target) -> Result<Self::Client, Self::Error> {
-        let inner = self.inner.new_client(target)?;
-        Ok(RequestExtension {
+    fn make_service(&self, config: &Self::Config) -> Result<Self::Service, Self::Error> {
+        let inner = self.inner.make_service(config)?;
+        Ok(AddRequestExtension {
+            classify: self.classify.clone(),
             inner,
-            _p: PhantomData,
         })
     }
 }
 
-// ===== impl RequestExtension =====
+// ===== impl AddRequestExtension =====
 
-impl<S, A, B, C> Service for RequestExtension<C, S>
+impl<S, A, B, C> Service for AddRequestExtension<C, S>
 where
     S: Service<Request = http::Request<A>, Response = http::Response<B>>,
     C: Classify<S::Error>,
@@ -112,7 +111,9 @@ where
 
     fn call(&mut self, req: Self::Request) -> Self::Future {
         let (mut head, body) = req.into_parts();
-        head.extensions.insert(self.classify.classify(&head));
+
+        let classify_response = self.classify.classify(&head);
+        head.extensions.insert(classify_response);
 
         let req = http::Request::from_parts(head, body);
         self.inner.call(req)

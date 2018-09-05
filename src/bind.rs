@@ -11,7 +11,7 @@ use tower_reconnect::{Reconnect, Error as ReconnectError};
 
 use control::destination::Endpoint;
 use ctx;
-use svc::NewClient;
+use svc::MakeService;
 use telemetry;
 use transparency::{self, HttpBody, h1, orig_proto};
 use transport;
@@ -368,16 +368,16 @@ impl<C, B> Bind<C, B> {
     }
 }
 
-impl<B> NewClient for BindProtocol<ctx::Proxy, B>
+impl<B> MakeService for BindProtocol<ctx::Proxy, B>
 where
     B: tower_h2::Body + Send + 'static,
     <B::Data as ::bytes::IntoBuf>::Buf: Send,
 {
-    type Target = Endpoint;
+    type Config = Endpoint;
     type Error = ();
-    type Client = Service<B>;
+    type Service = Service<B>;
 
-    fn new_client(&self, ep: &Endpoint) -> Result<Self::Client, ()> {
+    fn make_service(&self, ep: &Endpoint) -> Result<Self::Service, ()> {
         Ok(self.bind.bind_service(ep, &self.protocol))
     }
 }

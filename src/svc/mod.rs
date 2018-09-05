@@ -30,89 +30,78 @@ pub mod optional;
 pub mod reconnect;
 mod valid;
 
-use self::valid::ValidNewClient;
+use self::valid::ValidMakeService;
 
-pub trait NewClient {
-    /// Describes a resource to which the client will be attached.
-    ///
-    /// Depending on the implementation, the target may describe a logical name
-    /// to be resolved (i.e. via DNS) and load balanced, or it may describe a
-    /// specific network address to which one or more connections will be
-    /// established, or it may describe an entirely arbitrary "virtual" service
-    /// (i.e. that exists locally in memory).
-    type Target;
+pub trait MakeService {
+    /// Describes how to build
+    type Config;
 
     /// Indicates why the provided `Target` cannot be used to instantiate a client.
     type Error;
 
-    /// Serves requests on behalf of a target.
-    ///
-    /// `Client`s are expected to acquire resources lazily as
-    /// `Service::poll_ready` is called. `Service::poll_ready` must not return
-    /// `Async::Ready` until the service is ready to service requests.
-    /// `Service::call` must not be called until `Service::poll_ready` returns
-    /// `Async::Ready`. When `Service::poll_ready` returns an error, the
-    /// client must be discarded.
-    type Client: Service;
+    /// Serves requests on behalf of a config.
+    type Service: Service;
 
-    /// Creates a client
-    ///
-    /// If the provided `Target` is valid, immediately return a `Client` that may
-    /// become ready lazily, i.e. as the target is resolved and connections are
+    /// If the provided `Config` is valid, immediately return a `Service` that may
+    /// become ready lazily, i.e. as the config is resolved and connections are
     /// established.
-    fn new_client(&self, t: &Self::Target) -> Result<Self::Client, Self::Error>;
+    fn make_service(&self, t: &Self::Config) -> Result<Self::Service, Self::Error>;
 
-    fn into_new_service(self, target: Self::Target) -> IntoNewService<Self>
+    fn into_new_service(self, config: Self::Config) -> IntoNewService<Self>
     where
         Self: Sized,
     {
         IntoNewService {
-            new_client: self,
-            target,
+            make_service: self,
+            config,
         }
     }
 }
 
-/// Builds `NewClient`s that decorate another `NewClient`.
-pub trait MakeClient<Next: NewClient> {
-    type Target;
+/// Composes client functionality for `MakeService`
+pub trait Stack<Next: MakeService> {
+    type Config;
     type Error;
-    type Client: Service;
-    type NewClient: NewClient<Target = Self::Target, Error = Self::Error, Client = Self::Client>;
+    type Service: Service;
+    type MakeService: MakeService<
+        Config = Self::Config,
+        Error = Self::Error,
+        Service = Self::Service,
+    >;
 
-    fn make_client(&self, next: Next) -> Self::NewClient;
+    fn build(&self, next: Next) -> Self::MakeService;
 
     fn and_then<M, N>(self, inner: M) -> and_then::AndThen<Self, M, N>
     where
-        Self: Sized + MakeClient<M::NewClient>,
-        M: MakeClient<N>,
-        N: NewClient,
+        Self: Sized + Stack<M::MakeService>,
+        M: Stack<N>,
+        N: MakeService,
     {
         and_then::AndThen::new(self, inner)
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct IntoNewService<N: NewClient> {
-    new_client: N,
-    target: N::Target,
+pub struct IntoNewService<N: MakeService> {
+    make_service: N,
+    config: N::Config,
 }
 
-impl<N: NewClient> IntoNewService<N> {
-    fn target(&self) -> &N::Target {
-        &self.target
+impl<N: MakeService> IntoNewService<N> {
+    fn config(&self) -> &N::Config {
+        &self.config
     }
 }
 
-impl<N: NewClient> NewService for IntoNewService<N> {
-    type Request = <N::Client as Service>::Request;
-    type Response = <N::Client as Service>::Response;
-    type Error = <N::Client as Service>::Error;
-    type Service = N::Client;
+impl<N: MakeService> NewService for IntoNewService<N> {
+    type Request = <N::Service as Service>::Request;
+    type Response = <N::Service as Service>::Response;
+    type Error = <N::Service as Service>::Error;
+    type Service = N::Service;
     type InitError = N::Error;
     type Future = FutureResult<Self::Service, Self::InitError>;
 
     fn new_service(&self) -> Self::Future {
-        future::result(self.new_client.new_client(&self.target))
+        future::result(self.make_service.make_service(&self.config))
     }
 }

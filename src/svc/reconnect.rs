@@ -3,24 +3,24 @@ use std::fmt;
 use futures::{task, Async, Future, Poll};
 use tower_reconnect;
 
-use super::{IntoNewService, MakeClient, NewClient, Service};
+use super::{IntoNewService, Stack, MakeService, Service};
 
 #[derive(Copy, Clone, Debug)]
-pub struct Make;
+pub struct Mod;
 
 #[derive(Clone, Debug)]
-pub struct Reconnect<N: NewClient>(N);
+pub struct Reconnect<N: MakeService>(N);
 
 pub struct ReconnectService<N>
 where
-    N: NewClient,
-    N::Target: fmt::Debug,
+    N: MakeService,
+    N::Config: fmt::Debug,
     N::Error: fmt::Display,
 {
     inner: tower_reconnect::Reconnect<IntoNewService<N>>,
 
-    /// The connection target, used for debug logging.
-    target: N::Target,
+    /// The connection config, used for debug logging.
+    config: N::Config,
 
     /// Prevents logging repeated connect errors.
     ///
@@ -28,45 +28,45 @@ where
     mute_connect_error_log: bool,
 }
 
-pub struct ResponseFuture<N: NewClient> {
+pub struct ResponseFuture<N: MakeService> {
     inner: <tower_reconnect::Reconnect<IntoNewService<N>> as Service>::Future,
 }
 
 // ===== impl Make =====
 
-impl<N> MakeClient<N> for Make
+impl<N> Stack<N> for Mod
 where
-    N: NewClient + Clone,
-    N::Target: Clone + fmt::Debug,
+    N: MakeService + Clone,
+    N::Config: Clone + fmt::Debug,
     N::Error: fmt::Display,
 {
-    type Target = N::Target;
+    type Config = N::Config;
     type Error = N::Error;
-    type Client = ReconnectService<N>;
-    type NewClient = Reconnect<N>;
+    type Service = ReconnectService<N>;
+    type MakeService = Reconnect<N>;
 
-    fn make_client(&self, next: N) -> Self::NewClient {
+    fn build(&self, next: N) -> Self::MakeService {
         Reconnect(next)
     }
 }
 
 // ===== impl Reconnect =====
 
-impl<N> NewClient for Reconnect<N>
+impl<N> MakeService for Reconnect<N>
 where
-    N: NewClient + Clone,
-    N::Target: Clone + fmt::Debug,
+    N: MakeService + Clone,
+    N::Config: Clone + fmt::Debug,
     N::Error: fmt::Display,
 {
-    type Target = N::Target;
+    type Config = N::Config;
     type Error = N::Error;
-    type Client = ReconnectService<N>;
+    type Service = ReconnectService<N>;
 
-    fn new_client(&self, target: &N::Target) -> Result<Self::Client, N::Error> {
-        let new_service = self.0.clone().into_new_service(target.clone());
+    fn make_service(&self, config: &N::Config) -> Result<Self::Service, N::Error> {
+        let new_service = self.0.clone().into_new_service(config.clone());
         let inner = tower_reconnect::Reconnect::new(new_service);
         Ok(ReconnectService {
-            target: target.clone(),
+            config: config.clone(),
             inner,
             mute_connect_error_log: false,
         })
@@ -77,13 +77,13 @@ where
 
 impl<N> Service for ReconnectService<N>
 where
-    N: NewClient,
-    N::Target: fmt::Debug,
+    N: MakeService,
+    N::Config: fmt::Debug,
     N::Error: fmt::Display,
 {
-    type Request = <N::Client as Service>::Request;
-    type Response = <N::Client as Service>::Response;
-    type Error = <N::Client as Service>::Error;
+    type Request = <N::Service as Service>::Request;
+    type Response = <N::Service as Service>::Response;
+    type Error = <N::Service as Service>::Error;
     type Future = ResponseFuture<N>;
 
     fn poll_ready(&mut self) -> Poll<(), Self::Error> {
@@ -102,15 +102,15 @@ where
             }
 
             Err(tower_reconnect::Error::Connect(err)) => {
-                // A connection could not be established to the target.
+                // A connection could not be established to the config.
 
                 // This is only logged as a warning at most once. Subsequent
                 // errors are logged at debug.
                 if !self.mute_connect_error_log {
                     self.mute_connect_error_log = true;
-                    warn!("connect error to {:?}: {}", self.target, err);
+                    warn!("connect error to {:?}: {}", self.config, err);
                 } else {
-                    debug!("connect error to {:?}: {}", self.target, err);
+                    debug!("connect error to {:?}: {}", self.config, err);
                 }
 
                 // The inner service is now idle and will renew its internal
@@ -137,9 +137,9 @@ where
     }
 }
 
-impl<N: NewClient> Future for ResponseFuture<N> {
-    type Item = <N::Client as Service>::Response;
-    type Error = <N::Client as Service>::Error;
+impl<N: MakeService> Future for ResponseFuture<N> {
+    type Item = <N::Service as Service>::Response;
+    type Error = <N::Service as Service>::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         self.inner.poll().map_err(|e| match e {

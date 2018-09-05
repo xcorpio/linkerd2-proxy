@@ -1,7 +1,7 @@
 use futures::{future, Future, Poll};
 use http;
 
-use svc::{http::h1, NewClient, NewService, Service};
+use svc::{http::h1, MakeService, NewService, Service};
 
 /// Rewrites HTTP/1.x requests so that their URIs are in a canonical form.
 ///
