@@ -4,7 +4,7 @@ use linkerd2_metrics::FmtLabels;
 use std::hash::Hash;
 use std::marker::PhantomData;
 
-use svc::{Stack, MakeService, Service};
+use svc::{MakeService, Service, Stack};
 
 /// Determines how a request's response should be classified.
 pub trait Classify<Error> {
@@ -24,23 +24,44 @@ pub trait Classify<Error> {
     fn classify(&self, req: &http::request::Parts) -> Self::ClassifyResponse;
 }
 
+/// Classifies a single response.
 pub trait ClassifyResponse<Error> {
+    /// A response classification.
     type Class;
 
+    /// Update the classifier with the response headers.
+    ///
+    /// If this is enough data to classify a response, a classification may be
+    /// returned.
+    ///
+    /// This is expected to be called only once.
     fn start(&mut self, headers: &http::response::Parts) -> Option<Self::Class>;
+
+    /// Update the classifier with the response trailers.
+    ///
+    /// Because trailers indicate an EOS, a classification must be returned.
+    ///
+    /// This is expected to be called only once.
     fn end(&mut self, headers: &http::HeaderMap) -> Self::Class;
+
+    /// Update the classifier with an underlying error.
+    ///
+    /// Because errors indicate an end-of-stream, a classification must be
+    /// returned.
+    ///
+    /// This is expected to be called only once.
     fn error(&mut self, error: &Error) -> Self::Class;
 }
 
 /// A `Stack` module that adds a `ClassifyResponse` instance to each
 pub struct Mod<C, E>(C, PhantomData<E>);
 
-pub struct NewAddRequestExtension<C, N> {
+pub struct Make<C, N> {
     classify: C,
     inner: N,
 }
 
-pub struct AddRequestExtension<C, N> {
+pub struct ExtendRequest<C, N> {
     classify: C,
     inner: N,
 }
@@ -60,11 +81,11 @@ where
 {
     type Config = N::Config;
     type Error = N::Error;
-    type Service = <NewAddRequestExtension<C, N> as MakeService>::Service;
-    type MakeService = NewAddRequestExtension<C, N>;
+    type Service = <Make<C, N> as MakeService>::Service;
+    type MakeService = Make<C, N>;
 
     fn build(&self, inner: N) -> Self::MakeService {
-        NewAddRequestExtension {
+        Make {
             classify: self.0.clone(),
             inner,
         }
@@ -73,7 +94,7 @@ where
 
 // ===== impl NewMeasure =====
 
-impl<N, A, B, C> MakeService for NewAddRequestExtension<C, N>
+impl<N, A, B, C> MakeService for Make<C, N>
 where
     N: MakeService,
     N::Config: FmtLabels + Clone + Hash + Eq,
@@ -82,20 +103,20 @@ where
 {
     type Config = N::Config;
     type Error = N::Error;
-    type Service = AddRequestExtension<C, N::Service>;
+    type Service = ExtendRequest<C, N::Service>;
 
     fn make_service(&self, config: &Self::Config) -> Result<Self::Service, Self::Error> {
         let inner = self.inner.make_service(config)?;
-        Ok(AddRequestExtension {
+        Ok(ExtendRequest {
             classify: self.classify.clone(),
             inner,
         })
     }
 }
 
-// ===== impl AddRequestExtension =====
+// ===== impl ExtendRequest =====
 
-impl<S, A, B, C> Service for AddRequestExtension<C, S>
+impl<S, A, B, C> Service for ExtendRequest<C, S>
 where
     S: Service<Request = http::Request<A>, Response = http::Response<B>>,
     C: Classify<S::Error>,
