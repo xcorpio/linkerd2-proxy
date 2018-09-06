@@ -39,12 +39,12 @@ pub trait ClassifyResponse {
     /// This is expected to be called only once.
     fn start(&mut self, headers: &http::response::Parts) -> Option<Self::Class>;
 
-    /// Update the classifier with the response trailers.
+    /// Update the classifier with an EOS.
     ///
     /// Because trailers indicate an EOS, a classification must be returned.
     ///
     /// This is expected to be called only once.
-    fn end(&mut self, headers: &http::HeaderMap) -> Self::Class;
+    fn eos(&mut self, trailers: Option<&http::HeaderMap>) -> Self::Class;
 
     /// Update the classifier indicating that the request was canceled.
     ///
