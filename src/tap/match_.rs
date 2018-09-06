@@ -10,7 +10,6 @@ use super::Event;
 use linkerd2_proxy_api::net::ip_address;
 use linkerd2_proxy_api::tap::observe_request;
 use convert::TryFrom;
-:
 use super::ctx;
 
 #[derive(Clone, Debug)]
@@ -309,7 +308,7 @@ impl<'a> TryFrom<&'a observe_request::match_::tcp::Netmask> for NetMatch {
 // ===== impl HttpMatch ======
 
 impl HttpMatch {
-    fn matches(&self, req: &Arc<ctx::http::Request>) -> bool {
+    fn matches(&self, req: &Arc<ctx::Request>) -> bool {
         match *self {
             HttpMatch::Scheme(ref m) => req.uri
                 .scheme_part()
@@ -539,7 +538,7 @@ mod tests {
         }
 
         // TODO
-        // fn http_matches(m: HttpMatch, ctx: Arc<ctx::http::Request>) -> bool {
+        // fn http_matches(m: HttpMatch, ctx: Arc<ctx::Request>) -> bool {
         //     let matches = false;
         //     m.matches(&addr) == matches
         // }

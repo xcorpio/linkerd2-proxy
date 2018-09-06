@@ -89,6 +89,7 @@ mod map_err;
 mod outbound;
 pub mod stream;
 mod svc;
+mod tap;
 pub mod task;
 pub mod telemetry;
 mod transparency;

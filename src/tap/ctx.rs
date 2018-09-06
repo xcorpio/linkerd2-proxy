@@ -4,8 +4,6 @@ use std::sync::{Arc, atomic::AtomicUsize};
 use std::sync::atomic::Ordering;
 
 use ctx;
-use transport::tls;
-use conditional::Conditional;
 
 
 /// A `RequestId` can be mapped to a `u64`. No `RequestId`s will map to the
@@ -70,20 +68,6 @@ impl Request {
         Arc::new(r)
     }
 
-    pub fn tls_identity(&self) -> Conditional<&tls::Identity, tls::ReasonForNoIdentity> {
-        self.client.tls_identity()
-    }
-
-    /// Returns a `TlsStatus` indicating if the request was sent was over TLS.
-    pub fn tls_status(&self) -> ctx::transport::TlsStatus {
-        use ctx::Proxy::*;
-        // The proxy only handles TLS on one side of each proxy.
-        match self.server.proxy {
-            Outbound => self.client.tls_status,
-            Inbound => self.server.tls_status,
-        }
-    }
-
     pub fn labels(&self) -> &IndexMap<String, String> {
         self.client.labels()
     }
@@ -97,14 +81,5 @@ impl Response {
         };
 
         Arc::new(r)
-    }
-
-    /// Returns a `TlsStatus` indicating if the response was sent was over TLS.
-    pub fn tls_status(&self) -> ctx::transport::TlsStatus {
-        self.request.tls_status()
-    }
-
-    pub fn labels(&self) -> &IndexMap<String, String> {
-        self.request.labels()
     }
 }

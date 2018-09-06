@@ -3,7 +3,6 @@ use indexmap::IndexMap;
 use std::sync::{Arc, Mutex};
 
 use linkerd2_proxy_api::tap::observe_request;
-use svc::http::Classify;
 
 pub mod ctx;
 pub mod event;
@@ -15,7 +14,7 @@ use self::match_::*;
 pub use self::match_::InvalidMatch;
 pub use self::service::{Mod, Make, TapService};
 
-pub fn new<C: Classify>() -> (Mod<C>, Arc<Mutex<Taps>>) {
+pub fn new() -> (Mod, Arc<Mutex<Taps>>) {
     let taps = Arc::new(Mutex::new(Taps::default()));
     (Mod::new(taps.clone()), taps)
 }
