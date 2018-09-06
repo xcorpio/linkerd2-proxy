@@ -12,8 +12,6 @@ use svc::http::classify::{Classify, ClassifyResponse};
 use svc::http::metrics::{Metrics, ClassMetrics, Registry};
 use svc::{MakeService, Service, Stack};
 
-const GRPC_STATUS: &str = "grpc-status";
-
 /// A stack module that wraps services to record metrics.
 #[derive(Clone, Debug)]
 pub struct Mod<T, C>
