@@ -10,7 +10,8 @@ use super::Event;
 use linkerd2_proxy_api::net::ip_address;
 use linkerd2_proxy_api::tap::observe_request;
 use convert::TryFrom;
-use ctx;
+:
+use super::ctx;
 
 #[derive(Clone, Debug)]
 pub(super) enum Match {
