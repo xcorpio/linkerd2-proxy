@@ -1,13 +1,14 @@
 use std::fmt;
 
 use transport::metrics as transport;
-use super::{http, process, tls_config_reload};
+use svc::http::metrics::Report as HttpReport;
+use super::{process, tls_config_reload};
 use super::metrics::FmtMetrics;
 
 /// Implements `FmtMetrics` to report runtime metrics.
 #[derive(Clone, Debug)]
 pub struct Report {
-    http: http::Report,
+    http: HttpReport,
     transports: transport::Report,
     tls_config_reload: tls_config_reload::Report,
     process: process::Report,

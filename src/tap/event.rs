@@ -27,6 +27,8 @@ pub struct StreamRequestFail {
 pub struct StreamRequestEnd {
     pub request_open_at: Instant,
     pub request_end_at: Instant,
+    pub bytes_sent: u64,
+    pub frames_sent: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -42,6 +44,8 @@ pub struct StreamResponseFail {
     pub response_first_frame_at: Option<Instant>,
     pub response_fail_at: Instant,
     pub error: h2::Reason,
+    pub bytes_sent: u64,
+    pub frames_sent: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -51,4 +55,6 @@ pub struct StreamResponseEnd {
     pub response_first_frame_at: Instant,
     pub response_end_at: Instant,
     pub grpc_status: Option<u32>,
+    pub bytes_sent: u64,
+    pub frames_sent: u32,
 }

@@ -7,8 +7,7 @@ use std::sync::Arc;
 
 use linkerd2_proxy_api::*;
 use convert::*;
-use ctx;
-use telemetry::http::event::{self, Event};
+use tap::{ctx, event, Event};
 
 #[derive(Debug, Clone)]
 pub struct UnknownEvent;
@@ -27,7 +26,7 @@ impl Error for UnknownEvent {
 }
 
 impl event::StreamResponseEnd {
-    fn to_tap_event(&self, ctx: &Arc<ctx::http::Request>) -> tap::TapEvent {
+    fn to_tap_event(&self, ctx: &Arc<ctx::Request>) -> tap::TapEvent {
         let eos = self.grpc_status
             .map(tap::Eos::from_grpc_status)
             ;
@@ -44,7 +43,7 @@ impl event::StreamResponseEnd {
         };
 
         tap::TapEvent {
-            proxy_direction: ctx.server.direction().into(),
+            proxy_direction: ctx.server.proxy.into(),
             source: Some((&ctx.server.remote).into()),
             source_meta: Some(ctx.server.src_meta()),
             destination: Some((&ctx.client.remote).into()),
@@ -57,7 +56,7 @@ impl event::StreamResponseEnd {
 }
 
 impl event::StreamResponseFail {
-    fn to_tap_event(&self, ctx: &Arc<ctx::http::Request>) -> tap::TapEvent {
+    fn to_tap_event(&self, ctx: &Arc<ctx::Request>) -> tap::TapEvent {
         let end = tap::tap_event::http::ResponseEnd {
             id: Some(tap::tap_event::http::StreamId {
                 base: 0, // TODO FIXME
@@ -83,7 +82,7 @@ impl event::StreamResponseFail {
 }
 
 impl event::StreamRequestFail {
-    fn to_tap_event(&self, ctx: &Arc<ctx::http::Request>) -> tap::TapEvent {
+    fn to_tap_event(&self, ctx: &Arc<ctx::Request>) -> tap::TapEvent {
         let end = tap::tap_event::http::ResponseEnd {
             id: Some(tap::tap_event::http::StreamId {
                 base: 0, // TODO FIXME

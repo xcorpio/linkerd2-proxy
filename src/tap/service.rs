@@ -57,8 +57,8 @@ struct RequestState {
     ctx: Arc<ctx::Request>,
     taps: Option<Arc<Mutex<Taps>>>,
     request_open_at: Instant,
-    byte_count: usize,
-    frame_count: usize,
+    byte_count: u64,
+    frame_count: u32,
 }
 
 #[derive(Debug)]
@@ -74,8 +74,8 @@ struct ResponseState {
     request_open_at: Instant,
     response_open_at: Instant,
     response_first_frame_at: Option<Instant>,
-    byte_count: usize,
-    frame_count: usize,
+    byte_count: u64,
+    frame_count: u32,
 }
 
 // ==== impl Mod ====

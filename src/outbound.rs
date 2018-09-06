@@ -14,19 +14,15 @@ use tower_h2;
 use tower_h2_balance::{PendingUntilFirstData, PendingUntilFirstDataBody};
 use linkerd2_proxy_router::Recognize;
 
-use bind::{self, Bind, Protocol};
 use control::destination::{self, Resolution};
 use svc::MakeService;
 use ctx;
-use telemetry::http::service::{ResponseBody as SensorBody};
 use timeout::Timeout;
 use transparency::{h1, HttpBody};
 use transport::{DnsNameAndPort, Host, HostAndPort};
 
-type BindProtocol<B> = bind::BindProtocol<ctx::Proxy, B>;
-
-pub struct Outbound<B> {
-    bind: Bind<ctx::Proxy, B>,
+pub struct Outbound<M: MakeService> {
+    make: M,
     discovery: destination::Resolver,
     bind_timeout: Duration,
 }
@@ -48,13 +44,14 @@ pub enum Destination {
 
 // ===== impl Outbound =====
 
-impl<B> Outbound<B> {
-    pub fn new(bind: Bind<ctx::Proxy, B>,
-               discovery: destination::Resolver,
-               bind_timeout: Duration)
-               -> Outbound<B> {
+impl<M: MakeService> Outbound<M> {
+    pub fn new(
+        make: M,
+        discovery: destination::Resolver,
+        bind_timeout: Duration
+    ) -> Outbound<B> {
         Self {
-            bind,
+            make,
             discovery,
             bind_timeout,
         }
@@ -120,14 +117,13 @@ impl<B> Outbound<B> {
     }
 }
 
-impl<B> Clone for Outbound<B>
+impl<M> Clone for Outbound<M>
 where
-    B: tower_h2::Body + Send + 'static,
-    B::Data: Send,
+    M: MakeService + Clone,
 {
     fn clone(&self) -> Self {
         Self {
-            bind: self.bind.clone(),
+            make: self.make.clone(),
             discovery: self.discovery.clone(),
             bind_timeout: self.bind_timeout.clone(),
         }

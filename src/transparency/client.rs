@@ -8,9 +8,8 @@ use tokio_connect::Connect;
 use tower_service::{Service, NewService};
 use tower_h2;
 
-use bind;
 use task::BoxExecutor;
-use telemetry::http::service::RequestBody;
+use svc::http::metrics::service::RequestBody;
 use super::glue::{BodyPayload, HttpBody, HyperConnect};
 use super::h1;
 use super::upgrade::{HttpConnect, Http11Upgrade};

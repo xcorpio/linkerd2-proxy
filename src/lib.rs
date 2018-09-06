@@ -74,7 +74,6 @@ use tower_fn::*;
 use linkerd2_proxy_router::{Recognize, Router, Error as RouteError};
 
 pub mod app;
-mod bind;
 pub mod config;
 pub mod conditional;
 pub mod control;
@@ -98,7 +97,6 @@ pub mod timeout;
 mod tower_fn; // TODO: move to tower-fn
 mod watch_service; // TODO: move to tower
 
-use bind::Bind;
 use conditional::Conditional;
 use inbound::Inbound;
 use map_err::MapErr;
@@ -255,7 +253,7 @@ where
         );
 
         let (taps, observe) = control::Observe::new(100);
-        let (http_sensors, http_report) = telemetry::http::new(config.metrics_retain_idle, &taps);
+        //let (http_sensors, http_report) = svc::http::metrics::new(&taps);
 
         let (transport_registry, transport_report) = transport::metrics::new();
 
@@ -297,18 +295,11 @@ where
 
         let (drain_tx, drain_rx) = drain::channel();
 
-        let bind = Bind::new(
-            http_sensors.clone(),
-            transport_registry.clone(),
-            tls_client_config
-        );
-
         // Setup the public listener. This will listen on a publicly accessible
         // address and listen for inbound connections that should be forwarded
         // to the managed application (private destination).
         let inbound = {
             let ctx = ctx::Proxy::Inbound;
-            let bind = bind.clone().with_ctx(ctx);
             let default_addr = config.private_forward.map(|a| a.into());
 
             let router = Router::new(
@@ -333,7 +324,6 @@ where
         // to a remote service (public destination).
         let outbound = {
             let ctx = ctx::Proxy::Outbound;
-            let bind = bind.clone().with_ctx(ctx);
             let router = Router::new(
                 Outbound::new(bind, resolver, config.bind_timeout),
                 config.outbound_router_capacity,

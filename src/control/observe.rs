@@ -9,9 +9,7 @@ use tower_grpc::{self as grpc, Response};
 
 use linkerd2_proxy_api::tap::{server, ObserveRequest, TapEvent};
 use convert::*;
-use ctx;
-use telemetry::Event;
-use telemetry::tap::{Tap, Taps};
+use tap::{ctx, Event, Tap, Taps};
 use std::hash::{Hash, Hasher};
 
 #[derive(Clone, Debug)]
@@ -31,7 +29,7 @@ pub struct TapEvents {
 
 // `IndexSet<RequestById>` is equivalent to `IndexMap<RequestId, Request>` but
 // avoids storing the `RequestID` twice.
-struct RequestById(Arc<ctx::http::Request>);
+struct RequestById(Arc<ctx::Request>);
 
 impl Observe {
     pub fn new(tap_capacity: usize) -> (Arc<Mutex<Taps>>, Observe) {
@@ -175,7 +173,7 @@ impl Hash for RequestById {
     }
 }
 
-impl Equivalent<RequestById> for ctx::http::RequestId {
+impl Equivalent<RequestById> for ctx::RequestId {
     /// Compare self to `key` and return `true` if they are equal.
     fn equivalent(&self, key: &RequestById) -> bool {
         *self == key.0.id
