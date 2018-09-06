@@ -69,8 +69,8 @@ pub struct ResponseBody<T, C: ClassifyResponse> {
 
     taps: Arc<Mutex<Taps>>,
 
-    stream_open_at: Instant,
-    first_byte_at: Option<Instant>,
+    request_open_at: Instant,
+    response_open_at: Option<Instant>,
 
     inner: T,
 }
@@ -188,11 +188,12 @@ where
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         let (head, inner) = try_ready!(self.inner.poll()).into_parts();
-
+        let response_open_at = clock::now();
         let body = ResponseBody {
             classify: self.classify.take(),
             taps: self.taps.clone(),
             stream_open_at: self.stream_open_at,
+            response_open_at,
             first_byte_at: None,
             inner,
         };

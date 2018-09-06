@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use linkerd2_proxy_api::tap::observe_request;
 use svc::http::Classify;
 
+pub mod ctx;
 pub mod event;
 mod match_;
 mod service;
