@@ -42,9 +42,7 @@ pub struct ResponseFuture<S>
 where
     S: Service,
 {
-    ctx: Option<Arc<ctx::Request>>,
-    taps: Arc<Mutex<Taps>>,
-    request_open_at: Instant,
+    state: Option<RequestState>,
     inner: S::Future,
 }
 
@@ -54,7 +52,7 @@ pub struct RequestBody<B> {
     inner: B,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct RequestState {
     ctx: Arc<ctx::Request>,
     taps: Option<Arc<Mutex<Taps>>>,
@@ -189,13 +187,12 @@ where
 
         let req = {
             let (head, inner) = req.into_parts();
+            let state = state.clone();
             http::Request::from_parts(head, RequestBody { state, inner })
         };
 
         ResponseFuture {
-            ctx,
-            taps: self.taps.clone(),
-            request_open_at,
+            state,
             inner: self.inner.call(req),
         }
     }
@@ -210,38 +207,54 @@ where
     type Error = h2::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let rsp = try_ready!(self.inner.poll());
+        let rsp = match self.inner.poll() {
+            Ok(Async::NotReady) => return Ok(Async::NotReady),
+            Ok(Async::Ready(rsp)) => rsp,
+            Err(e) => {
+                if let Some(mut state) = self.state.take() {
+                    state.tap_err(&e);
+                }
+                return Err(e);
+            }
+        };
         let response_open_at = clock::now();
 
-        let ctx = self.ctx.as_ref().map(|req| ctx::Response::new(&rsp, req));
+        let state = if let Some(mut req) = self.state.take() {
+            if let Some(taps) = req.taps.take() {
+                let ctx = ctx::Response::new(&rsp, &req.ctx);
 
-        if let Some(ctx) = ctx.as_ref() {
-            if let Ok(mut taps) = self.taps.lock() {
-                taps.inspect(&event::Event::StreamResponseOpen(
-                    ctx.clone(),
-                    event::StreamResponseOpen {
-                        request_open_at: self.request_open_at,
-                        response_open_at,
-                    },
-                ));
+                if let Ok(mut taps) = taps.lock() {
+                    taps.inspect(&event::Event::StreamResponseOpen(
+                        ctx.clone(),
+                        event::StreamResponseOpen {
+                            request_open_at: req.request_open_at,
+                            response_open_at,
+                        },
+                    ));
+                }
+
+                let mut state = ResponseState {
+                    ctx,
+                    taps: Some(taps),
+                    request_open_at: req.request_open_at,
+                    response_open_at,
+                    response_first_frame_at: None,
+                    byte_count: 0,
+                    frame_count: 0,
+                };
+
+                if rsp.body().is_end_stream() {
+                    state.tap_eos(Some(rsp.headers()));
+                }
+
+                Some(state)
+            } else {
+                None
             }
-        }
+        } else {
+            None
+        };
 
-        let mut state = ctx.map(|ctx| ResponseState {
-            ctx,
-            taps: Some(self.taps.clone()),
-            request_open_at: self.request_open_at,
-            response_open_at,
-            response_first_frame_at: None,
-            byte_count: 0,
-            frame_count: 0,
-        });
-
-        if rsp.body().is_end_stream() {
-            if let Some(mut state) = state.take() {
-                state.tap_eos(Some(rsp.headers()));
-            }
-        }
 
         let rsp = {
             let (head, inner) = rsp.into_parts();
