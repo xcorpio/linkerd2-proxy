@@ -9,10 +9,8 @@ use tokio_timer::clock;
 use tower_h2;
 
 use svc::http::classify::{Classify, ClassifyResponse};
-use svc::http::metrics::{Metrics, ClassMetrics, Registry};
+use svc::http::metrics::{ClassMetrics, Metrics, Registry};
 use svc::{MakeService, Service, Stack};
-
-const GRPC_STATUS: &str = "grpc-status";
 
 /// A stack module that wraps services to record metrics.
 #[derive(Clone, Debug)]
@@ -63,26 +61,28 @@ where
 }
 
 #[derive(Debug)]
-pub struct RequestBody<T, C>
+pub struct RequestBody<B, C>
 where
+    B: tower_h2::Body,
     C: Hash + Eq,
 {
     metrics: Option<Arc<Mutex<Metrics<C>>>>,
-    inner: T,
+    inner: B,
 }
 
 #[derive(Debug)]
-pub struct ResponseBody<T, C>
+pub struct ResponseBody<B, C>
 where
-    C: ClassifyResponse,
+    B: tower_h2::Body,
+    C: ClassifyResponse<Error = h2::Error>,
     C::Class: Hash + Eq,
 {
-    class: Option<C::Class>,
+    class_at_first_byte: Option<C::Class>,
     classify: Option<C>,
     metrics: Option<Arc<Mutex<Metrics<C::Class>>>>,
     stream_open_at: Instant,
     first_byte_at: Option<Instant>,
-    inner: T,
+    inner: B,
 }
 
 // ===== impl Make =====
@@ -106,9 +106,11 @@ where
     N::Service: Service<
         Request = http::Request<RequestBody<A, C::Class>>,
         Response = http::Response<B>,
-        Error = C::Error,
+        Error = h2::Error,
     >,
-    C: Classify,
+    A: tower_h2::Body,
+    B: tower_h2::Body,
+    C: Classify<Error = h2::Error>,
     C::ClassifyResponse: Debug + Send + Sync + 'static,
     C::Class: Hash + Eq,
 {
@@ -136,7 +138,9 @@ where
         Response = http::Response<B>,
         Error = C::Error,
     >,
-    C: Classify,
+    A: tower_h2::Body,
+    B: tower_h2::Body,
+    C: Classify<Error = h2::Error>,
     C::Class: Hash + Eq,
     C::ClassifyResponse: Debug + Send + Sync + 'static,
 {
@@ -168,9 +172,11 @@ where
     S: Service<
         Request = http::Request<RequestBody<A, C::Class>>,
         Response = http::Response<B>,
-        Error = C::Error,
+        Error = h2::Error,
     >,
-    C: Classify,
+    A: tower_h2::Body,
+    B: tower_h2::Body,
+    C: Classify<Error = h2::Error>,
     C::Class: Hash + Eq,
     C::ClassifyResponse: Debug + Send + Sync + 'static,
 {
@@ -184,17 +190,27 @@ where
     }
 
     fn call(&mut self, req: Self::Request) -> Self::Future {
-        let classify = req.extensions().get::<C::ClassifyResponse>().cloned();
+        let mut req_metrics = self.metrics.clone();
 
-        let (head, inner) = req.into_parts();
-        let body = RequestBody {
-            metrics: self.metrics.clone(),
-            inner,
+        if req.body().is_end_stream() {
+             if let Some(lock) = req_metrics.take() {
+                if let Ok(mut metrics) = lock.lock() {
+                    (*metrics).total.incr();
+                }
+            }
+        }
+
+        let req = {
+            let (head, inner) = req.into_parts();
+            let body = RequestBody {
+                metrics: req_metrics,
+                inner,
+            };
+            http::Request::from_parts(head, body)
         };
-        let req = http::Request::from_parts(head, body);
 
         ResponseFuture {
-            classify,
+            classify: req.extensions().get::<C::ClassifyResponse>().cloned(),
             metrics: self.metrics.clone(),
             stream_open_at: clock::now(),
             inner: self.inner.call(req),
@@ -204,8 +220,9 @@ where
 
 impl<C, S, B> Future for ResponseFuture<S, C>
 where
-    S: Service<Response = http::Response<B>, Error = C::Error>,
-    C: ClassifyResponse + Debug + Send + Sync + 'static,
+    S: Service<Response = http::Response<B>, Error = h2::Error>,
+    B: tower_h2::Body,
+    C: ClassifyResponse<Error = h2::Error> + Debug + Send + Sync + 'static,
     C::Class: Hash + Eq,
 {
     type Item = http::Response<ResponseBody<B, C>>;
@@ -215,14 +232,11 @@ where
         let (head, inner) = try_ready!(self.inner.poll()).into_parts();
 
         let mut classify = self.classify.take();
-        let class = match classify.as_mut() {
-            Some(mut classify) => classify.start(&head),
-            None => None,
-        };
+        let class_at_first_byte = classify.as_mut().and_then(|c| c.start(&head));
 
         let body = ResponseBody {
-            class,
             classify,
+            class_at_first_byte,
             metrics: self.metrics.clone(),
             stream_open_at: self.stream_open_at,
             first_byte_at: None,
@@ -245,10 +259,6 @@ where
         self.inner.is_end_stream()
     }
 
-    fn poll_trailers(&mut self) -> Poll<Option<http::HeaderMap>, h2::Error> {
-        self.inner.poll_trailers()
-    }
-
     fn poll_data(&mut self) -> Poll<Option<Self::Data>, h2::Error> {
         let frame = try_ready!(self.inner.poll_data());
 
@@ -260,11 +270,25 @@ where
 
         Ok(Async::Ready(frame))
     }
+
+    fn poll_trailers(&mut self) -> Poll<Option<http::HeaderMap>, h2::Error> {
+        self.inner.poll_trailers()
+    }
+}
+
+impl<B, C> Drop for RequestBody<B, C>
+where
+    B: tower_h2::Body,
+    C: Hash + Eq,
+{
+    fn drop(&mut self) {
+   }
 }
 
 impl<B, C> ResponseBody<B, C>
 where
-    C: ClassifyResponse,
+    B: tower_h2::Body,
+    C: ClassifyResponse<Error = h2::Error>,
     C::Class: Hash + Eq,
 {
     fn record_class(&mut self, class: Option<C::Class>) {
@@ -279,21 +303,22 @@ where
 
         let first_byte_at = self.first_byte_at.unwrap_or_else(|| clock::now());
         let class_metrics = match class {
-            Some(c) => metrics.by_class.entry(c).or_insert_with(|| ClassMetrics::default()),
+            Some(c) => metrics
+                .by_class
+                .entry(c)
+                .or_insert_with(|| ClassMetrics::default()),
             None => &mut metrics.unclassified,
         };
         class_metrics.total.incr();
-        class_metrics.latency.add(first_byte_at - self.stream_open_at);
+        class_metrics
+            .latency
+            .add(first_byte_at - self.stream_open_at);
     }
 
     fn measure_err(&mut self, err: C::Error) -> C::Error {
-        let class = self.class.take();
-        let classify = self.classify.take();
-        self.record_class(match (class, classify) {
-            (Some(class), _) => Some(class),
-            (None, Some(mut classify)) => Some(classify.error(&err)),
-            _ => None,
-        });
+        self.class_at_first_byte = None;
+        let c = self.classify.take().map(|mut c| c.error(&err));
+        self.record_class(c);
         err
     }
 }
@@ -311,20 +336,15 @@ where
     }
 
     fn poll_data(&mut self) -> Poll<Option<Self::Data>, h2::Error> {
-        let frame = try_ready!(self.inner.poll_data().map_err(|e| self.measure_err(e)));
+        let poll = self.inner.poll_data().map_err(|e| self.measure_err(e));
+        let frame = try_ready!(poll);
 
         if self.first_byte_at.is_none() {
             self.first_byte_at = Some(clock::now());
         }
 
-        if self.is_end_stream() {
-            let class = self.class.take();
-            let classify = self.classify.take();
-            self.record_class(match (class, classify) {
-                (Some(class), _) => Some(class),
-                (None, Some(mut classify)) => Some(classify.eos(None)),
-                _ => None,
-            });
+        if let c @ Some(_) = self.class_at_first_byte.take() {
+            self.record_class(c);
         }
 
         Ok(Async::Ready(frame))
@@ -333,13 +353,8 @@ where
     fn poll_trailers(&mut self) -> Poll<Option<http::HeaderMap>, h2::Error> {
         let trls = try_ready!(self.inner.poll_trailers().map_err(|e| self.measure_err(e)));
 
-        let class = self.class.take();
-        let classify = self.classify.take();
-        self.record_class(match (class, classify) {
-            (Some(class), _) => Some(class),
-            (None, Some(mut classify)) => Some(classify.eos(trls.as_ref())),
-            _ => None,
-        });
+        let c = self.classify.take().map(|mut c| c.eos(trls.as_ref()));
+        self.record_class(c);
 
         Ok(Async::Ready(trls))
     }
@@ -347,17 +362,12 @@ where
 
 impl<B, C> Drop for ResponseBody<B, C>
 where
-    C: ClassifyResponse,
+    B: tower_h2::Body,
+    C: ClassifyResponse<Error = h2::Error>,
     C::Class: Hash + Eq,
 {
     fn drop(&mut self) {
-        let class = self.class.take();
-        let classify = self.classify.take();
-        self.record_class(match (class, classify) {
-            (Some(class), _) => Some(class),
-            (None, Some(mut classify)) => Some(classify.cancel()),
-            _ => None,
-        });
+        let c = self.classify.take().map(|mut c| c.eos(None));
+        self.record_class(c);
     }
 }
-
