@@ -9,8 +9,8 @@ use tokio_timer::clock;
 use tower_h2;
 
 use super::Taps;
-use svc::{MakeService, Service, Stack};
 use svc::http::{Classify, ClassifyResponse};
+use svc::{MakeService, Service, Stack};
 
 /// A stack module that wraps services to record taps.
 #[derive(Clone, Debug)]
@@ -180,10 +180,7 @@ where
 
 impl<S, B, C> Future for ResponseFuture<S, C>
 where
-    S: Service<
-        Response = http::Response<B>,
-        Error = C::Error,
-    >,
+    S: Service<Response = http::Response<B>, Error = C::Error>,
     C: ClassifyResponse,
 {
     type Item = http::Response<ResponseBody<B, C>>;
@@ -227,8 +224,7 @@ impl<B, C> ResponseBody<B, C>
 where
     C: ClassifyResponse,
 {
-    fn tap_eos(&mut self, _eos: Option<C::Class>) {
-    }
+    fn tap_eos(&mut self, _eos: Option<C::Class>) {}
 
     fn tap_err(&mut self, err: C::Error) -> C::Error {
         let eos = self.classify.take().map(|mut c| c.error(&err));
@@ -258,4 +254,3 @@ where
         self.inner.poll_trailers()
     }
 }
-

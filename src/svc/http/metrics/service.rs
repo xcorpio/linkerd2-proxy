@@ -193,7 +193,7 @@ where
         let mut req_metrics = self.metrics.clone();
 
         if req.body().is_end_stream() {
-             if let Some(lock) = req_metrics.take() {
+            if let Some(lock) = req_metrics.take() {
                 if let Ok(mut metrics) = lock.lock() {
                     (*metrics).total.incr();
                 }
@@ -281,8 +281,7 @@ where
     B: tower_h2::Body,
     C: Hash + Eq,
 {
-    fn drop(&mut self) {
-   }
+    fn drop(&mut self) {}
 }
 
 impl<B, C> ResponseBody<B, C>
