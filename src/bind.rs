@@ -11,13 +11,20 @@ use tower_reconnect::{Reconnect, Error as ReconnectError};
 
 use control::destination::Endpoint;
 use ctx;
-use svc::NewClient;
+use svc::{self, NewService, NewClient};
+use svc::http::{Classify, ClassifyResponse};
 use telemetry;
 use transparency::{self, HttpBody, h1, orig_proto};
 use transport;
 use tls;
 use ctx::transport::TlsStatus;
 use watch_service::{WatchService, Rebind};
+
+fn make_endpoint<N: NewService>(client: N) -> () {
+    let (metrics, report) = svc::http::metrics::new(ctx::Proxy::Outbound);
+
+
+}
 
 /// Binds a `Service` from a `SocketAddr`.
 ///
@@ -28,8 +35,7 @@ use watch_service::{WatchService, Rebind};
 /// Buffering is not bounded and no timeouts are applied.
 pub struct Bind<C, B> {
     ctx: C,
-    sensors: telemetry::Sensors,
-    transport_registry: transport::metrics::Registry,
+    make_endpoint: MakeEndpoint,
     tls_client_config: tls::ClientConfigWatch,
     _p: PhantomData<fn() -> B>,
 }
@@ -373,11 +379,11 @@ where
     B: tower_h2::Body + Send + 'static,
     <B::Data as ::bytes::IntoBuf>::Buf: Send,
 {
-    type Target = Endpoint;
+    type Config = Endpoint;
     type Error = ();
-    type Client = Service<B>;
+    type Service = Service<B>;
 
-    fn new_client(&mut self, ep: &Endpoint) -> Result<Self::Client, ()> {
+    fn make_service(&self, ep: &Endpoint) -> Result<Self::Client, ()> {
         Ok(self.bind.bind_service(ep, &self.protocol))
     }
 }

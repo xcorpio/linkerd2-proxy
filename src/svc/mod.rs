@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Infrastructure for proxying request-response message streams
 //!
 //! This module contains utilities for proxying request-response streams. This
@@ -16,41 +18,85 @@
 //! - As an outbound load balancer dispatches a request to an endpoint, or as
 //!   the inbound proxy fowards an inbound request, a client service models an
 //!   individual `SocketAddr`.
-//!
-//! ## TODO
-//!
-//! * Move HTTP-specific service infrastructure into `svc::http`.
 
-pub use tower_service::Service;
+use futures::future::{self, Future, FutureResult};
+pub use tower_service::{NewService, Service};
+
+pub mod and_then;
+pub mod http;
 
 pub trait NewClient {
-
-    /// Describes a resource to which the client will be attached.
-    ///
-    /// Depending on the implementation, the target may describe a logical name
-    /// to be resolved (i.e. via DNS) and load balanced, or it may describe a
-    /// specific network address to which one or more connections will be
-    /// established, or it may describe an entirely arbitrary "virtual" service
-    /// (i.e. that exists locally in memory).
-    type Target;
+    /// Describes how to build
+    type Config;
 
     /// Indicates why the provided `Target` cannot be used to instantiate a client.
     type Error;
 
-    /// Serves requests on behalf of a target.
-    ///
-    /// `Client`s are expected to acquire resources lazily as
-    /// `Service::poll_ready` is called. `Service::poll_ready` must not return
-    /// `Async::Ready` until the service is ready to service requests.
-    /// `Service::call` must not be called until `Service::poll_ready` returns
-    /// `Async::Ready`. When `Service::poll_ready` returns an error, the
-    /// client must be discarded.
+    /// Serves requests on behalf of a config.
     type Client: Service;
 
-    /// Creates a client
-    ///
-    /// If the provided `Target` is valid, immediately return a `Client` that may
-    /// become ready lazily, i.e. as the target is resolved and connections are
+    type Future: Future<Item = Self::Client, Error = Self::Error>;
+
+    /// If the provided `Config` is valid, immediately return a `Service` that may
+    /// become ready lazily, i.e. as the config is resolved and connections are
     /// established.
-    fn new_client(&mut self, t: &Self::Target) -> Result<Self::Client, Self::Error>;
+    fn new_client(&self, t: &Self::Config) -> Self::Future;
+
+    fn into_new_service(self, config: Self::Config) -> IntoNewService<Self>
+    where
+        Self: Sized,
+    {
+        IntoNewService {
+            new_client: self,
+            config,
+        }
+    }
+}
+
+/// Composes client functionality for `NewClient`
+pub trait Stack<Next: NewClient> {
+    type Config;
+    type Error;
+    type Client: Service;
+    type NewClient: NewClient<
+        Config = Self::Config,
+        Error = Self::Error,
+        Client = Self::Client,
+    >;
+
+    fn build(&self, next: Next) -> Self::NewClient;
+
+    fn and_then<M, N>(self, inner: M) -> and_then::AndThen<Self, M, N>
+    where
+        Self: Sized + Stack<M::NewClient>,
+        M: Stack<N>,
+        N: NewClient,
+    {
+        and_then::AndThen::new(self, inner)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct IntoNewService<N: NewClient> {
+    new_client: N,
+    config: N::Config,
+}
+
+impl<N: NewClient> IntoNewService<N> {
+    fn config(&self) -> &N::Config {
+        &self.config
+    }
+}
+
+impl<N: NewClient> NewService for IntoNewService<N> {
+    type Request = <N::Service as Service>::Request;
+    type Response = <N::Service as Service>::Response;
+    type Error = <N::Service as Service>::Error;
+    type Service = N::Service;
+    type InitError = N::Error;
+    type Future = FutureResult<Self::Service, Self::InitError>;
+
+    fn new_service(&self) -> Self::Future {
+        future::result(self.new_client.new_client(&self.config))
+    }
 }

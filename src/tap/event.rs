@@ -3,17 +3,17 @@ use std::time::Instant;
 
 use h2;
 
-use ctx;
+use super::ctx;
 
 #[derive(Clone, Debug)]
 pub enum Event {
-    StreamRequestOpen(Arc<ctx::http::Request>),
-    StreamRequestFail(Arc<ctx::http::Request>, StreamRequestFail),
-    StreamRequestEnd(Arc<ctx::http::Request>, StreamRequestEnd),
+    StreamRequestOpen(Arc<ctx::Request>),
+    StreamRequestFail(Arc<ctx::Request>, StreamRequestFail),
+    StreamRequestEnd(Arc<ctx::Request>, StreamRequestEnd),
 
-    StreamResponseOpen(Arc<ctx::http::Response>, StreamResponseOpen),
-    StreamResponseFail(Arc<ctx::http::Response>, StreamResponseFail),
-    StreamResponseEnd(Arc<ctx::http::Response>, StreamResponseEnd),
+    StreamResponseOpen(Arc<ctx::Response>, StreamResponseOpen),
+    StreamResponseFail(Arc<ctx::Response>, StreamResponseFail),
+    StreamResponseEnd(Arc<ctx::Response>, StreamResponseEnd),
 }
 
 #[derive(Clone, Debug)]
@@ -27,6 +27,8 @@ pub struct StreamRequestFail {
 pub struct StreamRequestEnd {
     pub request_open_at: Instant,
     pub request_end_at: Instant,
+    pub bytes_sent: u64,
+    pub frames_sent: u32,
 }
 
 #[derive(Clone, Debug)]
