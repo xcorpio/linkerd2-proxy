@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_connect;
+use tokio_timer::clock;
 
 use linkerd2_metrics::{
     latency,
@@ -246,7 +247,7 @@ impl Sensor {
         }
         Self {
             metrics,
-            opened_at: Instant::now(),
+            opened_at: clock::now(),
         }
     }
 

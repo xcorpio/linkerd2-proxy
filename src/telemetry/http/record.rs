@@ -54,12 +54,14 @@ impl Record {
 
 #[cfg(test)]
 mod test {
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+    use tokio_timer::clock;
+
     use super::*;
     use super::super::event;
     use super::super::labels::{RequestLabels, ResponseLabels};
     use ctx::{self, test_util::*, transport::TlsStatus};
-    use std::sync::{Arc, Mutex};
-    use std::time::{Duration, Instant};
     use conditional::Conditional;
     use tls;
 
@@ -84,7 +86,7 @@ mod test {
 
         let (_, rsp) = request("http://buoyant.io", &server, &client);
 
-        let request_open_at = Instant::now();
+        let request_open_at = clock::now();
         let response_open_at = request_open_at + Duration::from_millis(100);
         let response_first_frame_at = response_open_at + Duration::from_millis(100);
         let response_end_at = response_first_frame_at + Duration::from_millis(100);
@@ -136,7 +138,7 @@ mod test {
 
         let (req, rsp) = request("http://buoyant.io", &server, &client);
 
-        let request_open_at = Instant::now();
+        let request_open_at = clock::now();
         let request_end_at = request_open_at + Duration::from_millis(10);
         let response_open_at = request_open_at + Duration::from_millis(100);
         let response_first_frame_at = response_open_at + Duration::from_millis(100);

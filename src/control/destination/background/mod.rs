@@ -5,7 +5,7 @@ use std::{
     },
     fmt,
     mem,
-    time::{Instant, Duration},
+    time::Duration,
     sync::Arc,
 };
 use futures::{
@@ -13,6 +13,7 @@ use futures::{
     sync::mpsc,
     Async, Future, Poll, Stream,
 };
+use tokio_timer::clock;
 use tower_grpc as grpc;
 use tower_h2::{BoxBody, HttpService, RecvBody};
 
@@ -267,7 +268,7 @@ where
                             if !set.query.is_active() {
                                 set.reset_dns_query(
                                     &self.dns_resolver,
-                                    Instant::now(),
+                                    clock::now(),
                                     vac.key(),
                                 );
                             }
@@ -341,7 +342,7 @@ where
                 },
                 Exists::No => {
                     // Fall back to DNS.
-                    set.reset_dns_query(&self.dns_resolver, Instant::now(), auth);
+                    set.reset_dns_query(&self.dns_resolver, clock::now(), auth);
                 },
                 Exists::Unknown => (), // No change from Destination service's perspective.
             }

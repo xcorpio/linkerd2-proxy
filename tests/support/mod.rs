@@ -42,6 +42,7 @@ use self::tokio::{
 use self::tokio_connect::Connect;
 use self::tower_h2::{Body, RecvBody};
 use self::tower_grpc as grpc;
+use self::tower_timer::clock;
 use self::tower_service::{NewService, Service};
 
 /// Environment variable for overriding the test patience.
@@ -70,8 +71,8 @@ macro_rules! assert_eventually {
     ($cond:expr, retries: $retries:expr, $($arg:tt)+) => {
         {
             use std::{env, u64};
-            use std::time::{Instant, Duration};
             use std::str::FromStr;
+            use std::time::Duration;
             // TODO: don't do this *every* time eventually is called (lazy_static?)
             let patience = env::var($crate::support::ENV_TEST_PATIENCE_MS).ok()
                 .map(|s| {
@@ -83,7 +84,7 @@ macro_rules! assert_eventually {
                     Duration::from_millis(millis)
                 })
                 .unwrap_or($crate::support::DEFAULT_TEST_PATIENCE);
-            let start_t = Instant::now();
+            let start_t = clock::now();
             for i in 0..($retries + 1) {
                 if $cond {
                     break;

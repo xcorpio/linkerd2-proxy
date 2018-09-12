@@ -2,6 +2,7 @@ use futures::Poll;
 use http;
 use std::marker::PhantomData;
 use std::time::Instant;
+use tokio_timer::clock;
 
 use svc::{self, Service, MakeClient};
 
@@ -48,7 +49,7 @@ where
     }
 
     fn call(&mut self, mut req: Self::Request) -> Self::Future {
-        req.extensions_mut().insert(RequestOpen(Instant::now()));
+        req.extensions_mut().insert(RequestOpen(clock::now()));
         self.inner.call(req)
     }
 }

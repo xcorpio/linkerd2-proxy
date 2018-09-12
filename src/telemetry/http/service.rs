@@ -6,6 +6,7 @@ use std::default::Default;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Instant;
+use tokio_timer::clock;
 use tower_service::Service;
 use tower_h2::Body;
 
@@ -215,7 +216,7 @@ where
 
                     let ctx = ctx::http::Response::new(&rsp, &ctx);
 
-                    let response_open_at = Instant::now();
+                    let response_open_at = clock::now();
                     handle.send(|| {
                         Event::StreamResponseOpen(
                             Arc::clone(&ctx),
@@ -285,7 +286,7 @@ where
                                 event::StreamRequestFail {
                                     error,
                                     request_open_at,
-                                    request_fail_at: Instant::now(),
+                                    request_fail_at: clock::now(),
                                 },
                             )
                         });
@@ -428,7 +429,7 @@ impl BodySensor for ResponseBodyInner {
         self.frames_sent += 1;
         self.bytes_sent += bytes as u64;
         if self.response_first_frame_at.is_none() {
-            self.response_first_frame_at = Some(Instant::now());
+            self.response_first_frame_at = Some(clock::now());
         }
     }
 
@@ -452,7 +453,7 @@ impl BodySensor for ResponseBodyInner {
                     request_open_at,
                     response_open_at,
                     response_first_frame_at,
-                    response_fail_at: Instant::now(),
+                    response_fail_at: clock::now(),
                     bytes_sent,
                     frames_sent,
                 },
@@ -470,7 +471,7 @@ impl BodySensor for ResponseBodyInner {
             bytes_sent,
             frames_sent,
         } = self;
-        let response_end_at =  Instant::now();
+        let response_end_at =  clock::now();
 
         handle.send(||
             event::Event::StreamResponseEnd(
@@ -510,7 +511,7 @@ impl BodySensor for RequestBodyInner {
                 event::StreamRequestFail {
                     error,
                     request_open_at,
-                    request_fail_at: Instant::now(),
+                    request_fail_at: clock::now(),
                 },
             )
         )
@@ -529,7 +530,7 @@ impl BodySensor for RequestBodyInner {
                 Arc::clone(&ctx),
                 event::StreamRequestEnd {
                     request_open_at,
-                    request_end_at: Instant::now(),
+                    request_end_at: clock::now(),
                 },
             )
         )

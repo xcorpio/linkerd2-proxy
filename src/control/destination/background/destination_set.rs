@@ -8,6 +8,7 @@ use std::{
 };
 
 use futures::{Async, Future, Stream,};
+use tokio_timer::clock;
 use tower_h2::{BoxBody, HttpService, RecvBody};
 
 use linkerd2_proxy_api::{
@@ -163,7 +164,7 @@ where
                     self.no_endpoints(authority, false);
                     // Poll again after the deadline on the DNS response, if
                     // there is one.
-                    retry_after.unwrap_or_else(|| Instant::now() + DNS_ERROR_TTL)
+                    retry_after.unwrap_or_else(|| clock::now() + DNS_ERROR_TTL)
                 },
                 Err(e) => {
                     // Do nothing so that the most recent non-error response is used until a
@@ -171,7 +172,7 @@ where
                     trace!("DNS resolution failed for {}: {}", &authority.host, e);
 
                     // Poll again after the default wait time.
-                    Instant::now() + DNS_ERROR_TTL
+                    clock::now() + DNS_ERROR_TTL
                 },
             };
             self.reset_dns_query(dns_resolver, deadline, &authority)

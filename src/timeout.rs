@@ -3,10 +3,10 @@ use futures::{Future, Poll};
 
 use std::error::Error;
 use std::{fmt, io};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use tokio_connect::Connect;
-use tokio::timer::{self, Deadline, DeadlineError};
+use tokio_timer::{self as timer, clock, Deadline,DeadlineError};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tower_service::Service;
 
@@ -88,7 +88,7 @@ where
 
     fn call(&mut self, req: Self::Request) -> Self::Future {
         let duration = self.duration;
-        let deadline = Instant::now() + duration;
+        let deadline = clock::now() + duration;
         let inner = Deadline::new(self.inner.call(req), deadline);
         Timeout {
             inner,
@@ -107,7 +107,7 @@ where
     type Future = Timeout<Deadline<C::Future>>;
 
     fn connect(&self) -> Self::Future {
-        let deadline = Instant::now() + self.duration;
+        let deadline = clock::now() + self.duration;
         let inner = Deadline::new(self.inner.connect(), deadline);
         Timeout {
             inner,

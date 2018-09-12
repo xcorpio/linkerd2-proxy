@@ -1,14 +1,14 @@
 use std::{
     fmt,
     io,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use bytes::Bytes;
 use futures::{Async, Future, Poll};
 use h2;
 use http;
-use tokio::timer::Delay;
+use tokio_timer::{clock, Delay};
 
 use tower_h2::{self, BoxBody, RecvBody};
 use tower_add_origin::AddOrigin;
@@ -169,7 +169,7 @@ where
     fn new(inner: S, wait_dur: Duration) -> Self {
         Backoff {
             inner,
-            timer: Delay::new(Instant::now() + wait_dur),
+            timer: Delay::new(clock::now() + wait_dur),
             waiting: false,
             wait_dur,
         }
@@ -209,7 +209,7 @@ where
             Err(_err) => {
                 trace!("backoff: controller error, waiting {:?}", self.wait_dur);
                 self.waiting = true;
-                self.timer.reset(Instant::now() + self.wait_dur);
+                self.timer.reset(clock::now() + self.wait_dur);
                 self.poll_timer()
             }
             ok => ok,

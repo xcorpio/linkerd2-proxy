@@ -10,6 +10,7 @@ use super::metrics::{
     Scopes,
 };
 use telemetry::tap::Taps;
+use tokio_timer::clock;
 
 pub mod event;
 mod labels;
@@ -121,7 +122,7 @@ impl Inner {
 
 impl FmtMetrics for Report {
     fn fmt_metrics(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let now = Instant::now();
+        let now = clock::now();
         let inner = match self.0.lock() {
             Err(_) => return Ok(()),
             Ok(mut inner) => {
@@ -184,7 +185,7 @@ impl ResponseMetrics {
 
 impl<T> Stamped<T> {
     fn stamped(&mut self) -> &mut T {
-        self.stamp = Instant::now();
+        self.stamp = clock::now();
         &mut self.inner
     }
 }
@@ -199,7 +200,7 @@ impl<T> From<T> for Stamped<T> {
     fn from(inner: T) -> Self {
         Self {
             inner,
-            stamp: Instant::now(),
+            stamp: clock::now(),
         }
     }
 }
@@ -245,13 +246,13 @@ mod tests {
         let inner = Arc::new(Mutex::new(Inner::default()));
         let mut registry = Registry(inner.clone());
 
-        let t0 = Instant::now();
+        let t0 = clock::now();
 
         mock_route(&mut registry, proxy, &server, "warriors");
-        let t1 = Instant::now();
+        let t1 = clock::now();
 
         mock_route(&mut registry, proxy, &server, "sixers");
-        let t2 = Instant::now();
+        let t2 = clock::now();
 
         let mut inner = inner.lock().unwrap();
         assert_eq!(inner.requests.len(), 2);

@@ -1,5 +1,8 @@
+extern crate tokio_timer;
+
 use indexmap::IndexMap;
 use std::{hash::Hash, ops::{Deref, DerefMut}, time::{Duration, Instant}};
+use self::tokio_timer::clock;
 
 // Reexported so IndexMap isn't exposed.
 pub use indexmap::Equivalent;
@@ -209,7 +212,7 @@ impl<T> DerefMut for Node<T> {
 /// Default source of time.
 impl Now for () {
     fn now(&self) -> Instant {
-        Instant::now()
+        clock::now()
     }
 }
 
@@ -229,7 +232,7 @@ mod tests {
 
     impl Default for Clock {
         fn default() -> Clock {
-            Clock(Rc::new(RefCell::new(Instant::now())))
+            Clock(Rc::new(RefCell::new(clock::now())))
         }
     }
 

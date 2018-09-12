@@ -10,4 +10,5 @@ publish = false
 [dependencies]
 futures = "0.1"
 indexmap = "1.0.0"
+tokio-timer = "0.2.4"   # for tokio_timer::clock
 tower-service = { git = "https://github.com/tower-rs/tower" }
