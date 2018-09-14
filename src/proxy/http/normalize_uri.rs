@@ -1,30 +1,57 @@
 use http;
 use futures::Poll;
+use std::marker::PhantomData;
 
 use super::h1::normalize_our_view_of_uri;
 use svc;
 
-/// Rewrites HTTP/1.x requests so that their URIs are in a canonical form.
-///
-/// The following transformations are applied:
-/// - If an absolute-form URI is received, it must replace
-///   the host header (in accordance with RFC7230#section-5.4)
-/// - If the request URI is not in absolute form, it is rewritten to contain
-///   the authority given in the `Host:` header, or, failing that, from the
-///   request's original destination according to `SO_ORIGINAL_DST`.
+pub struct Layer<T>(PhantomData<T>);
+
+pub struct Make<T, N: svc::MakeClient<T>> {
+    inner: N,
+    _p: PhantomData<T>
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct Service<S> {
     inner: S,
-    was_absolute_form: bool,
 }
 
-// ===== impl Service =====
+// === impl Layer ===
 
-impl<S> Service<S> {
-    pub fn new(inner: S, was_absolute_form: bool) -> Self {
-        Self { inner, was_absolute_form }
+pub fn layer<T>() -> Layer<T> {
+    Layer(PhantomData)
+}
+
+impl<T, N, B> svc::Layer<N> for Layer<T>
+where
+    N: svc::MakeClient<T>,
+    N::Client: svc::Service<Request = http::Request<B>>,
+{
+    type Bound = Make<T, N>;
+
+    fn bind(&self, inner: N) -> Self::Bound {
+        Make { inner, _p: PhantomData }
     }
 }
+
+// === impl Make ===
+
+impl<T, N, B> svc::MakeClient<T> for Make<T, N>
+where
+    N: svc::MakeClient<T>,
+    N::Client: svc::Service<Request = http::Request<B>>,
+{
+    type Client = Service<N::Client>;
+    type Error = N::Error;
+
+    fn make_client(&self, target: &T) -> Result<Self::Client, Self::Error> {
+        let inner = self.inner.make_client(&target)?;
+        Ok(Service { inner })
+    }
+}
+
+// === impl Service ===
 
 impl<S, B> svc::Service for Service<S>
 where
@@ -40,13 +67,7 @@ where
     }
 
     fn call(&mut self, mut request: S::Request) -> Self::Future {
-        if request.version() != http::Version::HTTP_2 &&
-            // Skip normalizing the URI if it was received in
-            // absolute form.
-            !self.was_absolute_form
-        {
-            normalize_our_view_of_uri(&mut request);
-        }
+        normalize_our_view_of_uri(&mut request);
         self.inner.call(request)
     }
 }

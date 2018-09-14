@@ -1,10 +1,11 @@
 use futures::{future, Future, Poll};
 use http;
 use http::header::{TRANSFER_ENCODING, HeaderValue};
-use tower_service::Service;
+use std::marker::PhantomData;
 
 use bind;
 use super::h1;
+use svc;
 
 const L5D_ORIG_PROTO: &str = "l5d-orig-proto";
 
@@ -12,7 +13,6 @@ const L5D_ORIG_PROTO: &str = "l5d-orig-proto";
 #[derive(Debug)]
 pub struct Upgrade<S> {
     inner: S,
-    upgrade_h1: bool,
 }
 
 /// Downgrades HTTP2 requests that were previousl upgraded to their original
@@ -41,21 +41,60 @@ pub fn detect<B>(req: &http::Request<B>) -> bind::Protocol {
     bind::Protocol::detect(req)
 }
 
+pub struct LayerUpgrade<T>(PhantomData<fn() -> T>);
+pub struct LayerDowngrade<T>(PhantomData<fn() -> T>);
 
-// ===== impl Upgrade =====
+pub struct MakeUpgrade<T, N>
+where
+    N: svc::MakeClient<T>,
+{
+    inner: N,
+    _p: PhantomData<fn() -> T>,
+}
 
-impl<S> Upgrade<S> {
-    pub fn new(inner: S, upgrade_h1: bool) -> Self {
-        Self {
-            inner,
-            upgrade_h1,
-        }
+pub struct MakeDowngrade<T, N>
+where
+    N: svc::MakeClient<T>,
+{
+    inner: N,
+    _p: PhantomData<fn() -> T>,
+}
+
+// ==== impl Upgrade =====
+
+pub fn upgrade<T>() -> LayerUpgrade<T> {
+    LayerUpgrade(PhantomData)
+}
+
+impl<T, N, A, B> svc::Layer<N> for LayerUpgrade<T>
+where
+    N: svc::MakeClient<T>,
+    N::Client: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
+{
+    type Bound = MakeUpgrade<T, N>;
+
+    fn bind(&self, inner: N) -> Self::Bound {
+        MakeUpgrade { inner, _p: PhantomData }
     }
 }
 
-impl<S, B1, B2> Service for Upgrade<S>
+impl<T, N, A, B> svc::MakeClient<T> for MakeUpgrade<T, N>
 where
-    S: Service<Request = http::Request<B1>, Response = http::Response<B2>>,
+    N: svc::MakeClient<T>,
+    N::Client: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
+{
+    type Client = Upgrade<N::Client>;
+    type Error = N::Error;
+
+    fn make_client(&self, target: &T) -> Result<Self::Client, Self::Error> {
+        let inner = self.inner.make_client(&target)?;
+        Ok(Upgrade { inner })
+    }
+}
+
+impl<S, A, B> svc::Service for Upgrade<S>
+where
+    S: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
 {
     type Request = S::Request;
     type Response = S::Response;
@@ -72,7 +111,7 @@ where
     fn call(&mut self, mut req: Self::Request) -> Self::Future {
         let mut downgrade_response = false;
 
-        if self.upgrade_h1 && req.version() != http::Version::HTTP_2 {
+        if req.version() != http::Version::HTTP_2 {
             debug!("upgrading {:?} to HTTP2 with orig-proto", req.version());
 
             // absolute-form is far less common, origin-form is the usual,
@@ -135,17 +174,39 @@ where
 
 // ===== impl Downgrade =====
 
-impl<S> Downgrade<S> {
-    pub fn new(inner: S) -> Self {
-        Self {
-            inner,
-        }
+pub fn downgrade<T>() -> LayerDowngrade<T> {
+    LayerDowngrade(PhantomData)
+}
+
+impl<T, N, A, B> svc::Layer<N> for LayerDowngrade<T>
+where
+    N: svc::MakeClient<T>,
+    N::Client: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
+{
+    type Bound = MakeDowngrade<T, N>;
+
+    fn bind(&self, inner: N) -> Self::Bound {
+        MakeDowngrade { inner, _p: PhantomData }
     }
 }
 
-impl<S, B1, B2> Service for Downgrade<S>
+impl<T, N, A, B> svc::MakeClient<T> for MakeDowngrade<T, N>
 where
-    S: Service<Request = http::Request<B1>, Response = http::Response<B2>>,
+    N: svc::MakeClient<T>,
+    N::Client: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
+{
+    type Client = Downgrade<N::Client>;
+    type Error = N::Error;
+
+    fn make_client(&self, target: &T) -> Result<Self::Client, Self::Error> {
+        let inner = self.inner.make_client(&target)?;
+        Ok(Downgrade { inner })
+    }
+}
+
+impl<S, A, B> svc::Service for Downgrade<S>
+where
+    S: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
 {
     type Request = S::Request;
     type Response = S::Response;

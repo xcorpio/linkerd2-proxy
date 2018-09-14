@@ -24,9 +24,14 @@
 use futures::future;
 pub use tower_service::{NewService, Service};
 
+pub mod either;
+pub mod make_per_request;
+pub mod optional;
 pub mod reconnect;
 pub mod layer;
 
+pub use self::either::Either;
+pub use self::optional::Optional;
 pub use self::reconnect::Reconnect;
 pub use self::layer::Layer;
 

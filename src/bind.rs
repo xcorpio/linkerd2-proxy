@@ -11,9 +11,9 @@ use tower_h2;
 
 use control::destination::Endpoint;
 use ctx;
-use svc::{MakeClient, Reconnect};
 use telemetry;
 use proxy;
+use svc::{self, Layer};
 use transport;
 use tls;
 use ctx::transport::TlsStatus;
@@ -32,7 +32,7 @@ type WatchTls<B> = WatchService<tls::ConditionalClientConfig, RebindTls<B>>;
 /// TLS configuration.
 pub type TlsStack<B> = telemetry::http::service::Http<HttpService<B>, B, proxy::http::Body>;
 
-type HttpService<B> = Reconnect<
+type HttpService<B> = svc::Reconnect<
     Arc<ctx::transport::Client>,
     proxy::http::Client<
         transport::metrics::Connect<transport::Connect>,
@@ -251,7 +251,7 @@ where
         // TODO: Add some sort of backoff logic between reconnects.
         self.sensors.http(
             client_ctx.clone(),
-            Reconnect::new(
+            svc::Reconnect::new(
                 client_ctx.clone(),
                 proxy::http::Client::new(protocol, connect, log.executor())
             )
@@ -274,25 +274,15 @@ where
         };
         let watch_tls = WatchService::new(self.tls_client_config.clone(), rebind);
 
-        // HTTP/1.1 middlewares
-        //
-        // TODO make this conditional based on `protocol`
-        // TODO extract HTTP/1 rebinding logic up here
-
-        // Rewrite the HTTP/1 URI, if the authorities in the Host header
-        // and request URI are not in agreement, or are not present.
-        //
-        // TODO move this into proxy::Client?
-        let normalize_uri = proxy::http::normalize_uri::Service::new(
-            watch_tls,
-            protocol.was_absolute_form()
-        );
-
-        // Upgrade HTTP/1.1 requests to be HTTP/2 if the endpoint supports HTTP/2.
-        proxy::http::orig_proto::Upgrade::new(normalize_uri, protocol.is_http2())
+        proxy::http::orig_proto::upgrade()
+            .and_then(svc::make_per_request::layer())
+            .and_then(proxy::http::normalize_uri::layer())
+            .and_then(svc::Watch::layer(self.tls_client_config.clone()))
+            .and_then(self.sensors.layer()))
+            .bind(proxy::http::client::make())
     }
 
-    pub fn bind_service(&self, ep: &Endpoint, protocol: &Protocol) -> BoundService<B> {
+    pub fn bind_service(&self, ep: &Endpoint, protocol: &Protocol) {
         // If the endpoint is another instance of this proxy, AND the usage
         // of HTTP/1.1 Upgrades are not needed, then bind to an HTTP2 service
         // instead.
@@ -304,39 +294,12 @@ where
         } else {
             protocol
         };
-
-        let binding = if protocol.can_reuse_clients() {
-            Binding::Bound(self.bind_stack(ep, protocol))
-        } else {
-            Binding::BindsPerRequest {
-                next: None
-            }
-        };
-
-        BoundService {
-            bind: self.clone(),
-            binding,
-            endpoint: ep.clone(),
-            protocol: protocol.clone(),
-        }
     }
 }
 
 // ===== impl BindProtocol =====
 
-
-impl<C, B> Bind<C, B> {
-    pub fn with_protocol(self, protocol: Protocol)
-        -> BindProtocol<C, B>
-    {
-        BindProtocol {
-            bind: self,
-            protocol,
-        }
-    }
-}
-
-impl<B> MakeClient<Endpoint> for BindProtocol<ctx::Proxy, B>
+impl<B> svc::MakeClient<Endpoint> for BindProtocol<ctx::Proxy, B>
 where
     B: tower_h2::Body + Send + 'static,
     <B::Data as ::bytes::IntoBuf>::Buf: Send,
