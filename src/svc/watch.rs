@@ -1,57 +1,103 @@
-use futures::{Async, Poll, Stream};
-use futures_watch::Watch;
-use tower_service::Service;
+use futures::{future::MapErr, Async, Poll, Stream};
+use futures_watch;
+use std::marker::PhantomData;
 
-pub trait Rebind<T> {
-    type Service: Service;
-    fn rebind(&mut self, t: &T) -> Self::Service;
+use svc;
+
+#[derive(Clone,Debug)]
+pub struct Layer<V> {
+    watch: futures_watch::Watch<V>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Make<V, T, M: svc::MakeClient<(T, V)>> {
+    watch: futures_watch::Watch<V>,
+    make_client: M,
+    target: T,
 }
 
 /// A Service that updates itself as a Watch updates.
-#[derive(Debug)]
-pub struct WatchService<T, R: Rebind<T>> {
-    watch: Watch<T>,
-    rebind: R,
-    inner: R::Service,
+#[derive(Clone, Debug)]
+pub struct Service<EV, T, M: svc::MakeClient<(T, V)>> {
+    watch: futures_watch::Watch<V>,
+    make_client: M,
+    inner: M::Client,
+    _p: PhantomData<T>,
 }
 
-impl<T, R: Rebind<T>> WatchService<T, R> {
-    pub fn new(watch: Watch<T>, mut rebind: R) -> WatchService<T, R> {
-        let inner = rebind.rebind(&*watch.borrow());
-        WatchService { watch, rebind, inner }
+#[derive(Debug)]
+pub enum Error<I, M> {
+    Make(M),
+    Inner(I),
+}
+
+impl<V, T, M> svc::Layer<M> for Layer<V>
+where
+    T: Clone,
+    M: svc::MakeClient<(T, V)>,
+    M: Clone,
+{
+    type Bound = Make<V, T, M::Client>;
+
+    fn bind(&self, make_client: M) -> Self::Bound {
+        Make {
+            watch: self.watch.clone(),
+            make_client,
+            _p: PhantomData,
+        }
     }
 }
 
-impl<T, R: Rebind<T>> Service for WatchService<T, R> {
-    type Request = <R::Service as Service>::Request;
-    type Response = <R::Service as Service>::Response;
-    type Error = <R::Service as Service>::Error;
-    type Future = <R::Service as Service>::Future;
+impl<V, T, M> svc::MakeClient<T> for Make<V, T, M>
+where
+    T: Clone,
+    M: svc::MakeClient<(T, V)>,
+    M: Clone,
+{
+    type Error = M::Error;
+    type Client = Service<V, T, M::Client>;
+
+    fn make_client(&self, target: &T) -> Result<Self::Client, Self::Error> {
+        let v = self.watch.borrow();
+        let inner = self.make_client.make_client(&(target, *v))?;
+        Make {
+            watch: self.watch.clone(),
+            make_client: self.make_client.clone(),
+            target: target.clone(),
+            _p: PhantomData,
+        }
+    }
+}
+
+impl<V, T, M> svc::Service for Service<V, T, M>
+where
+    T: Clone,
+    V: Clone,
+    M: svc::MakeClient<(T, V)>,
+{
+    type Request = <M::Client as Service>::Request;
+    type Response = <M::Client as Service>::Response;
+    type Error = Error<<M::Client as Service>::Error, M::Error>;
+    type Future = MapErr<
+        <M::Client as Service>::Future,
+        fn(<M::Client as Service>::Error) -> M::Error,
+    >;
 
     fn poll_ready(&mut self) -> Poll<(), Self::Error> {
         // Check to see if the watch has been updated and, if so, rebind the service.
         //
         // `watch.poll()` can't actually fail; so errors are not considered.
         while let Ok(Async::Ready(Some(()))) = self.watch.poll() {
-            self.inner = self.rebind.rebind(&*self.watch.borrow());
+            let target = (self.target, *self.watch.borrow());
+            let client = self.make_client.make_client(&target).map_err(Error::Make)?;
+            self.inner = client;
         }
 
-        self.inner.poll_ready()
+        self.inner.poll_ready().map_err(Error::Inner)
     }
 
     fn call(&mut self, req: Self::Request) -> Self::Future {
-        self.inner.call(req)
-    }
-}
-
-impl<T, S, F> Rebind<T> for F
-where
-    S: Service,
-    for<'t> F: FnMut(&'t T) -> S,
-{
-    type Service = S;
-    fn rebind(&mut self, t: &T) -> S {
-        (self)(t)
+        self.inner.call(req).map_err(Error::Inner)
     }
 }
 
@@ -95,8 +141,8 @@ mod tests {
             };
         }
 
-        let (watch, mut store) = Watch::new(1);
-        let mut svc = WatchService::new(watch, |n: &usize| Svc(*n));
+        let (watch, mut store) = futures_watch::Watch::new(1);
+        let mut svc = Watch::new(watch, |n: &usize| Svc(*n));
 
         assert_ready!(svc);
         assert_eq!(call!(svc), 1);

@@ -29,6 +29,7 @@ pub mod make_per_request;
 pub mod optional;
 pub mod reconnect;
 pub mod layer;
+pub mod when;
 
 pub use self::either::Either;
 pub use self::optional::Optional;

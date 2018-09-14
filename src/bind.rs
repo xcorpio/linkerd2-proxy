@@ -13,11 +13,10 @@ use control::destination::Endpoint;
 use ctx;
 use telemetry;
 use proxy;
-use svc::{self, Layer};
+use svc::{self, Layer, Watch};
 use transport;
 use tls;
 use ctx::transport::TlsStatus;
-use watch_service::{WatchService, Rebind};
 
 /// An HTTP `Service` that is created for each `Endpoint` and `Protocol`.
 pub type Stack<B> = proxy::http::orig_proto::Upgrade<
@@ -26,7 +25,7 @@ pub type Stack<B> = proxy::http::orig_proto::Upgrade<
     >
 >;
 
-type WatchTls<B> = WatchService<tls::ConditionalClientConfig, RebindTls<B>>;
+type WatchTls<B> = svc::watch::Service<tls::ConditionalClientConfig, RebindTls<B>>;
 
 /// An HTTP `Service` that is created for each `Endpoint`, `Protocol`, and client
 /// TLS configuration.
@@ -278,7 +277,7 @@ where
             .and_then(svc::make_per_request::layer())
             .and_then(proxy::http::normalize_uri::layer())
             .and_then(svc::Watch::layer(self.tls_client_config.clone()))
-            .and_then(self.sensors.layer()))
+            .and_then(self.sensors.layer())
             .bind(proxy::http::client::make())
     }
 

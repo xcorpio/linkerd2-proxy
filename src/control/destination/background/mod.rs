@@ -32,8 +32,7 @@ use control::{
 use dns;
 use transport::{tls, DnsNameAndPort, HostAndPort};
 use conditional::Conditional;
-use watch_service::WatchService;
-use futures_watch::Watch;
+use watch::Watch;
 
 mod client;
 mod destination_set;

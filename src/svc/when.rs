@@ -52,19 +52,19 @@ where
     N: svc::MakeClient<T>,
     L: svc::Layer<N>,
 {
-    type Client = Either<N::Client, L::Bound>;
+    type Client = svc::Either<N::Client, L::Bound>;
     type Error = N::Error;
 
     fn make_client(&self, target: &T) -> Result<Self::Client, Self::Error> {
         if !self.predicate.apply(&target) {
             self.next
-                .make_client(&tcrget)
-                .map(Either::A)
+                .make_client(&target)
+                .map(svc::Either::A)
         } else {
             self.layer
                 .bind(self.next.clone())
                 .make_client(&target)
-                .map(Either::B)
+                .map(svc::Either::B)
         }
     }
 }

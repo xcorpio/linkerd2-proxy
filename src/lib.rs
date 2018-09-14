@@ -89,7 +89,6 @@ pub mod telemetry;
 mod proxy;
 mod transport;
 pub mod timeout;
-mod watch_service; // TODO: move to tower
 
 use bind::Bind;
 use conditional::Conditional;
@@ -101,7 +100,6 @@ use telemetry::http::timestamp_request_open;
 use transport::{BoundPort, Connection};
 pub use transport::{AddrInfo, GetOriginalDst, SoOriginalDst, tls};
 use outbound::Outbound;
-pub use watch_service::WatchService;
 
 /// Runs a sidecar proxy.
 ///
