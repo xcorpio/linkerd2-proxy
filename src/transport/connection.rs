@@ -12,12 +12,11 @@ use tokio::{
     reactor::Handle,
 };
 
-use conditional::Conditional;
-use ctx::transport::TlsStatus;
-use config::Addr;
+use app::config::Addr;
+use Conditional;
 use transport::{AddrInfo, BoxedIo, GetOriginalDst, tls};
 
-pub struct BoundPort {
+pub struct MakePort {
     inner: std::net::TcpListener,
     local_addr: SocketAddr,
     tls: tls::ConditionalConnectionConfig<tls::ServerConfigWatch>,
@@ -81,7 +80,7 @@ pub struct Connection {
     peek_buf: BytesMut,
 
     /// Whether or not the connection is secured with TLS.
-    tls_status: TlsStatus,
+    tls_status: tls::Status,
 }
 
 /// A trait describing that a type can peek bytes.
@@ -112,15 +111,15 @@ pub struct PeekFuture<T> {
     inner: Option<T>,
 }
 
-// ===== impl BoundPort =====
+// ===== impl MakePort =====
 
-impl BoundPort {
+impl MakePort {
     pub fn new(addr: Addr, tls: tls::ConditionalConnectionConfig<tls::ServerConfigWatch>)
         -> Result<Self, io::Error>
     {
         let inner = std::net::TcpListener::bind(SocketAddr::from(addr))?;
         let local_addr = inner.local_addr()?;
-        Ok(BoundPort {
+        Ok(MakePort {
             inner,
             local_addr,
             tls,
@@ -401,7 +400,7 @@ impl Connection {
         self.io.local_addr()
     }
 
-    pub fn tls_status(&self) -> TlsStatus {
+    pub fn tls_status(&self) -> tls::Status {
         self.tls_status
     }
 }

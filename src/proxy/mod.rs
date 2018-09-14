@@ -13,9 +13,36 @@
 //! This module is intended only to store the infrastructure for building a
 //! proxy. The specific logic implemented by a proxy should live elsewhere.
 
-pub mod http;
-mod protocol;
-mod server;
-mod tcp;
+use tokio::io::{AsyncRead, AsyncWrite};
 
-pub use self::server::Server;
+pub mod buffer;
+pub mod http;
+pub mod limit;
+mod protocol;
+mod reconnect;
+pub mod resolve;
+pub mod server;
+mod tcp;
+pub mod timeout;
+
+pub use self::reconnect::Reconnect;
+pub use self::resolve::{Resolve, Resolution};
+pub use self::server::{Server, Source};
+
+pub trait Accept<T: AsyncRead + AsyncWrite> {
+    type Io: AsyncRead + AsyncWrite;
+
+    fn accept(&self, inner: T) -> Self::Io;
+}
+
+impl<T> Accept<T> for ()
+where
+    T: AsyncRead + AsyncWrite,
+{
+    type Io = T;
+
+    #[inline]
+    fn accept(&self, inner: T) -> T {
+        inner
+    }
+}

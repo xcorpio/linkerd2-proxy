@@ -3,7 +3,6 @@ use std::fmt;
 use std::net::IpAddr;
 use std::time::Instant;
 use tokio::timer::Delay;
-use transport;
 use trust_dns_resolver::{
     self,
     config::{ResolverConfig, ResolverOpts},
@@ -11,9 +10,9 @@ use trust_dns_resolver::{
     lookup_ip::LookupIp,
     AsyncResolver,
 };
-use tls;
 
-use config::Config;
+use app::config::Config;
+use transport::{self, tls};
 
 #[derive(Clone)]
 pub struct Resolver {

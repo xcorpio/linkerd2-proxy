@@ -14,9 +14,8 @@ use tokio::{
     prelude::*,
 };
 
-use conditional::Conditional;
-use config::Addr;
-use ctx::transport::TlsStatus;
+use app::config::Addr;
+use Conditional;
 
 use super::{
     connection::{self, Connection},
@@ -74,7 +73,7 @@ struct Transported<R> {
     /// The value of `Connection::tls_status()` for the established connection.
     ///
     /// This will be `None` if we never even get a `Connection`.
-    tls_status: Option<TlsStatus>,
+    tls_status: Option<tls::Status>,
 
     /// The connection's result.
     result: Result<R, io::Error>,
@@ -120,7 +119,7 @@ fn run_test<C, CF, CR, S, SF, SR>(
         // tests to run at once, which wouldn't work if they all were bound on
         // a fixed port.
         let addr = "127.0.0.1:0".parse::<SocketAddr>().unwrap();
-        let server_bound = connection::BoundPort::new(Addr::from(addr), server_tls)
+        let server_bound = connection::MakePort::new(Addr::from(addr), server_tls)
             .unwrap();
         let server_addr = server_bound.local_addr();
 

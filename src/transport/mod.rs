@@ -1,4 +1,4 @@
-mod connect;
+pub mod connect;
 mod connection;
 mod addr_info;
 mod io;
@@ -21,7 +21,7 @@ pub use self::{
         LookupAddressAndConnect,
     },
     connection::{
-        BoundPort,
+        MakePort,
         Connection,
         Peek,
     },

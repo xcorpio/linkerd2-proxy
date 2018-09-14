@@ -2,100 +2,153 @@ use futures::{Future, Poll};
 use h2;
 use http;
 use http::header::CONTENT_LENGTH;
-use std::{fmt, error};
-use std::sync::Arc;
+use std::{error, fmt};
+use std::marker::PhantomData;
+use std::time::Duration;
 
-use ctx;
 use svc;
 
-extern crate linkerd2_proxy_router;
+extern crate linkerd2_router;
 
-use self::linkerd2_proxy_router::Error;
-pub use self::linkerd2_proxy_router::{Recognize, Router};
+use self::linkerd2_router::Error;
+pub use self::linkerd2_router::{Recognize, Router};
 
-pub struct Make<R>
-where
-    R: Recognize,
-    R::Error: error::Error,
-    R::RouteError: fmt::Display,
-{
-    router: Router<R>,
+#[derive(Clone, Debug)]
+pub struct Config {
+    capacity: usize,
+    max_idle_age: Duration,
+    proxy_name: &'static str,
 }
 
-pub struct Service<R>
+#[derive(Debug)]
+pub struct Layer<Req, Rec, Mk> {
+    recognize: Rec,
+    _p: PhantomData<fn() -> (Req, Mk)>,
+}
+
+pub struct Make<Req, Rec, Mk>
 where
-    R: Recognize,
-    R::Error: error::Error,
-    R::RouteError: fmt::Display,
+    Rec: Recognize<Req>,
+    Mk: svc::Make<Rec::Target> + Clone,
 {
-    inner: Router<R>,
+    recognize: Rec,
+    inner: Mk,
+    _p: PhantomData<fn() -> Req>,
+}
+
+pub struct Service<Req, Rec, Mk>
+where
+    Rec: Recognize<Req>,
+    Mk: svc::Make<Rec::Target>,
+    Mk::Value: svc::Service<Request = Req>,
+{
+    inner: Router<Req, Rec, Mk>,
 }
 
 /// Catches errors from the inner future and maps them to 500 responses.
-pub struct ResponseFuture<R>
-where
-    R: Recognize,
-    R::Error: error::Error,
-    R::RouteError: fmt::Display,
-{
-    inner: <Router<R> as svc::Service>::Future,
+pub struct ResponseFuture<F> {
+    inner: F,
 }
 
-// ===== impl Make =====
+// === impl Config ===
 
-impl<R, A, B> Make<R>
-where
-    R: Recognize<Request = http::Request<A>, Response = http::Response<B>>,
-    R: Send + Sync + 'static,
-    R::Error: error::Error + Send + 'static,
-    R::RouteError: fmt::Display + Send + 'static,
-    A: Send + 'static,
-    B: Default + Send + 'static,
-{
-    pub fn new(router: Router<R>) -> Self {
-        Self { router }
-    }
-}
-
-impl<R> Clone for Make<R>
-where
-    R: Recognize,
-    R::Error: error::Error,
-    R::RouteError: fmt::Display,
-{
-    fn clone(&self) -> Self {
+impl Config {
+    pub fn new(proxy_name: &'static str, capacity: usize, max_idle_age: Duration) -> Self {
         Self {
-            router: self.router.clone(),
+            proxy_name,
+            capacity,
+            max_idle_age,
         }
     }
 }
 
-impl<R, A, B> svc::MakeClient<Arc<ctx::transport::Server>> for Make<R>
+impl fmt::Display for Config {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.proxy_name.fmt(f)
+    }
+}
+
+// === impl Layer ===
+
+impl<Req, Rec, Mk> Layer<Req, Rec, Mk>
 where
-    R: Recognize<Request = http::Request<A>, Response = http::Response<B>>,
-    R: Send + Sync + 'static,
-    R::Error: error::Error + Send + 'static,
-    R::RouteError: fmt::Display + Send + 'static,
-    A: Send + 'static,
+    Rec: Recognize<Req> + Clone,
+{
+    pub fn new(recognize: Rec) -> Self {
+        Layer { recognize, _p: PhantomData }
+    }
+}
+
+impl<T, Req, Rec, Mk, B> svc::Layer<T, Rec::Target, Mk> for Layer<Req, Rec, Mk>
+where
+    Rec: Recognize<Req> + Clone,
+    Mk: svc::Make<Rec::Target> + Clone + Send + Sync + 'static,
+    Mk::Value: svc::Service<Response = http::Response<B>>,
+    <Mk::Value as svc::Service>::Error: error::Error,
+    Mk::Error: fmt::Debug,
+    B: Default + Send + 'static,
+    Make<Req, Rec, Mk>: svc::Make<T>,
+{
+    type Value = <Make<Req, Rec, Mk> as svc::Make<T>>::Value;
+    type Error = <Make<Req, Rec, Mk> as svc::Make<T>>::Error;
+    type Make = Make<Req, Rec, Mk>;
+
+    fn bind(&self, inner: Mk) -> Self::Make {
+        Make {
+            inner,
+            recognize: self.recognize.clone(),
+            _p: PhantomData,
+        }
+    }
+}
+
+// === impl Make ===
+
+impl<Req, Rec, Mk> Clone for Make<Req, Rec, Mk>
+where
+    Rec: Recognize<Req> + Clone,
+    Mk: svc::Make<Rec::Target> + Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            recognize: self.recognize.clone(),
+            inner: self.inner.clone(),
+            _p: PhantomData
+        }
+    }
+}
+
+impl<Req, Rec, Mk, B> svc::Make<Config> for Make<Req, Rec, Mk>
+where
+    Rec: Recognize<Req> + Clone + Send + Sync + 'static,
+    Mk: svc::Make<Rec::Target> + Clone + Send + Sync + 'static,
+    Mk::Value: svc::Service<Request = Req, Response = http::Response<B>>,
+    <Mk::Value as svc::Service>::Error: error::Error,
+    Mk::Error: fmt::Debug,
     B: Default + Send + 'static,
 {
+    type Value = Service<Req, Rec, Mk>;
     type Error = ();
-    type Client = Service<R>;
 
-    fn make_client(&self, _: &Arc<ctx::transport::Server>) -> Result<Self::Client, Self::Error> {
-        let inner = self.router.clone();
+    fn make(&self, config: &Config) -> Result<Self::Value, Self::Error> {
+        let inner = Router::new(
+            self.recognize.clone(),
+            self.inner.clone(),
+            config.capacity,
+            config.max_idle_age,
+        );
         Ok(Service { inner })
     }
 }
 
 fn route_err_to_5xx<E, F>(e: Error<E, F>) -> http::StatusCode
 where
-    E: fmt::Display,
-    F: fmt::Display,
+    E: error::Error,
+    F: fmt::Debug,
 {
     match e {
         Error::Route(r) => {
-            error!("router error: {}", r);
+            error!("router error: {:?}", r);
             http::StatusCode::INTERNAL_SERVER_ERROR
         }
         Error::Inner(i) => {
@@ -115,23 +168,25 @@ where
     }
 }
 
-// ===== impl Service =====
+// === impl Service ===
 
-impl<R, B> svc::Service for Service<R>
+impl<Req, Rec, Mk, B> svc::Service for Service<Req, Rec, Mk>
 where
-    R: Recognize<Response = http::Response<B>>,
-    R::Error: error::Error,
-    R::RouteError: fmt::Display,
-    B: Default,
+    Rec: Recognize<Req> + Send + Sync + 'static,
+    Mk: svc::Make<Rec::Target> + Send + Sync + 'static,
+    Mk::Value: svc::Service<Request = Req, Response = http::Response<B>>,
+    <Mk::Value as svc::Service>::Error: error::Error,
+    Mk::Error: fmt::Debug,
+    B: Default + Send + 'static,
 {
-    type Request = <Router<R> as svc::Service>::Request;
-    type Response = <Router<R> as svc::Service>::Response;
+    type Request = <Router<Req, Rec, Mk> as svc::Service>::Request;
+    type Response = <Router<Req, Rec, Mk> as svc::Service>::Response;
     type Error = h2::Error;
-    type Future = ResponseFuture<R>;
+    type Future = ResponseFuture<<Router<Req, Rec, Mk> as svc::Service>::Future>;
 
     fn poll_ready(&mut self) -> Poll<(), Self::Error> {
         self.inner.poll_ready().map_err(|e| {
-            error!("router failed to become ready: {}", e);
+            error!("router failed to become ready: {:?}", e);
             h2::Reason::INTERNAL_ERROR.into()
         })
     }
@@ -142,16 +197,30 @@ where
     }
 }
 
-// ===== impl ResponseFuture =====
-
-impl<R, B> Future for ResponseFuture<R>
+impl<Req, Rec, Mk> Clone for Service<Req, Rec, Mk>
 where
-    R: Recognize<Response = http::Response<B>>,
-    R::Error: error::Error,
-    R::RouteError: fmt::Display,
+    Rec: Recognize<Req>,
+    Mk: svc::Make<Rec::Target>,
+    Mk::Value: svc::Service<Request = Req>,
+    Router<Req, Rec, Mk>: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
+// === impl ResponseFuture ===
+
+impl<F, E, G, B> Future for ResponseFuture<F>
+where
+    F: Future<Item = http::Response<B>, Error = Error<E, G>>,
+    E: error::Error,
+    G: fmt::Debug,
     B: Default,
 {
-    type Item = R::Response;
+    type Item = F::Item;
     type Error = h2::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
