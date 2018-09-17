@@ -16,7 +16,7 @@ use tower_h2;
 use ctx::Proxy as ProxyCtx;
 use ctx::transport::{Server as ServerCtx};
 use drain;
-use svc::{MakeClient, Service};
+use svc::{Make, Service};
 use transport::{self, Connection, GetOriginalDst, Peek};
 use proxy::http::glue::{HttpBody, HttpBodyNewSvc, HyperServerSvc};
 use proxy::protocol::Protocol;
@@ -29,8 +29,8 @@ use proxy::tcp;
 /// service.
 pub struct Server<M, B, G>
 where
-    M: MakeClient<Arc<ServerCtx>, Error = ()> + Clone,
-    M::Client: Service<
+    M: Make<Arc<ServerCtx>, Error = ()> + Clone,
+    M::Service: Service<
         Request = http::Request<HttpBody>,
         Response = http::Response<B>,
     >,
@@ -43,7 +43,7 @@ where
     h1: hyper::server::conn::Http,
     h2_settings: h2::server::Builder,
     listen_addr: SocketAddr,
-    make_client: M,
+    make: M,
     proxy_ctx: ProxyCtx,
     transport_registry: transport::metrics::Registry,
     tcp: tcp::Forward,
@@ -52,14 +52,14 @@ where
 
 impl<M, B, G> Server<M, B, G>
 where
-    M: MakeClient<Arc<ServerCtx>, Error = ()> + Clone,
-    M::Client: Service<
+    M: Make<Arc<ServerCtx>, Error = ()> + Clone,
+    M::Service: Service<
         Request = http::Request<HttpBody>,
         Response = http::Response<B>,
     >,
-    M::Client: Send + 'static,
-    <M::Client as Service>::Error: error::Error + Send + Sync + 'static,
-    <M::Client as Service>::Future: Send + 'static,
+    M::Service: Send + 'static,
+    <M::Service as Service>::Error: error::Error + Send + Sync + 'static,
+    <M::Service as Service>::Future: Send + 'static,
     B: tower_h2::Body + Default + Send + 'static,
     B::Data: Send,
     <B::Data as ::bytes::IntoBuf>::Buf: Send,
@@ -72,7 +72,7 @@ where
         proxy_ctx: ProxyCtx,
         transport_registry: transport::metrics::Registry,
         get_orig_dst: G,
-        make_client: M,
+        make: M,
         tcp_connect_timeout: Duration,
         disable_protocol_detection_ports: IndexSet<u16>,
         drain_signal: drain::Watch,
@@ -87,7 +87,7 @@ where
             h1: hyper::server::conn::Http::new(),
             h2_settings,
             listen_addr,
-            make_client,
+            make,
             proxy_ctx,
             transport_registry,
             tcp,
@@ -154,7 +154,7 @@ where
 
         let h1 = self.h1.clone();
         let h2_settings = self.h2_settings.clone();
-        let make_client = self.make_client.clone();
+        let make = self.make.clone();
         let tcp = self.tcp.clone();
         let drain_signal = self.drain_signal.clone();
         let log_clone = log.clone();
@@ -168,7 +168,7 @@ where
                 Some(proto) => Either::B(match proto {
                     Protocol::Http1 => Either::A({
                         trace!("detected HTTP/1");
-                        match make_client.make_client(&srv_ctx) {
+                        match make.make(&srv_ctx) {
                             Err(()) => Either::A({
                                 error!("failed to build HTTP/1 client");
                                 future::err(())
@@ -195,7 +195,7 @@ where
                     }),
                     Protocol::Http2 => Either::B({
                         trace!("detected HTTP/2");
-                        let new_service = make_client.into_new_service(srv_ctx.clone());
+                        let new_service = make.into_new_service(srv_ctx.clone());
                         let h2 = tower_h2::Server::new(
                             HttpBodyNewSvc::new(new_service),
                             h2_settings,

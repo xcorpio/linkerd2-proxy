@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 /// A stackable element.
 ///
 /// Given a `Next`-typed inner value, produces a `Bound`-typed value.
-/// This is especially useful for composable types like `MakeClient`s.
+/// This is especially useful for composable types like `Make`s.
 pub trait Layer<Next> {
     type Bound;
 

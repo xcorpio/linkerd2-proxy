@@ -83,8 +83,6 @@ mod inbound;
 mod logging;
 mod outbound;
 pub mod stream;
-mod svc;
-pub mod task;
 pub mod telemetry;
 mod proxy;
 mod transport;

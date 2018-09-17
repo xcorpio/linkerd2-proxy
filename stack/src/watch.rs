@@ -1,28 +1,14 @@
-use futures::{future::MapErr, Async, Poll, Stream};
-use futures_watch;
-use std::marker::PhantomData;
+extern crate futures_watch;
 
+use futures::{future::MapErr, Async, Future, Poll, Stream};
 use svc;
-
-#[derive(Clone,Debug)]
-pub struct Layer<V> {
-    watch: futures_watch::Watch<V>,
-}
-
-#[derive(Clone, Debug)]
-pub struct Make<V, T, M: svc::MakeClient<(T, V)>> {
-    watch: futures_watch::Watch<V>,
-    make_client: M,
-    target: T,
-}
 
 /// A Service that updates itself as a Watch updates.
 #[derive(Clone, Debug)]
-pub struct Service<EV, T, M: svc::MakeClient<(T, V)>> {
-    watch: futures_watch::Watch<V>,
-    make_client: M,
-    inner: M::Client,
-    _p: PhantomData<T>,
+pub struct Watch<T, M: super::Make<T>> {
+    watch: futures_watch::Watch<T>,
+    make: M,
+    inner: M::Service,
 }
 
 #[derive(Debug)]
@@ -31,56 +17,30 @@ pub enum Error<I, M> {
     Inner(I),
 }
 
-impl<V, T, M> svc::Layer<M> for Layer<V>
+impl<T, M> Watch<T, M>
 where
-    T: Clone,
-    M: svc::MakeClient<(T, V)>,
-    M: Clone,
+    M: super::Make<T>,
 {
-    type Bound = Make<V, T, M::Client>;
-
-    fn bind(&self, make_client: M) -> Self::Bound {
-        Make {
-            watch: self.watch.clone(),
-            make_client,
-            _p: PhantomData,
-        }
+    pub fn try(watch: futures_watch::Watch<T>, make: M) -> Result<Self, M::Error> {
+        let inner = make.make(&*watch.borrow())?;
+        Ok(Self {
+            watch,
+            make,
+            inner,
+        })
     }
 }
 
-impl<V, T, M> svc::MakeClient<T> for Make<V, T, M>
+impl<T, M> svc::Service for Watch<T, M>
 where
-    T: Clone,
-    M: svc::MakeClient<(T, V)>,
-    M: Clone,
+    M: super::Make<T>,
 {
-    type Error = M::Error;
-    type Client = Service<V, T, M::Client>;
-
-    fn make_client(&self, target: &T) -> Result<Self::Client, Self::Error> {
-        let v = self.watch.borrow();
-        let inner = self.make_client.make_client(&(target, *v))?;
-        Make {
-            watch: self.watch.clone(),
-            make_client: self.make_client.clone(),
-            target: target.clone(),
-            _p: PhantomData,
-        }
-    }
-}
-
-impl<V, T, M> svc::Service for Service<V, T, M>
-where
-    T: Clone,
-    V: Clone,
-    M: svc::MakeClient<(T, V)>,
-{
-    type Request = <M::Client as Service>::Request;
-    type Response = <M::Client as Service>::Response;
-    type Error = Error<<M::Client as Service>::Error, M::Error>;
+    type Request = <M::Service as svc::Service>::Request;
+    type Response = <M::Service as svc::Service>::Response;
+    type Error = Error<<M::Service as svc::Service>::Error, M::Error>;
     type Future = MapErr<
-        <M::Client as Service>::Future,
-        fn(<M::Client as Service>::Error) -> M::Error,
+        <M::Service as svc::Service>::Future,
+        fn(<M::Service as svc::Service>::Error) -> Self::Error,
     >;
 
     fn poll_ready(&mut self) -> Poll<(), Self::Error> {
@@ -88,9 +48,11 @@ where
         //
         // `watch.poll()` can't actually fail; so errors are not considered.
         while let Ok(Async::Ready(Some(()))) = self.watch.poll() {
-            let target = (self.target, *self.watch.borrow());
-            let client = self.make_client.make_client(&target).map_err(Error::Make)?;
-            self.inner = client;
+            let target = self.watch.borrow();
+            // `inner` is only updated if `target` is valid. The caller may
+            // choose to continue using the service or discard as is
+            // appropriate.
+            self.inner = self.make.make(&*target).map_err(Error::Make)?;
         }
 
         self.inner.poll_ready().map_err(Error::Inner)
@@ -141,7 +103,7 @@ mod tests {
             };
         }
 
-        let (watch, mut store) = futures_watch::Watch::new(1);
+        let (watch, mut store) = Watch::new(1);
         let mut svc = Watch::new(watch, |n: &usize| Svc(*n));
 
         assert_ready!(svc);

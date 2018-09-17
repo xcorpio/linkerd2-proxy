@@ -4,6 +4,8 @@ members = [
     "futures-mpsc-lossy",
     "metrics",
     "router",
+    "stack",
+    "task",
 ]
 
 [package]
@@ -20,7 +22,9 @@ flaky_tests = []
 [dependencies]
 futures-mpsc-lossy    = { path = "./futures-mpsc-lossy" }
 linkerd2-metrics      = { path = "./metrics" }
-linkerd2-proxy-router = { path = "./router" }
+linkerd2-router = { path = "./router" }
+linkerd2-stack  = { path = "./stack" }
+linkerd2-task  = { path = "./task" }
 
 linkerd2-proxy-api = { git = "https://github.com/linkerd/linkerd2-proxy-api", tag = "v0.1.1", version = "0.1.1" }
 

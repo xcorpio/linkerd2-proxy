@@ -298,15 +298,15 @@ where
 
 // ===== impl BindProtocol =====
 
-impl<B> svc::MakeClient<Endpoint> for BindProtocol<ctx::Proxy, B>
+impl<B> svc::Make<Endpoint> for BindProtocol<ctx::Proxy, B>
 where
     B: tower_h2::Body + Send + 'static,
     <B::Data as ::bytes::IntoBuf>::Buf: Send,
 {
     type Error = ();
-    type Client = BoundService<B>;
+    type Service = BoundService<B>;
 
-    fn make_client(&self, ep: &Endpoint) -> Result<Self::Client, ()> {
+    fn make(&self, ep: &Endpoint) -> Result<Self::Service, ()> {
         Ok(self.bind.bind_service(ep, &self.protocol))
     }
 }

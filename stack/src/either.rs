@@ -10,10 +10,10 @@ pub enum Either<A, B> {
     B(B),
 }
 
-impl<A, B, N> svc::Layer<N> for Either<A, B>
+impl<A, B, N> super::Layer<N> for Either<A, B>
 where
-    A: svc::Layer<N>,
-    B: svc::Layer<N>,
+    A: super::Layer<N>,
+    B: super::Layer<N>,
 {
     type Bound = Either<A::Bound, B::Bound>;
 
@@ -25,23 +25,23 @@ where
     }
 }
 
-impl<T, N, M> svc::MakeClient<T> for Either<N, M>
+impl<T, N, M> super::Make<T> for Either<N, M>
 where
-    N: svc::MakeClient<T>,
-    M: svc::MakeClient<T, Error = N::Error>,
-    M::Client: svc::Service<
-        Request = <N::Client as svc::Service>::Request,
-        Response = <N::Client as svc::Service>::Response,
-        Error = <N::Client as svc::Service>::Error,
+    N: super::Make<T>,
+    M: super::Make<T, Error = N::Error>,
+    M::Service: svc::Service<
+        Request = <N::Service as svc::Service>::Request,
+        Response = <N::Service as svc::Service>::Response,
+        Error = <N::Service as svc::Service>::Error,
     >,
 {
-    type Client = Either<N::Client, M::Client>;
+    type Service = Either<N::Service, M::Service>;
     type Error = Either<N::Error, M::Error>;
 
-    fn make_client(&self, target: &T) -> Result<Self::Client, Self::Error> {
+    fn make(&self, target: &T) -> Result<Self::Service, Self::Error> {
         match self {
-            Either::A(ref a) => a.make_client(target).map(Either::A).map_err(Either::A),
-            Either::B(ref b) => b.make_client(target).map(Either::B).map_err(Either::B),
+            Either::A(ref a) => a.make(target).map(Either::A).map_err(Either::A),
+            Either::B(ref b) => b.make(target).map(Either::B).map_err(Either::B),
         }
     }
 }

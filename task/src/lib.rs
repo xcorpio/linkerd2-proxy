@@ -1,4 +1,10 @@
 //! Task execution utilities.
+
+extern crate futures;
+#[macro_use]
+extern crate log;
+extern crate tokio;
+
 use futures::future::{
     Future,
     ExecuteError,

@@ -3,7 +3,7 @@ use http;
 use std::marker::PhantomData;
 use std::time::Instant;
 
-use svc::{self, Service, MakeClient};
+use svc::{self, Service, Make};
 
 /// A `RequestOpen` timestamp.
 ///
@@ -28,7 +28,7 @@ pub struct TimestampRequestOpen<S> {
 #[derive(Clone, Debug)]
 pub struct Layer<T, B>(PhantomData<fn() -> (T, B)>);
 
-/// Uses an `M`-typed `MakeClient` to build a `TimestampRequestOpen` service.
+/// Uses an `M`-typed `Make` to build a `TimestampRequestOpen` service.
 #[derive(Clone, Debug)]
 pub struct Make<M>(M);
 
@@ -63,8 +63,8 @@ impl<T, B> Layer<T, B> {
 
 impl<N, T, B> svc::Layer<N> for Layer<T, B>
 where
-    N: MakeClient<T>,
-    N::Client: Service<Request = http::Request<B>>,
+    N: Make<T>,
+    N::Service: Service<Request = http::Request<B>>,
 {
     type Bound = Make<N>;
 
@@ -75,16 +75,16 @@ where
 
 // === impl Make ===
 
-impl<N, T, B> MakeClient<T> for Make<N>
+impl<N, T, B> Make<T> for Make<N>
 where
-    N: MakeClient<T>,
-    N::Client: Service<Request = http::Request<B>>,
+    N: Make<T>,
+    N::Service: Service<Request = http::Request<B>>,
 {
-    type Client = TimestampRequestOpen<N::Client>;
+    type Service = TimestampRequestOpen<N::Service>;
     type Error = N::Error;
 
-    fn make_client(&self, target: &T) -> Result<Self::Client, Self::Error> {
-        let inner = self.0.make_client(target)?;
+    fn make(&self, target: &T) -> Result<Self::Service, Self::Error> {
+        let inner = self.0.make(target)?;
         Ok(TimestampRequestOpen { inner })
     }
 }

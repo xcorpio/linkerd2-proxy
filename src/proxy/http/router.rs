@@ -8,10 +8,10 @@ use std::sync::Arc;
 use ctx;
 use svc;
 
-extern crate linkerd2_proxy_router;
+extern crate linkerd2_router;
 
-use self::linkerd2_proxy_router::Error;
-pub use self::linkerd2_proxy_router::{Recognize, Router};
+use self::linkerd2_router::Error;
+pub use self::linkerd2_router::{Recognize, Router};
 
 pub struct Make<R>
 where
@@ -70,7 +70,7 @@ where
     }
 }
 
-impl<R, A, B> svc::MakeClient<Arc<ctx::transport::Server>> for Make<R>
+impl<R, A, B> svc::Make<Arc<ctx::transport::Server>> for Make<R>
 where
     R: Recognize<Request = http::Request<A>, Response = http::Response<B>>,
     R: Send + Sync + 'static,
@@ -80,9 +80,9 @@ where
     B: Default + Send + 'static,
 {
     type Error = ();
-    type Client = Service<R>;
+    type Service = Service<R>;
 
-    fn make_client(&self, _: &Arc<ctx::transport::Server>) -> Result<Self::Client, Self::Error> {
+    fn make(&self, _: &Arc<ctx::transport::Server>) -> Result<Self::Service, Self::Error> {
         let inner = self.router.clone();
         Ok(Service { inner })
     }

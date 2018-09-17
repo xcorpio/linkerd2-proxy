@@ -40,7 +40,7 @@ use tower_discover::{Change, Discover};
 use tower_service::Service;
 
 use dns;
-use svc::MakeClient;
+use svc::Make;
 use tls;
 use transport::{DnsNameAndPort, HostAndPort};
 
@@ -158,7 +158,7 @@ impl Resolver {
     /// Start watching for address changes for a certain authority.
     pub fn resolve<N>(&self, authority: &DnsNameAndPort, new_endpoint: N) -> Resolution<N>
     where
-        N: MakeClient<Endpoint>,
+        N: Make<Endpoint>,
     {
         trace!("resolve; authority={:?}", authority);
         let (update_tx, update_rx) = mpsc::unbounded();
@@ -189,13 +189,13 @@ impl Resolver {
 
 impl<N> Discover for Resolution<N>
 where
-    N: MakeClient<Endpoint>,
+    N: Make<Endpoint>,
 {
     type Key = SocketAddr;
-    type Request = <N::Client as Service>::Request;
-    type Response = <N::Client as Service>::Response;
-    type Error = <N::Client as Service>::Error;
-    type Service = N::Client;
+    type Request = <N::Service as Service>::Request;
+    type Response = <N::Service as Service>::Response;
+    type Error = <N::Service as Service>::Error;
+    type Service = N::Service;
     type DiscoverError = ();
 
     fn poll(&mut self) -> Poll<Change<Self::Key, Self::Service>, Self::DiscoverError> {
@@ -212,7 +212,7 @@ where
                     // existing ones can be handled in the same way.
                     let endpoint = Endpoint::new(addr, meta);
 
-                    let service = self.new_endpoint.make_client(&endpoint).map_err(|_| ())?;
+                    let service = self.new_endpoint.make(&endpoint).map_err(|_| ())?;
 
                     return Ok(Async::Ready(Change::Insert(addr, service)));
                 },

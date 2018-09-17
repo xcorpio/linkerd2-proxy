@@ -46,7 +46,7 @@ pub struct LayerDowngrade<T>(PhantomData<fn() -> T>);
 
 pub struct MakeUpgrade<T, N>
 where
-    N: svc::MakeClient<T>,
+    N: svc::Make<T>,
 {
     inner: N,
     _p: PhantomData<fn() -> T>,
@@ -54,7 +54,7 @@ where
 
 pub struct MakeDowngrade<T, N>
 where
-    N: svc::MakeClient<T>,
+    N: svc::Make<T>,
 {
     inner: N,
     _p: PhantomData<fn() -> T>,
@@ -68,8 +68,8 @@ pub fn upgrade<T>() -> LayerUpgrade<T> {
 
 impl<T, N, A, B> svc::Layer<N> for LayerUpgrade<T>
 where
-    N: svc::MakeClient<T>,
-    N::Client: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
+    N: svc::Make<T>,
+    N::Service: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
 {
     type Bound = MakeUpgrade<T, N>;
 
@@ -78,16 +78,16 @@ where
     }
 }
 
-impl<T, N, A, B> svc::MakeClient<T> for MakeUpgrade<T, N>
+impl<T, N, A, B> svc::Make<T> for MakeUpgrade<T, N>
 where
-    N: svc::MakeClient<T>,
-    N::Client: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
+    N: svc::Make<T>,
+    N::Service: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
 {
-    type Client = Upgrade<N::Client>;
+    type Service = Upgrade<N::Service>;
     type Error = N::Error;
 
-    fn make_client(&self, target: &T) -> Result<Self::Client, Self::Error> {
-        let inner = self.inner.make_client(&target)?;
+    fn make(&self, target: &T) -> Result<Self::Service, Self::Error> {
+        let inner = self.inner.make(&target)?;
         Ok(Upgrade { inner })
     }
 }
@@ -180,8 +180,8 @@ pub fn downgrade<T>() -> LayerDowngrade<T> {
 
 impl<T, N, A, B> svc::Layer<N> for LayerDowngrade<T>
 where
-    N: svc::MakeClient<T>,
-    N::Client: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
+    N: svc::Make<T>,
+    N::Service: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
 {
     type Bound = MakeDowngrade<T, N>;
 
@@ -190,16 +190,16 @@ where
     }
 }
 
-impl<T, N, A, B> svc::MakeClient<T> for MakeDowngrade<T, N>
+impl<T, N, A, B> svc::Make<T> for MakeDowngrade<T, N>
 where
-    N: svc::MakeClient<T>,
-    N::Client: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
+    N: svc::Make<T>,
+    N::Service: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
 {
-    type Client = Downgrade<N::Client>;
+    type Service = Downgrade<N::Service>;
     type Error = N::Error;
 
-    fn make_client(&self, target: &T) -> Result<Self::Client, Self::Error> {
-        let inner = self.inner.make_client(&target)?;
+    fn make(&self, target: &T) -> Result<Self::Service, Self::Error> {
+        let inner = self.inner.make(&target)?;
         Ok(Downgrade { inner })
     }
 }

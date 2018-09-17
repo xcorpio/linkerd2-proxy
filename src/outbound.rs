@@ -18,7 +18,7 @@ use control::destination::{self, Resolution};
 use ctx;
 use proxy::{self, http::h1};
 use proxy::http::router::Recognize;
-use svc::MakeClient;
+use svc::Make;
 use telemetry::http::service::{ResponseBody as SensorBody};
 use timeout::Timeout;
 use transport::{DnsNameAndPort, Host, HostAndPort};
@@ -225,7 +225,7 @@ where
                 // circuit-breaking, this should be able to take care of itself,
                 // closing down when the connection is no longer usable.
                 if let Some((addr, mut bind)) = opt.take() {
-                    let svc = bind.make_client(&addr.into())
+                    let svc = bind.make(&addr.into())
                         .map_err(|_| BindError::External { addr })?;
                     Ok(Async::Ready(Change::Insert(addr, svc)))
                 } else {

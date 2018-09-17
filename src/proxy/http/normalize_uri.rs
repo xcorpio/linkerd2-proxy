@@ -7,7 +7,7 @@ use svc;
 
 pub struct Layer<T>(PhantomData<T>);
 
-pub struct Make<T, N: svc::MakeClient<T>> {
+pub struct Make<T, N: svc::Make<T>> {
     inner: N,
     _p: PhantomData<T>
 }
@@ -25,8 +25,8 @@ pub fn layer<T>() -> Layer<T> {
 
 impl<T, N, B> svc::Layer<N> for Layer<T>
 where
-    N: svc::MakeClient<T>,
-    N::Client: svc::Service<Request = http::Request<B>>,
+    N: svc::Make<T>,
+    N::Service: svc::Service<Request = http::Request<B>>,
 {
     type Bound = Make<T, N>;
 
@@ -37,16 +37,16 @@ where
 
 // === impl Make ===
 
-impl<T, N, B> svc::MakeClient<T> for Make<T, N>
+impl<T, N, B> svc::Make<T> for Make<T, N>
 where
-    N: svc::MakeClient<T>,
-    N::Client: svc::Service<Request = http::Request<B>>,
+    N: svc::Make<T>,
+    N::Service: svc::Service<Request = http::Request<B>>,
 {
-    type Client = Service<N::Client>;
+    type Service = Service<N::Service>;
     type Error = N::Error;
 
-    fn make_client(&self, target: &T) -> Result<Self::Client, Self::Error> {
-        let inner = self.inner.make_client(&target)?;
+    fn make(&self, target: &T) -> Result<Self::Service, Self::Error> {
+        let inner = self.inner.make(&target)?;
         Ok(Service { inner })
     }
 }
