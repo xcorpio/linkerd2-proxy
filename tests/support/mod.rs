@@ -90,7 +90,7 @@ macro_rules! assert_eventually {
                 } else if i == $retries {
                     panic!(
                         "assertion failed after {} (retried {} times): {}",
-                        timeout::HumanDuration(start_t.elapsed()),
+                        start_t.elapsed(),
                         i,
                         format_args!($($arg)+)
                     )

@@ -5,7 +5,6 @@ use std::sync::Arc;
 
 use http;
 use futures::{Async, Poll};
-use tower_service as tower;
 use tower_balance::{choose, load, Balance};
 use tower_buffer::Buffer;
 use tower_discover::{Change, Discover};
@@ -18,7 +17,7 @@ use control::destination::{self, Resolution};
 use ctx;
 use proxy::{self, http::h1};
 use proxy::http::router::Recognize;
-use svc::Make;
+use svc::{self, Make};
 use telemetry::http::service::{ResponseBody as SensorBody};
 use timeout::Timeout;
 use transport::{DnsNameAndPort, Host, HostAndPort};
@@ -144,7 +143,7 @@ where
         load::peak_ewma::Handle,
         SensorBody<proxy::http::Body>,
     >>;
-    type Error = <Self::Service as tower::Service>::Error;
+    type Error = <Self::Service as svc::Service>::Error;
     type Key = (Destination, Protocol);
     type RouteError = bind::BufferSpawnError;
     type Service = InFlightLimit<Timeout<Buffer<Balance<
@@ -208,9 +207,9 @@ where
     <B::Data as ::bytes::IntoBuf>::Buf: Send,
 {
     type Key = SocketAddr;
-    type Request = <Self::Service as tower::Service>::Request;
-    type Response = <Self::Service as tower::Service>::Response;
-    type Error = <Self::Service as tower::Service>::Error;
+    type Request = <Self::Service as svc::Service>::Request;
+    type Response = <Self::Service as svc::Service>::Response;
+    type Error = <Self::Service as svc::Service>::Error;
     type Service = bind::BoundService<B>;
     type DiscoverError = BindError;
 

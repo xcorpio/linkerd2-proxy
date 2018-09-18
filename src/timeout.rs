@@ -8,7 +8,8 @@ use std::time::{Duration, Instant};
 use tokio_connect::Connect;
 use tokio::timer::{self, Deadline, DeadlineError};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tower_service::Service;
+
+use svc;
 
 /// A timeout that wraps an underlying operation.
 #[derive(Debug, Clone)]
@@ -40,7 +41,7 @@ enum TimeoutErrorKind<E> {
 /// This may not be the ideal display format for _all_ duration values,
 /// but should be sufficient for most timeouts.
 #[derive(Copy, Clone, Debug)]
-pub struct HumanDuration(pub Duration);
+struct HumanDuration(pub Duration);
 
 //===== impl Timeout =====
 
@@ -73,9 +74,9 @@ impl<T> Timeout<T> {
     }
 }
 
-impl<S, T, E> Service for Timeout<S>
+impl<S, T, E> svc::Service for Timeout<S>
 where
-    S: Service<Response=T, Error=E>,
+    S: svc::Service<Response=T, Error=E>,
 {
     type Request = S::Request;
     type Response = T;

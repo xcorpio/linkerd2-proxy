@@ -44,7 +44,6 @@ extern crate tower_grpc;
 extern crate tower_h2;
 extern crate tower_h2_balance;
 extern crate tower_reconnect;
-extern crate tower_service;
 extern crate tower_util;
 extern crate tower_in_flight_limit;
 extern crate trust_dns_resolver;
@@ -53,6 +52,7 @@ extern crate try_lock;
 #[macro_use]
 extern crate linkerd2_metrics;
 extern crate linkerd2_proxy_api;
+extern crate linkerd2_task as task;
 
 use futures::*;
 
@@ -67,7 +67,6 @@ use tokio::{
     executor::{self, DefaultExecutor, Executor},
     runtime::current_thread,
 };
-use tower_service::NewService;
 
 pub mod app;
 mod bind;
@@ -85,6 +84,7 @@ mod outbound;
 pub mod stream;
 pub mod telemetry;
 mod proxy;
+mod svc;
 mod transport;
 pub mod timeout;
 
@@ -93,7 +93,7 @@ use conditional::Conditional;
 use inbound::Inbound;
 use task::MainRuntime;
 use proxy::http::router::{Router, Recognize};
-use svc::Layer;
+//use svc::Layer;
 use telemetry::http::timestamp_request_open;
 use transport::{BoundPort, Connection};
 pub use transport::{AddrInfo, GetOriginalDst, SoOriginalDst, tls};
@@ -420,7 +420,7 @@ where
         + Send + Sync + 'static,
     R::Key: Send,
     R::Service: Send,
-    <R::Service as tower_service::Service>::Future: Send,
+    <R::Service as svc::Service>::Future: Send,
     Router<R>: Send,
     G: GetOriginalDst + Send + 'static,
 {
@@ -508,7 +508,7 @@ fn serve_tap<N, B>(
 where
     B: tower_h2::Body + Send + 'static,
     <B::Data as bytes::IntoBuf>::Buf: Send,
-    N: NewService<
+    N: svc::NewService<
         Request = http::Request<tower_h2::RecvBody>,
         Response = http::Response<B>
     >

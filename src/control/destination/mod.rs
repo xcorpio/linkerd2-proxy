@@ -37,10 +37,9 @@ use futures::{
     Stream
 };
 use tower_discover::{Change, Discover};
-use tower_service::Service;
 
 use dns;
-use svc::Make;
+use svc::{self, Make};
 use tls;
 use transport::{DnsNameAndPort, HostAndPort};
 
@@ -189,12 +188,12 @@ impl Resolver {
 
 impl<N> Discover for Resolution<N>
 where
-    N: Make<Endpoint>,
+    N: svc::Make<Endpoint>,
 {
     type Key = SocketAddr;
-    type Request = <N::Service as Service>::Request;
-    type Response = <N::Service as Service>::Response;
-    type Error = <N::Service as Service>::Error;
+    type Request = <N::Service as svc::Service>::Request;
+    type Response = <N::Service as svc::Service>::Response;
+    type Error = <N::Service as svc::Service>::Error;
     type Service = N::Service;
     type DiscoverError = ();
 
