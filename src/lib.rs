@@ -53,6 +53,7 @@ extern crate try_lock;
 extern crate linkerd2_metrics;
 extern crate linkerd2_proxy_api;
 extern crate linkerd2_task as task;
+extern crate linkerd2_timeout as timeout;
 
 use futures::*;
 
@@ -86,7 +87,6 @@ pub mod telemetry;
 mod proxy;
 mod svc;
 mod transport;
-pub mod timeout;
 
 use bind::Bind;
 use conditional::Conditional;
