@@ -13,22 +13,26 @@ extern crate linkerd2_router;
 use self::linkerd2_router::Error;
 pub use self::linkerd2_router::{Recognize, Router};
 
-pub struct Make<R>
+pub struct Make<R, M>
 where
     R: Recognize,
-    R::Error: error::Error,
-    R::RouteError: fmt::Display,
+    M: svc::Make<R::Target>,
+    M::Output: svc::Service<Request = R::Request>,
+    <M::Output as svc::Service>::Error: error::Error,
+    M::Error: fmt::Display,
 {
-    router: Router<R>,
+    recognize: Router<R, M>,
 }
 
-pub struct Service<R>
+pub struct Service<R, M>
 where
     R: Recognize,
-    R::Error: error::Error,
-    R::RouteError: fmt::Display,
+    M: svc::Make<R::Target>,
+    M::Output: svc::Service<Request = R::Request>,
+    <M::Output as svc::Service>::Error: error::Error,
+    M::Error: fmt::Display,
 {
-    inner: Router<R>,
+    inner: Router<R, M>,
 }
 
 /// Catches errors from the inner future and maps them to 500 responses.
@@ -43,10 +47,11 @@ where
 
 // ===== impl Make =====
 
-impl<R, A, B> Make<R>
+impl<R, M, A, B> Make<R, M>
 where
     R: Recognize<Request = http::Request<A>, Response = http::Response<B>>,
     R: Send + Sync + 'static,
+    M: svc::Make<R::Target>
     R::Error: error::Error + Send + 'static,
     R::RouteError: fmt::Display + Send + 'static,
     A: Send + 'static,
