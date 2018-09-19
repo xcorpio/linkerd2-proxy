@@ -1,6 +1,4 @@
-use std::error::Error;
-use std::fmt;
-use std::marker::PhantomData;
+use indexmap::IndexMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -8,12 +6,11 @@ use futures::Poll;
 use http::{self, uri};
 use tower_h2;
 
-use control::destination::Endpoint;
 use ctx;
 use ctx::transport::TlsStatus;
 use telemetry;
 use proxy;
-use svc::{self, stack::watch};
+use svc::{self, Layer, stack::watch};
 use transport;
 use tls;
 
@@ -39,65 +36,25 @@ type HttpService<B> = proxy::Reconnect<
     >
 >;
 
-/// Binds a `Service` from a `SocketAddr`.
-///
-/// The returned `Service` buffers request until a connection is established.
-///
-/// # TODO
-///
-/// Buffering is not bounded and no timeouts are applied.
-pub struct Bind<C, B> {
-    ctx: C,
-    sensors: telemetry::Sensors,
-    transport_registry: transport::metrics::Registry,
-    tls_client_config: tls::ClientConfigWatch,
-    _p: PhantomData<fn() -> B>,
+/// Identifies a connection from the proxy to another process.
+#[derive(Debug)]
+pub struct Endpoint {
+    pub proxy: ctx::Proxy,
+    pub address: SocketAddr,
+    pub labels: IndexMap<String, String>,
+    pub tls_status: tls::ConditionalClientConfig,
+    _p: (),
 }
 
-/// Binds a `Service` from a `SocketAddr` for a pre-determined protocol.
-pub struct BindProtocol<C, B> {
-    bind: Bind<C, B>,
-    protocol: Protocol,
-}
-
-/// A bound service that can re-bind itself on demand.
-///
-/// Reasons this would need to re-bind:
-///
-/// - `BindsPerRequest` can only service 1 request, and then needs to bind a
-///   new service.
-/// - If there is an error in the inner service (such as a connect error), we
-///   need to throw it away and bind a new service.
-pub struct BoundService<B>
-where
-    B: tower_h2::Body + Send + 'static,
-    <B::Data as ::bytes::IntoBuf>::Buf: Send,
-{
-    bind: Bind<ctx::Proxy, B>,
-    binding: Binding<B>,
+pub struct SetTlsLayer {
     endpoint: Endpoint,
     protocol: Protocol,
 }
 
-/// A type of service binding.
-///
-/// Some services, for various reasons, may not be able to be used to serve multiple
-/// requests. The `BindsPerRequest` binding ensures that a new stack is bound for each
-/// request.
-///
-/// `Bound` services may be used to process an arbitrary number of requests.
-pub enum Binding<B>
-where
-    B: tower_h2::Body + Send + 'static,
-    <B::Data as ::bytes::IntoBuf>::Buf: Send,
-{
-    Bound(Stack<B>),
-    BindsPerRequest {
-        // When `poll_ready` is called, the _next_ service to be used may be bound
-        // ahead-of-time. This stack is used only to serve the next request to this
-        // service.
-        next: Option<Stack<B>>
-    },
+pub struct SetTlsMake<M> {
+    endpoint: Endpoint,
+    protocol: Protocol,
+    inner: M,
 }
 
 /// Protocol portion of the `Recognize` key for a request.
@@ -133,100 +90,26 @@ pub enum Host {
     NoAuthority,
 }
 
-pub struct RebindTls<B> {
-    bind: Bind<ctx::Proxy, B>,
-    protocol: Protocol,
-    endpoint: Endpoint,
-}
+// ===== impl IntoClient =====
 
-#[derive(Copy, Clone, Debug)]
-pub enum BufferSpawnError {
-    Inbound,
-    Outbound,
-}
-
-impl fmt::Display for BufferSpawnError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.pad(self.description())
-    }
-}
-
-impl Error for BufferSpawnError {
-
-    fn description(&self) -> &str {
-        match *self {
-            BufferSpawnError::Inbound =>
-                "error spawning inbound buffer task",
-            BufferSpawnError::Outbound =>
-                "error spawning outbound buffer task",
-        }
-    }
-
-    fn cause(&self) -> Option<&Error> { None }
-}
-
-impl<B> Bind<(), B> {
-    pub fn new(
-        sensors: telemetry::Sensors,
-        transport_registry: transport::metrics::Registry,
-        tls_client_config: tls::ClientConfigWatch
-    ) -> Self {
-        Self {
-            ctx: (),
-            sensors,
-            transport_registry,
-            tls_client_config,
-            _p: PhantomData,
-        }
-    }
-
-    pub fn with_ctx<C>(self, ctx: C) -> Bind<C, B> {
-        Bind {
-            ctx,
-            sensors: self.sensors,
-            transport_registry: self.transport_registry,
-            tls_client_config: self.tls_client_config,
-            _p: PhantomData,
-        }
-    }
-}
-
-impl<C: Clone, B> Clone for Bind<C, B> {
-    fn clone(&self) -> Self {
-        Self {
-            ctx: self.ctx.clone(),
-            sensors: self.sensors.clone(),
-            transport_registry: self.transport_registry.clone(),
-            tls_client_config: self.tls_client_config.clone(),
-            _p: PhantomData,
-        }
-    }
-}
-
-impl<B> Bind<ctx::Proxy, B>
+impl<M> svc::Make<tls::ConditionalClientConfig> for SetTlsMake<M>
 where
-    B: tower_h2::Body + Send + 'static,
-    <B::Data as ::bytes::IntoBuf>::Buf: Send,
+    M: svc::Make<Endpoint>,
+    M::Output: svc::Service,
 {
-    /// Binds the innermost layers of the stack with a TLS configuration.
-    ///
-    /// A reconnecting HTTP client is established with the given endpont,
-    /// protocol, and TLS configuration.
-    ///
-    /// This client is instrumented with metrics.
-    fn bind_with_tls(
-        &self,
-        ep: &Endpoint,
-        protocol: &Protocol,
-        tls_client_config: &tls::ConditionalClientConfig,
-    ) -> TlsStack<B> {
-        debug!("bind_with_tls endpoint={:?}, protocol={:?}", ep, protocol);
-        let addr = ep.address();
+    type Output = M::Output;
+    type Error = M::Error;
 
-        let log = ::logging::Client::proxy(self.ctx, addr)
-            .with_protocol(protocol.clone());
+    fn make(
+        &mut self,
+        tls_client_config: &tls::ConditionalClientConfig
+    ) -> Result<Self::Output, Self::Error> {
+        debug!(
+            "rebinding endpoint stack for {:?}:{:?} on TLS config change",
+            self.endpoint, self.protocol,
+        );
 
-        let tls = ep.tls_identity().and_then(|identity| {
+        let tls = self.endpoint.tls_identity().and_then(|identity| {
             tls_client_config.as_ref().map(|config| {
                 tls::ConnectionConfig {
                     server_identity: identity.clone(),
@@ -242,119 +125,98 @@ where
             TlsStatus::from(&tls),
         );
 
-        // Map a socket address to a connection.
-        let connect = self.transport_registry
-            .new_connect(client_ctx.as_ref(), transport::Connect::new(addr, tls));
+        self.inner.make(&client_ctx)
+    }
+}
 
-        // TODO: Add some sort of backoff logic between reconnects.
-        self.sensors.http(
+/// Binds the innermost layers of the stack with a TLS configuration.
+///
+/// A reconnecting HTTP client is established with the given endpont,
+/// protocol, and TLS configuration.
+///
+/// This client is instrumented with metrics.
+fn bind_with_tls(
+    &self,
+    ep: &Endpoint,
+    protocol: &Protocol,
+    tls_client_config: &tls::ConditionalClientConfig,
+) -> TlsStack<B> {
+    debug!("bind_with_tls endpoint={:?}, protocol={:?}", ep, protocol);
+    let addr = ep.address();
+
+    let log = ::logging::Client::proxy(self.ctx, addr)
+        .with_protocol(protocol.clone());
+
+    let tls = ep.tls_identity().and_then(|identity| {
+        tls_client_config.as_ref().map(|config| {
+            tls::ConnectionConfig {
+                server_identity: identity.clone(),
+                config: config.clone(),
+            }
+        })
+    });
+
+    let client_ctx = ctx::transport::Client::new(
+        self.ctx,
+        &addr,
+        ep.metadata().clone(),
+        TlsStatus::from(&tls),
+    );
+
+    // Map a socket address to a connection.
+    let connect = self.transport_registry
+        .new_connect(client_ctx.as_ref(), transport::Connect::new(addr, tls));
+
+    // TODO: Add some sort of backoff logic between reconnects.
+    self.sensors.http(
+        client_ctx.clone(),
+        proxy::Reconnect::new(
             client_ctx.clone(),
-            proxy::Reconnect::new(
-                client_ctx.clone(),
-                proxy::http::Client::new(protocol, connect, log.executor())
-            )
+            proxy::http::Client::new(protocol, connect, log.executor())
         )
-   }
-
-    /// Build a `Service` for the given endpoint and `Protocol`.
-    ///
-    /// The service attempts to upgrade HTTP/1 requests to HTTP/2 (if it's known
-    /// with prior knowledge that the endpoint supports HTTP/2).
-    ///
-    /// As `tls_client_config` updates, `bind_with_tls` is called to rebuild the
-    /// client with the appropriate TLS configuraiton.
-    fn bind_stack(&self, ep: &Endpoint, protocol: &Protocol) -> Stack<B> {
-        debug!("bind_stack: endpoint={:?}, protocol={:?}", ep, protocol);
-        let rebind = RebindTls {
-            bind: self.clone(),
-            endpoint: ep.clone(),
-            protocol: protocol.clone(),
-        };
-        let watch_tls = watch::Service::try(self.tls_client_config.clone(), rebind)
-            .expect("tls client must not fail");
-
-        proxy::http::orig_proto::upgrade()
-            .and_then(svc::stack::make_per_request::layer())
-            .and_then(proxy::http::normalize_uri::layer())
-            .and_then(svc::Watch::layer(self.tls_client_config.clone()))
-            .and_then(self.sensors.layer())
-            .bind(proxy::http::client::make())
-    }
-
-    pub fn bind_service(&self, ep: &Endpoint, protocol: &Protocol) {
-        // If the endpoint is another instance of this proxy, AND the usage
-        // of HTTP/1.1 Upgrades are not needed, then bind to an HTTP2 service
-        // instead.
-        //
-        // The related `orig_proto` middleware will automatically translate
-        // if the protocol was originally HTTP/1.
-        let protocol = if ep.can_use_orig_proto() && !protocol.is_h1_upgrade() {
-            &Protocol::Http2
-        } else {
-            protocol
-        };
-    }
+    )
 }
 
-// ===== impl BindProtocol =====
+/// Build a `Service` for the given endpoint and `Protocol`.
+///
+/// The service attempts to upgrade HTTP/1 requests to HTTP/2 (if it's known
+/// with prior knowledge that the endpoint supports HTTP/2).
+///
+/// As `tls_client_config` updates, `bind_with_tls` is called to rebuild the
+/// client with the appropriate TLS configuraiton.
+fn bind_stack(&self, ep: &Endpoint, protocol: &Protocol) -> Stack<B> {
+    debug!("bind_stack: endpoint={:?}, protocol={:?}", ep, protocol);
+    let rebind = RebindTls {
+        bind: self.clone(),
+        endpoint: ep.clone(),
+        protocol: protocol.clone(),
+    };
+    let watch_tls = watch::Service::try(self.tls_client_config.clone(), rebind)
+        .expect("tls client must not fail");
 
-impl<B> svc::Make<Endpoint> for BindProtocol<ctx::Proxy, B>
-where
-    B: tower_h2::Body + Send + 'static,
-    <B::Data as ::bytes::IntoBuf>::Buf: Send,
-{
-    type Error = ();
-    type Service = BoundService<B>;
-
-    fn make(&self, ep: &Endpoint) -> Result<Self::Service, ()> {
-        Ok(self.bind.bind_service(ep, &self.protocol))
-    }
+    proxy::http::orig_proto::upgrade()
+        .and_then(svc::stack::make_per_request::layer())
+        .and_then(proxy::http::normalize_uri::layer())
+        .and_then(svc::Watch::layer(self.tls_client_config.clone()))
+        .and_then(self.sensors.layer())
+        .bind(proxy::http::client::make())
 }
 
-impl<B> tower::Service for BoundService<B>
-where
-    B: tower_h2::Body + Send + 'static,
-    <B::Data as ::bytes::IntoBuf>::Buf: Send,
-{
-    type Request = <Stack<B> as tower::Service>::Request;
-    type Response = <Stack<B> as tower::Service>::Response;
-    type Error = <Stack<B> as tower::Service>::Error;
-    type Future = <Stack<B> as tower::Service>::Future;
-
-    fn poll_ready(&mut self) -> Poll<(), Self::Error> {
-        match self.binding {
-            // A service is already bound, so poll its readiness.
-            Binding::Bound(ref mut svc) |
-            Binding::BindsPerRequest { next: Some(ref mut svc) } => {
-                trace!("poll_ready: stack already bound");
-                svc.poll_ready()
-            }
-
-            // If no stack has been bound, bind it now so that its readiness can be
-            // checked. Store it so it can be consumed to dispatch the next request.
-            Binding::BindsPerRequest { ref mut next } => {
-                trace!("poll_ready: binding stack");
-                let mut svc = self.bind.bind_stack(&self.endpoint, &self.protocol);
-                let ready = svc.poll_ready();
-                *next = Some(svc);
-                ready
-            }
-        }
-    }
-
-    fn call(&mut self, request: Self::Request) -> Self::Future {
-        match self.binding {
-            Binding::Bound(ref mut svc) => svc.call(request),
-            Binding::BindsPerRequest { ref mut next } => {
-                let mut svc = next.take().expect("poll_ready must be called before call");
-                svc.call(request)
-            }
-        }
-    }
+pub fn bind_service(&self, ep: &Endpoint, protocol: &Protocol) {
+    // If the endpoint is another instance of this proxy, AND the usage
+    // of HTTP/1.1 Upgrades are not needed, then bind to an HTTP2 service
+    // instead.
+    //
+    // The related `orig_proto` middleware will automatically translate
+    // if the protocol was originally HTTP/1.
+    let protocol = if ep.can_use_orig_proto() && !protocol.is_h1_upgrade() {
+        &Protocol::Http2
+    } else {
+        protocol
+    };
 }
 
 // ===== impl Protocol =====
-
 
 impl Protocol {
     pub fn detect<B>(req: &http::Request<B>) -> Self {
@@ -419,22 +281,5 @@ impl Host {
             .or_else(|| proxy::http::h1::authority_from_host(req))
             .map(Host::Authority)
             .unwrap_or_else(|| Host::NoAuthority)
-    }
-}
-
-// ===== impl RebindTls =====
-
-impl<B> Rebind<tls::ConditionalClientConfig> for RebindTls<B>
-where
-    B: tower_h2::Body + Send + 'static,
-    <B::Data as ::bytes::IntoBuf>::Buf: Send,
-{
-    type Service = TlsStack<B>;
-    fn rebind(&mut self, tls: &tls::ConditionalClientConfig) -> Self::Service {
-        debug!(
-            "rebinding endpoint stack for {:?}:{:?} on TLS config change",
-            self.endpoint, self.protocol,
-        );
-        self.bind.bind_with_tls(&self.endpoint, &self.protocol, tls)
     }
 }

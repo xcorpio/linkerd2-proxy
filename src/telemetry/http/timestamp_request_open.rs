@@ -64,7 +64,7 @@ impl<T, B> Layer<T, B> {
 impl<N, T, B> svc::Layer<N> for Layer<T, B>
 where
     N: svc::Make<T>,
-    N::Service: svc::Service<Request = http::Request<B>>,
+    N::Output: svc::Service<Request = http::Request<B>>,
 {
     type Bound = Make<N>;
 
@@ -78,12 +78,12 @@ where
 impl<N, T, B> svc::Make<T> for Make<N>
 where
     N: svc::Make<T>,
-    N::Service: svc::Service<Request = http::Request<B>>,
+    N::Output: svc::Service<Request = http::Request<B>>,
 {
-    type Service = TimestampRequestOpen<N::Service>;
+    type Output = TimestampRequestOpen<N::Output>;
     type Error = N::Error;
 
-    fn make(&self, target: &T) -> Result<Self::Service, Self::Error> {
+    fn make(&self, target: &T) -> Result<Self::Output, Self::Error> {
         let inner = self.0.make(target)?;
         Ok(TimestampRequestOpen { inner })
     }

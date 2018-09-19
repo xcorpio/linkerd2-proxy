@@ -79,10 +79,10 @@ where
     A: Send + 'static,
     B: Default + Send + 'static,
 {
+    type Output = Service<R>;
     type Error = ();
-    type Service = Service<R>;
 
-    fn make(&self, _: &Arc<ctx::transport::Server>) -> Result<Self::Service, Self::Error> {
+    fn make(&self, _: &Arc<ctx::transport::Server>) -> Result<Self::Output, Self::Error> {
         let inner = self.router.clone();
         Ok(Service { inner })
     }

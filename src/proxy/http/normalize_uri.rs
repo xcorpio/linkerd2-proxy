@@ -26,7 +26,7 @@ pub fn layer<T>() -> Layer<T> {
 impl<T, N, B> svc::Layer<N> for Layer<T>
 where
     N: svc::Make<T>,
-    N::Service: svc::Service<Request = http::Request<B>>,
+    N::Output: svc::Service<Request = http::Request<B>>,
 {
     type Bound = Make<T, N>;
 
@@ -40,12 +40,12 @@ where
 impl<T, N, B> svc::Make<T> for Make<T, N>
 where
     N: svc::Make<T>,
-    N::Service: svc::Service<Request = http::Request<B>>,
+    N::Output: svc::Service<Request = http::Request<B>>,
 {
-    type Service = Service<N::Service>;
+    type Output = Service<N::Output>;
     type Error = N::Error;
 
-    fn make(&self, target: &T) -> Result<Self::Service, Self::Error> {
+    fn make(&self, target: &T) -> Result<Self::Output, Self::Error> {
         let inner = self.inner.make(&target)?;
         Ok(Service { inner })
     }

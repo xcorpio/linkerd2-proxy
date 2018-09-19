@@ -69,7 +69,7 @@ pub fn upgrade<T>() -> LayerUpgrade<T> {
 impl<T, N, A, B> svc::Layer<N> for LayerUpgrade<T>
 where
     N: svc::Make<T>,
-    N::Service: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
+    N::Output: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
 {
     type Bound = MakeUpgrade<T, N>;
 
@@ -81,12 +81,12 @@ where
 impl<T, N, A, B> svc::Make<T> for MakeUpgrade<T, N>
 where
     N: svc::Make<T>,
-    N::Service: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
+    N::Output: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
 {
-    type Service = Upgrade<N::Service>;
+    type Output = Upgrade<N::Output>;
     type Error = N::Error;
 
-    fn make(&self, target: &T) -> Result<Self::Service, Self::Error> {
+    fn make(&self, target: &T) -> Result<Self::Output, Self::Error> {
         let inner = self.inner.make(&target)?;
         Ok(Upgrade { inner })
     }
@@ -181,7 +181,7 @@ pub fn downgrade<T>() -> LayerDowngrade<T> {
 impl<T, N, A, B> svc::Layer<N> for LayerDowngrade<T>
 where
     N: svc::Make<T>,
-    N::Service: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
+    N::Output: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
 {
     type Bound = MakeDowngrade<T, N>;
 
@@ -193,12 +193,12 @@ where
 impl<T, N, A, B> svc::Make<T> for MakeDowngrade<T, N>
 where
     N: svc::Make<T>,
-    N::Service: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
+    N::Output: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
 {
-    type Service = Downgrade<N::Service>;
+    type Output = Downgrade<N::Output>;
     type Error = N::Error;
 
-    fn make(&self, target: &T) -> Result<Self::Service, Self::Error> {
+    fn make(&self, target: &T) -> Result<Self::Output, Self::Error> {
         let inner = self.inner.make(&target)?;
         Ok(Downgrade { inner })
     }

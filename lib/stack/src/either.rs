@@ -29,16 +29,11 @@ impl<T, N, M> super::Make<T> for Either<N, M>
 where
     N: super::Make<T>,
     M: super::Make<T, Error = N::Error>,
-    M::Service: svc::Service<
-        Request = <N::Service as svc::Service>::Request,
-        Response = <N::Service as svc::Service>::Response,
-        Error = <N::Service as svc::Service>::Error,
-    >,
 {
-    type Service = Either<N::Service, M::Service>;
+    type Output = Either<N::Output, M::Output>;
     type Error = Either<N::Error, M::Error>;
 
-    fn make(&self, target: &T) -> Result<Self::Service, Self::Error> {
+    fn make(&self, target: &T) -> Result<Self::Output, Self::Error> {
         match self {
             Either::A(ref a) => a.make(target).map(Either::A).map_err(Either::A),
             Either::B(ref b) => b.make(target).map(Either::B).map_err(Either::B),

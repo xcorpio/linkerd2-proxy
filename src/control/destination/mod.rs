@@ -189,12 +189,13 @@ impl Resolver {
 impl<N> Discover for Resolution<N>
 where
     N: svc::Make<Endpoint>,
+    N::Output: svc::Service,
 {
     type Key = SocketAddr;
-    type Request = <N::Service as svc::Service>::Request;
-    type Response = <N::Service as svc::Service>::Response;
-    type Error = <N::Service as svc::Service>::Error;
-    type Service = N::Service;
+    type Request = <N::Output as svc::Service>::Request;
+    type Response = <N::Output as svc::Service>::Response;
+    type Error = <N::Output as svc::Service>::Error;
+    type Service = N::Output;
     type DiscoverError = ();
 
     fn poll(&mut self) -> Poll<Change<Self::Key, Self::Service>, Self::DiscoverError> {

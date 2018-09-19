@@ -122,13 +122,13 @@ impl BindClient {
 }
 
 impl svc::Make<tls::ConditionalClientConfig> for BindClient {
-    type Service = ClientService;
+    type Output = ClientService;
     type Error = ();
 
     fn make(
         &mut self,
         client_cfg: &tls::ConditionalClientConfig,
-    ) -> Result<Self::Service, Self::Error> {
+    ) -> Result<Self::Output, Self::Error> {
         let conn_cfg = match (&self.identity, client_cfg) {
             (Conditional::Some(ref id), Conditional::Some(ref cfg)) =>
                 Conditional::Some(tls::ConnectionConfig {

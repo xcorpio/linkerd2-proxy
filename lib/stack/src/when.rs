@@ -31,12 +31,13 @@ impl<T, P, N, L> super::Layer<N> for Layer<T, P, N, L>
 where
     P: Predicate<T> + Clone,
     N: super::Make<T> + Clone,
+    N::Output: svc::Service,
     L: super::Layer<N> + Clone,
     L::Bound: super::Make<T>,
-    <L::Bound as super::Make<T>>::Service: svc::Service<
-        Request = <N::Service as svc::Service>::Request,
-        Response = <N::Service as svc::Service>::Response,
-        Error = <N::Service as svc::Service>::Error,
+    <L::Bound as super::Make<T>>::Output: svc::Service<
+        Request = <N::Output as svc::Service>::Request,
+        Response = <N::Output as svc::Service>::Response,
+        Error = <N::Output as svc::Service>::Error,
     >,
 {
     type Bound = Make<T, P, N, L>;
@@ -55,18 +56,19 @@ impl<T, P, N, L> super::Make<T> for Make<T, P, N, L>
 where
     P: Predicate<T> + Clone,
     N: super::Make<T> + Clone,
+    N::Output: svc::Service,
     L: super::Layer<N>,
     L::Bound: super::Make<T, Error = N::Error>,
-    <L::Bound as super::Make<T>>::Service: svc::Service<
-        Request = <N::Service as svc::Service>::Request,
-        Response = <N::Service as svc::Service>::Response,
-        Error = <N::Service as svc::Service>::Error,
+    <L::Bound as super::Make<T>>::Output: svc::Service<
+        Request = <N::Output as svc::Service>::Request,
+        Response = <N::Output as svc::Service>::Response,
+        Error = <N::Output as svc::Service>::Error,
     >,
 {
-    type Service = super::Either<N::Service, <L::Bound as super::Make<T>>::Service>;
+    type Output = super::Either<N::Output, <L::Bound as super::Make<T>>::Output>;
     type Error = N::Error;
 
-    fn make(&self, target: &T) -> Result<Self::Service, Self::Error> {
+    fn make(&self, target: &T) -> Result<Self::Output, Self::Error> {
         if !self.predicate.apply(&target) {
             self.next
                 .make(&target)

@@ -23,7 +23,7 @@ pub struct Service<T, M: super::Make<T>> {
     // When `poll_ready` is called, the _next_ service to be used may be bound
     // ahead-of-time. This stack is used only to serve the next request to this
     // service.
-    next: Option<M::Service>,
+    next: Option<M::Output>,
     make: MakeValid<T, M>
 }
 
@@ -62,10 +62,10 @@ where
     N: super::Make<T> + Clone,
     N::Error: fmt::Debug,
 {
-    type Service = Service<T, N>;
+    type Output = Service<T, N>;
     type Error = N::Error;
 
-    fn make(&self, target: &T) -> Result<Self::Service, N::Error> {
+    fn make(&self, target: &T) -> Result<Self::Output, N::Error> {
         let next = self.inner.make(target)?;
         let valid = MakeValid {
             make: self.inner.clone(),
@@ -84,12 +84,13 @@ impl<T, N> svc::Service for Service<T, N>
 where
     T: Clone,
     N: super::Make<T> + Clone,
+    N::Output: svc::Service,
     N::Error: fmt::Debug,
 {
-    type Request = <N::Service as super::Service>::Request;
-    type Response = <N::Service as super::Service>::Response;
-    type Error = <N::Service as super::Service>::Error;
-    type Future = <N::Service as super::Service>::Future;
+    type Request = <N::Output as svc::Service>::Request;
+    type Response = <N::Output as svc::Service>::Response;
+    type Error = <N::Output as svc::Service>::Error;
+    type Future = <N::Output as svc::Service>::Future;
 
     fn poll_ready(&mut self) -> Poll<(), Self::Error> {
         if let Some(ref mut svc) = self.next {
@@ -120,7 +121,7 @@ where
     M: super::Make<T>,
     M::Error: fmt::Debug
 {
-    fn make_valid(&self) -> M::Service {
+    fn make_valid(&self) -> M::Output {
         self.make
             .make(&self.target)
             .expect("make must succeed")
