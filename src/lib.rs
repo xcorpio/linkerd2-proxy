@@ -4,6 +4,7 @@
 
 extern crate bytes;
 extern crate env_logger;
+extern crate linkerd2_fs_watch as fs_watch;
 #[macro_use]
 extern crate futures;
 extern crate futures_mpsc_lossy;
@@ -31,8 +32,6 @@ extern crate quickcheck;
 extern crate rand;
 extern crate regex;
 extern crate ring;
-#[cfg(test)]
-extern crate tempdir;
 extern crate tokio;
 extern crate tokio_connect;
 extern crate tokio_timer;
@@ -78,11 +77,9 @@ pub mod convert;
 pub mod ctx;
 mod dns;
 mod drain;
-pub mod fs_watch;
 mod inbound;
 mod logging;
 mod outbound;
-pub mod stream;
 pub mod telemetry;
 mod proxy;
 mod svc;

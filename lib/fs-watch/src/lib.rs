@@ -1,9 +1,19 @@
+#[macro_use]
+extern crate log;
+#[macro_use]
+extern crate futures;
+extern crate futures_watch;
+extern crate ring;
+extern crate tokio_timer;
+
 use std::{fs, io, cell::RefCell, path::{Path, PathBuf}, time::Duration};
 
 use futures::Stream;
 use ring::digest::{self, Digest};
 
 use tokio_timer::{clock, Interval};
+
+mod either_stream;
 
 /// Stream changes to the files at a group of paths.
 pub fn stream_changes<I, P>(paths: I, interval: Duration) -> impl Stream<Item = (), Error = ()>
@@ -75,7 +85,7 @@ where
     I: IntoIterator<Item = P>,
     P: AsRef<Path>,
 {
-    use stream;
+    use either_stream::EitherStream;
 
     let paths: Vec<PathBuf> = paths
         .into_iter()
@@ -85,14 +95,14 @@ where
     match inotify::WatchStream::new(paths) {
         Ok(watch) => {
             let stream = inotify::FallbackStream { watch, polls };
-            stream::Either::A(stream)
+            EitherStream::A(stream)
         }
         Err(e) => {
             // If initializing the `Inotify` instance failed, it probably won't
             // succeed in the future (it's likely that inotify unsupported on
             // this OS).
             warn!("inotify init error: {}, falling back to polling", e);
-            stream::Either::B(polls)
+            EitherStream::B(polls)
         }
     }
 }
@@ -164,8 +174,10 @@ impl PathAndHash {
 
 #[cfg(target_os = "linux")]
 pub mod inotify {
+    extern crate inotify;
+
     use futures::{Async, Poll, Stream};
-    use inotify::{Event, EventMask, EventStream, Inotify, WatchMask};
+    use self::inotify::{Event, EventMask, EventStream, Inotify, WatchMask};
     use std::{io, path::PathBuf};
 
     pub struct WatchStream {
@@ -255,11 +267,16 @@ pub mod inotify {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use task::test_util::BlockOnFor;
+    extern crate env_logger;
+    extern crate linkerd2_task as task;
+    extern crate tempdir;
+    extern crate tokio;
 
-    use tempdir::TempDir;
-    use tokio::runtime::current_thread::Runtime;
+    use super::*;
+    use self::task::test_util::BlockOnFor;
+
+    use self::tempdir::TempDir;
+    use self::tokio::runtime::current_thread::Runtime;
     use tokio_timer::{clock, Interval};
 
     #[cfg(not(target_os = "windows"))]
@@ -282,7 +299,7 @@ mod tests {
 
     impl Fixture {
         fn new() -> Fixture {
-            let _ = ::env_logger::try_init();
+            let _ = self::env_logger::try_init();
             let dir = TempDir::new("test").unwrap();
             let paths = vec![
                 dir.path().join("a"),

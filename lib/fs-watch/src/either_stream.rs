@@ -5,7 +5,7 @@ use futures::{Poll, Stream};
 /// Combines two different `Stream`s yielding the same item and error
 /// types into a single type.
 #[derive(Clone, Debug)]
-pub enum Either<A, B> {
+pub enum EitherStream<A, B> {
     A(A),
     B(B),
 }
@@ -23,7 +23,7 @@ pub enum Either<A, B> {
 //     }
 // }
 
-impl<A, B> Stream for Either<A, B>
+impl<A, B> Stream for EitherStream<A, B>
 where
     A: Stream,
     B: Stream<Item = A::Item, Error = A::Error>,
@@ -33,8 +33,8 @@ where
 
     fn poll(&mut self) -> Poll<Option<A::Item>, A::Error> {
         match *self {
-            Either::A(ref mut a) => a.poll(),
-            Either::B(ref mut b) => b.poll(),
+            EitherStream::A(ref mut a) => a.poll(),
+            EitherStream::B(ref mut b) => b.poll(),
         }
     }
 }

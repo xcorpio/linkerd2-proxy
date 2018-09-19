@@ -1,6 +1,7 @@
 [workspace]
 members = [
     ".",
+    "lib/fs-watch",
     "lib/futures-mpsc-lossy",
     "lib/metrics",
     "lib/router",
@@ -22,6 +23,7 @@ flaky_tests = []
 
 [dependencies]
 futures-mpsc-lossy = { path = "lib/futures-mpsc-lossy" }
+linkerd2-fs-watch  = { path = "lib/fs-watch" }
 linkerd2-metrics   = { path = "lib/metrics" }
 linkerd2-router    = { path = "lib/router" }
 linkerd2-stack     = { path = "lib/stack" }
@@ -91,6 +93,3 @@ flate2 = { version = "1.0.1", default-features = false, features = ["rust_backen
 # `tokio-io` is needed for TCP tests, because `tokio::io` doesn't re-export
 # the `read` function.
 tokio-io = "0.1.6"
-# Used for filesystem watch tests. We should switch from `tempdir` to `tempfile` once
-# `prost-build` switches to it.`
-tempdir = "0.3"
