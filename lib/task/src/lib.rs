@@ -303,7 +303,7 @@ impl StdError for Error {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test_util"))]
 pub mod test_util {
     use futures::Future;
     use tokio::{

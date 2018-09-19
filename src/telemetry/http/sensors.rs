@@ -1,12 +1,12 @@
 use std::sync::{Arc, Mutex};
 
 use http::{Request, Response};
-use tower_service::Service;
 use tower_h2::Body;
 
 use ctx;
 use telemetry::{http::event, tap};
 use proxy::http::ClientError;
+use svc;
 
 use super::record::Record;
 use super::service::{Http, RequestBody};
@@ -62,7 +62,7 @@ impl Sensors {
     where
         A: Body + 'static,
         B: Body + 'static,
-        S: Service<
+        S: svc::Service<
             Request = Request<RequestBody<A>>,
             Response = Response<B>,
             Error = ClientError

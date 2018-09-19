@@ -1,10 +1,9 @@
-extern crate linkerd2_stack;
+pub extern crate linkerd2_stack as stack;
 extern crate tower_service;
 
-pub use linkerd2_stack as stack;
-pub use tower_service::{NewService, Service};
+pub use self::tower_service::{NewService, Service};
 
-pub use stack::{
+pub use self::stack::{
     Layer,
     Make,
 };

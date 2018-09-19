@@ -3,7 +3,7 @@ use http;
 use std::marker::PhantomData;
 use std::time::Instant;
 
-use svc::{self, Service, Make};
+use svc;
 
 /// A `RequestOpen` timestamp.
 ///
@@ -34,9 +34,9 @@ pub struct Make<M>(M);
 
 // === impl TimestampRequsetOpen ===
 
-impl<S, B> Service for TimestampRequestOpen<S>
+impl<S, B> svc::Service for TimestampRequestOpen<S>
 where
-    S: Service<Request = http::Request<B>>,
+    S: svc::Service<Request = http::Request<B>>,
 {
     type Request = http::Request<B>;
     type Response = S::Response;
@@ -63,8 +63,8 @@ impl<T, B> Layer<T, B> {
 
 impl<N, T, B> svc::Layer<N> for Layer<T, B>
 where
-    N: Make<T>,
-    N::Service: Service<Request = http::Request<B>>,
+    N: svc::Make<T>,
+    N::Service: svc::Service<Request = http::Request<B>>,
 {
     type Bound = Make<N>;
 
@@ -75,10 +75,10 @@ where
 
 // === impl Make ===
 
-impl<N, T, B> Make<T> for Make<N>
+impl<N, T, B> svc::Make<T> for Make<N>
 where
-    N: Make<T>,
-    N::Service: Service<Request = http::Request<B>>,
+    N: svc::Make<T>,
+    N::Service: svc::Service<Request = http::Request<B>>,
 {
     type Service = TimestampRequestOpen<N::Service>;
     type Error = N::Error;

@@ -6,17 +6,16 @@ use std::sync::Arc;
 
 use futures::Poll;
 use http::{self, uri};
-use tower_service as tower;
 use tower_h2;
 
 use control::destination::Endpoint;
 use ctx;
+use ctx::transport::TlsStatus;
 use telemetry;
 use proxy;
-use svc::{self, Layer, Watch};
+use svc::{self, stack::watch};
 use transport;
 use tls;
-use ctx::transport::TlsStatus;
 
 /// An HTTP `Service` that is created for each `Endpoint` and `Protocol`.
 pub type Stack<B> = proxy::http::orig_proto::Upgrade<
@@ -25,13 +24,13 @@ pub type Stack<B> = proxy::http::orig_proto::Upgrade<
     >
 >;
 
-type WatchTls<B> = svc::watch::Service<tls::ConditionalClientConfig, RebindTls<B>>;
+type WatchTls<B> = svc::stack::watch::Service<tls::ConditionalClientConfig, RebindTls<B>>;
 
 /// An HTTP `Service` that is created for each `Endpoint`, `Protocol`, and client
 /// TLS configuration.
 pub type TlsStack<B> = telemetry::http::service::Http<HttpService<B>, B, proxy::http::Body>;
 
-type HttpService<B> = svc::Reconnect<
+type HttpService<B> = proxy::Reconnect<
     Arc<ctx::transport::Client>,
     proxy::http::Client<
         transport::metrics::Connect<transport::Connect>,
@@ -250,7 +249,7 @@ where
         // TODO: Add some sort of backoff logic between reconnects.
         self.sensors.http(
             client_ctx.clone(),
-            svc::Reconnect::new(
+            proxy::Reconnect::new(
                 client_ctx.clone(),
                 proxy::http::Client::new(protocol, connect, log.executor())
             )
@@ -271,10 +270,11 @@ where
             endpoint: ep.clone(),
             protocol: protocol.clone(),
         };
-        let watch_tls = WatchService::new(self.tls_client_config.clone(), rebind);
+        let watch_tls = watch::Service::try(self.tls_client_config.clone(), rebind)
+            .expect("tls client must not fail");
 
         proxy::http::orig_proto::upgrade()
-            .and_then(svc::make_per_request::layer())
+            .and_then(svc::stack::make_per_request::layer())
             .and_then(proxy::http::normalize_uri::layer())
             .and_then(svc::Watch::layer(self.tls_client_config.clone()))
             .and_then(self.sensors.layer())

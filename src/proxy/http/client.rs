@@ -3,18 +3,17 @@ use futures::{future, Async, Future, Poll};
 use h2;
 use http;
 use hyper;
+use std::{self, fmt};
 use tokio::executor::Executor;
 use tokio_connect::Connect;
-use tower_service::{Service, NewService};
 use tower_h2;
 
 use bind;
 use proxy::http::glue::{BodyPayload, HttpBody, HyperConnect};
 use proxy::http::h1;
 use proxy::http::upgrade::{HttpConnect, Http11Upgrade};
+use svc;
 use task::BoxExecutor;
-
-use std::{self, fmt};
 
 type HyperClient<C, B> =
     hyper::Client<HyperConnect<C>, BodyPayload<B>>;
@@ -142,7 +141,7 @@ where
     }
 }
 
-impl<C, E, B> NewService for Client<C, E, B>
+impl<C, E, B> svc::NewService for Client<C, E, B>
 where
     C: Connect + Clone + Send + Sync + 'static,
     C::Future: Send + 'static,
@@ -153,9 +152,9 @@ where
     B: tower_h2::Body + Send + 'static,
    <B::Data as IntoBuf>::Buf: Send + 'static,
 {
-    type Request = <Self::Service as Service>::Request;
-    type Response = <Self::Service as Service>::Response;
-    type Error = <Self::Service as Service>::Error;
+    type Request = <Self::Service as svc::Service>::Request;
+    type Response = <Self::Service as svc::Service>::Response;
+    type Error = <Self::Service as svc::Service>::Error;
     type InitError = tower_h2::client::ConnectError<C::Error>;
     type Service = ClientService<C, E, B>;
     type Future = ClientNewServiceFuture<C, E, B>;
@@ -204,7 +203,7 @@ where
     }
 }
 
-impl<C, E, B> Service for ClientService<C, E, B>
+impl<C, E, B> svc::Service for ClientService<C, E, B>
 where
     C: Connect + Send + Sync + 'static,
     C::Connected: Send,

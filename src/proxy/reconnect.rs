@@ -3,7 +3,7 @@ use std::fmt;
 use futures::{task, Async, Future, Poll};
 use tower_reconnect;
 
-use super::{NewService, Service};
+use svc;
 
 /// Wraps `tower_reconnect`, handling errors.
 ///
@@ -12,7 +12,7 @@ use super::{NewService, Service};
 pub struct Reconnect<T, N>
 where
     T: fmt::Debug,
-    N: NewService,
+    N: svc::NewService,
 {
     inner: tower_reconnect::Reconnect<N>,
 
@@ -25,8 +25,8 @@ where
     mute_connect_error_log: bool,
 }
 
-pub struct ResponseFuture<N: NewService> {
-    inner: <tower_reconnect::Reconnect<N> as Service>::Future,
+pub struct ResponseFuture<N: svc::NewService> {
+    inner: <tower_reconnect::Reconnect<N> as svc::Service>::Future,
 }
 
 // ===== impl Reconnect =====
@@ -34,7 +34,7 @@ pub struct ResponseFuture<N: NewService> {
 impl<T, N> Reconnect<T, N>
 where
     T: fmt::Debug,
-    N: NewService,
+    N: svc::NewService,
     N::InitError: fmt::Display,
 {
     pub fn new(target: T, new_service: N) -> Self {
@@ -47,10 +47,10 @@ where
     }
 }
 
-impl<T, N> Service for Reconnect<T, N>
+impl<T, N> svc::Service for Reconnect<T, N>
 where
     T: fmt::Debug,
-    N: NewService,
+    N: svc::NewService,
     N::InitError: fmt::Display,
 {
     type Request = N::Request;
@@ -109,7 +109,7 @@ where
     }
 }
 
-impl<N: NewService> Future for ResponseFuture<N> {
+impl<N: svc::NewService> Future for ResponseFuture<N> {
     type Item = N::Response;
     type Error = N::Error;
 

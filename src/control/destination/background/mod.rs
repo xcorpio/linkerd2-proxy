@@ -13,6 +13,7 @@ use futures::{
     sync::mpsc,
     Async, Future, Poll, Stream,
 };
+use futures_watch;
 use tower_grpc as grpc;
 use tower_h2::{BoxBody, HttpService, RecvBody};
 
@@ -32,7 +33,7 @@ use control::{
 use dns;
 use transport::{tls, DnsNameAndPort, HostAndPort};
 use conditional::Conditional;
-use watch::Watch;
+use svc::stack::watch;
 
 mod client;
 mod destination_set;
@@ -112,7 +113,7 @@ pub(super) fn task(
                 // `Watch` that never updates to construct the `WatchService`.
                 // We do this here rather than calling `ClientConfig::no_tls`
                 // in order to propagate the reason for no TLS to the watch.
-                let (watch, _) = Watch::new(Conditional::None(reason));
+                let (watch, _) = futures_watch::Watch::new(Conditional::None(reason));
                 (Conditional::None(reason), watch)
             },
         };
@@ -122,7 +123,8 @@ pub(super) fn task(
             host_and_port,
             control_backoff_delay,
         );
-        WatchService::new(watch, bind_client)
+        watch::Service::try(watch, bind_client)
+            .expect("client construction should be infallible")
     });
 
     let mut disco = Background::new(

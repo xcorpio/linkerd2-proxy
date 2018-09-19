@@ -6,11 +6,11 @@ use std::default::Default;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Instant;
-use tower_service::Service;
 use tower_h2::Body;
 
 use ctx;
 use proxy::http::ClientError;
+use svc;
 
 use super::event::{self, Event};
 use super::sensors::Handle;
@@ -86,7 +86,7 @@ impl<S, A, B> Http<S, A, B>
 where
     A: Body + 'static,
     B: Body + 'static,
-    S: Service<
+    S: svc::Service<
         Request = http::Request<RequestBody<A>>,
         Response = http::Response<B>,
         Error = ClientError,
@@ -107,11 +107,11 @@ where
     }
 }
 
-impl<S, A, B> Service for Http<S, A, B>
+impl<S, A, B> svc::Service for Http<S, A, B>
 where
     A: Body + 'static,
     B: Body + 'static,
-    S: Service<
+    S: svc::Service<
         Request = http::Request<RequestBody<A>>,
         Response = http::Response<B>,
         Error = ClientError,

@@ -5,7 +5,7 @@ use svc;
 
 /// A Service that updates itself as a Watch updates.
 #[derive(Clone, Debug)]
-pub struct Watch<T, M: super::Make<T>> {
+pub struct Service<T, M: super::Make<T>> {
     watch: futures_watch::Watch<T>,
     make: M,
     inner: M::Service,
@@ -17,7 +17,7 @@ pub enum Error<I, M> {
     Inner(I),
 }
 
-impl<T, M> Watch<T, M>
+impl<T, M> Service<T, M>
 where
     M: super::Make<T>,
 {
@@ -31,7 +31,7 @@ where
     }
 }
 
-impl<T, M> svc::Service for Watch<T, M>
+impl<T, M> svc::Service for Service<T, M>
 where
     M: super::Make<T>,
 {

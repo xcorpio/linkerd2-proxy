@@ -3,6 +3,10 @@ name = "linkerd2-task"
 version = "0.1.0"
 authors = ["Oliver Gould <ver@buoyant.io>"]
 
+[features]
+default = []
+test_util = []
+
 [dependencies]
 futures = "0.1"
 tokio = "0.1.7"

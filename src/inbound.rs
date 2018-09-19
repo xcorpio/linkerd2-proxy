@@ -1,7 +1,6 @@
 use std::net::{SocketAddr};
 use std::sync::Arc;
 
-use tower_service as tower;
 use tower_buffer::Buffer;
 use tower_in_flight_limit::InFlightLimit;
 use tower_h2;
@@ -10,6 +9,7 @@ use bind;
 use ctx;
 use proxy::http::router::Recognize;
 use proxy::http::orig_proto;
+use svc;
 
 type Bind<B> = bind::Bind<ctx::Proxy, B>;
 
@@ -49,9 +49,9 @@ where
     <B::Data as ::bytes::IntoBuf>::Buf: Send,
 {
     type Key = (SocketAddr, bind::Protocol);
-    type Request = <Self::Service as tower::Service>::Request;
-    type Response = <Self::Service as tower::Service>::Response;
-    type Error = <Self::Service as tower::Service>::Error;
+    type Request = <Self::Service as svc::Service>::Request;
+    type Response = <Self::Service as svc::Service>::Response;
+    type Error = <Self::Service as svc::Service>::Error;
     type RouteError = bind::BufferSpawnError;
     type Service = InFlightLimit<Buffer<orig_proto::Downgrade<bind::BoundService<B>>>>;
 

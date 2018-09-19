@@ -20,9 +20,11 @@ use Conditional;
 
 pub mod http;
 mod protocol;
+mod reconnect;
 mod server;
 mod tcp;
 
+pub use self::reconnect::Reconnect;
 pub use self::server::Server;
 
 pub struct Source {
