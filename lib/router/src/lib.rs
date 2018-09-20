@@ -15,13 +15,13 @@ mod cache;
 use self::cache::Cache;
 
 /// Routes requests based on a configurable `Key`.
-pub struct Router<R, M>
+pub struct Router<Req, Rec, Mk>
 where
-    R: Recognize,
-    M: stack::Make<R::Target>,
-    M::Output: svc::Service<Request = R::Request>,
+    Rec: Recognize<Req>,
+    Mk: stack::Make<Rec::Target>,
+    Mk::Output: svc::Service<Request = Req>,
 {
-    inner: Arc<Inner<R, M>>,
+    inner: Arc<Inner<Req, Rec, Mk>>,
 }
 
 /// Provides a strategy for routing a Request to a Service.
@@ -30,15 +30,12 @@ where
 /// `recognize()` method is used to determine the target for a given request. This target is
 /// used to look up a route in a cache (i.e. in `Router`), or can be passed to
 /// `bind_service` to instantiate the identified route.
-pub trait Recognize {
-    /// Requests handled by the discovered services
-    type Request;
-
+pub trait Recognize<Request> {
     /// Identifies a Route.
     type Target: Clone + Eq + Hash;
 
     /// Determines the target for a route to handle the given request.
-    fn recognize(&self, req: &Self::Request) -> Option<Self::Target>;
+    fn recognize(&self, req: &Request) -> Option<Self::Target>;
 }
 
 #[derive(Debug, PartialEq)]
@@ -56,15 +53,15 @@ where
     state: State<F, E>,
 }
 
-struct Inner<R, M>
+struct Inner<Req, Rec, Mk>
 where
-    R: Recognize,
-    M: stack::Make<R::Target>,
-    M::Output: svc::Service<Request = R::Request>,
+    Rec: Recognize<Req>,
+    Mk: stack::Make<Rec::Target>,
+    Mk::Output: svc::Service<Request = Req>,
 {
-    recognize: R,
-    make: M,
-    cache: Mutex<Cache<R::Target, M::Output>>,
+    recognize: Rec,
+    make: Mk,
+    cache: Mutex<Cache<Rec::Target, Mk::Output>>,
 }
 
 enum State<F, E>
@@ -80,13 +77,13 @@ where
 
 // ===== impl Router =====
 
-impl<R, M> Router<R, M>
+impl<Req, Rec, Mk> Router<Req, Rec, Mk>
 where
-    R: Recognize,
-    M: stack::Make<R::Target>,
-    M::Output: svc::Service<Request = R::Request>,
+    Rec: Recognize<Req>,
+    Mk: stack::Make<Rec::Target>,
+    Mk::Output: svc::Service<Request = Req>,
 {
-    pub fn new(recognize: R, make: M, capacity: usize, max_idle_age: Duration) -> Self {
+    pub fn new(recognize: Rec, make: Mk, capacity: usize, max_idle_age: Duration) -> Self {
         Router {
             inner: Arc::new(Inner {
                 recognize,
@@ -97,16 +94,16 @@ where
     }
 }
 
-impl<R, M> svc::Service for Router<R, M>
+impl<Req, Rec, Mk> svc::Service for Router<Req, Rec, Mk>
 where
-    R: Recognize,
-    M: stack::Make<R::Target>,
-    M::Output: svc::Service<Request = R::Request>,
+    Rec: Recognize<Req>,
+    Mk: stack::Make<Rec::Target>,
+    Mk::Output: svc::Service<Request = Req>,
 {
-    type Request = <M::Output as svc::Service>::Request;
-    type Response = <M::Output as svc::Service>::Response;
-    type Error = Error<<M::Output as svc::Service>::Error, M::Error>;
-    type Future = ResponseFuture<<M::Output as svc::Service>::Future, M::Error>;
+    type Request = <Mk::Output as svc::Service>::Request;
+    type Response = <Mk::Output as svc::Service>::Response;
+    type Error = Error<<Mk::Output as svc::Service>::Error, Mk::Error>;
+    type Future = ResponseFuture<<Mk::Output as svc::Service>::Future, Mk::Error>;
 
     /// Always ready to serve.
     ///
@@ -157,11 +154,11 @@ where
     }
 }
 
-impl<R, M> Clone for Router<R, M>
+impl<Req, Rec, Mk> Clone for Router<Req, Rec, Mk>
 where
-    R: Recognize,
-    M: stack::Make<R::Target>,
-    M::Output: svc::Service<Request = R::Request>,
+    Rec: Recognize<Req>,
+    Mk: stack::Make<Rec::Target>,
+    Mk::Output: svc::Service<Request = Req>,
 {
     fn clone(&self) -> Self {
         Router { inner: self.inner.clone() }
@@ -272,11 +269,10 @@ mod test_util {
 
     // ===== impl Recognize =====
 
-    impl super::Recognize for Recognize {
-        type Request = Request;
+    impl super::Recognize<Request> for Recognize {
         type Target = usize;
 
-        fn recognize(&self, req: &Self::Request) -> Option<Self::Target> {
+        fn recognize(&self, req: &Request) -> Option<Self::Target> {
             match *req {
                 Request::NotRecognized => None,
                 Request::Recognized(n) => Some(n),
@@ -288,7 +284,7 @@ mod test_util {
         type Output = MultiplyAndAssign;
         type Error = ();
 
-        fn make(&self, _: &Self::Key) -> Result<Self::Output, Self::Error> {
+        fn make(&self, _: &usize) -> Result<Self::Output, Self::Error> {
             Ok(MultiplyAndAssign(1))
         }
     }
@@ -333,10 +329,10 @@ mod tests {
     use futures::Future;
     use std::time::Duration;
     use test_util::*;
-    use tower_service::Service;
+    use svc::Service;
     use super::{Error, Router};
 
-    impl Router<Recognize> {
+    impl Router<Request, Recognize, Recognize> {
         fn call_ok(&mut self, req: Request) -> usize {
             self.call(req).wait().expect("should route")
         }
@@ -348,7 +344,7 @@ mod tests {
 
     #[test]
     fn invalid() {
-        let mut router = Router::new(Recognize, 1, Duration::from_secs(0));
+        let mut router = Router::new(Recognize, Recognize, 1, Duration::from_secs(0));
 
         let rsp = router.call_err(Request::NotRecognized);
         assert_eq!(rsp, Error::NotRecognized);
@@ -356,7 +352,7 @@ mod tests {
 
     #[test]
     fn cache_limited_by_capacity() {
-        let mut router = Router::new(Recognize, 1, Duration::from_secs(1));
+        let mut router = Router::new(Recognize, Recognize, 1, Duration::from_secs(1));
 
         let rsp = router.call_ok(2.into());
         assert_eq!(rsp, 2);
@@ -367,7 +363,7 @@ mod tests {
 
     #[test]
     fn services_cached() {
-        let mut router = Router::new(Recognize, 1, Duration::from_secs(0));
+        let mut router = Router::new(Recognize, Recognize, 1, Duration::from_secs(0));
 
         let rsp = router.call_ok(2.into());
         assert_eq!(rsp, 2);
