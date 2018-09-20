@@ -16,7 +16,7 @@ use tower_h2;
 use ctx::Proxy as ProxyCtx;
 use ctx::transport::{Server as ServerCtx};
 use drain;
-use svc::{Make, Service};
+use svc::{Make, Service, stack::MakeNewService};
 use transport::{self, Connection, GetOriginalDst, Peek};
 use proxy::http::glue::{HttpBody, HttpBodyNewSvc, HyperServerSvc};
 use proxy::protocol::Protocol;
@@ -195,7 +195,7 @@ where
                     }),
                     Protocol::Http2 => Either::B({
                         trace!("detected HTTP/2");
-                        let new_service = make.into_new_service(srv_ctx.clone());
+                        let new_service = MakeNewService::new(make, srv_ctx.clone());
                         let h2 = tower_h2::Server::new(
                             HttpBodyNewSvc::new(new_service),
                             h2_settings,

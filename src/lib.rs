@@ -85,11 +85,10 @@ mod proxy;
 mod svc;
 mod transport;
 
-use bind::Bind;
 use conditional::Conditional;
-use inbound::Inbound;
+use inbound;
 use task::MainRuntime;
-use proxy::http::router::{Router, Recognize};
+use proxy::http::router::Router;
 //use svc::Layer;
 use telemetry::http::timestamp_request_open;
 use transport::{BoundPort, Connection};
@@ -284,11 +283,7 @@ where
 
         let (drain_tx, drain_rx) = drain::channel();
 
-        let bind = Bind::new(
-            http_sensors.clone(),
-            transport_registry.clone(),
-            tls_client_config
-        );
+        let endpoint =
 
         // Setup the public listener. This will listen on a publicly accessible
         // address and listen for inbound connections that should be forwarded
@@ -297,8 +292,8 @@ where
             let ctx = ctx::Proxy::Inbound;
             let bind = bind.clone().with_ctx(ctx);
             let default_addr = config.private_forward.map(|a| a.into());
-
             let router = Router::new(
+
                 Inbound::new(default_addr, bind),
                 config.inbound_router_capacity,
                 config.inbound_router_max_idle_age,
@@ -392,9 +387,9 @@ where
     }
 }
 
-fn serve<R, B, E, F, G>(
+fn serve<M, B, E, F, G>(
     bound_port: BoundPort,
-    router: Router<R>,
+    router: M,
     tcp_connect_timeout: Duration,
     disable_protocol_detection_ports: IndexSet<u16>,
     proxy_ctx: ctx::Proxy,
@@ -408,17 +403,13 @@ where
     <B::Data as ::bytes::IntoBuf>::Buf: Send,
     E: Error + Send + 'static,
     F: Error + Send + 'static,
-    R: Recognize<
+    M: svc::Make<Arc<ctx::transport::Server>, Error = F> + Send + Sync + 'static,
+    M::Output: Send + svc::Service<
         Request = http::Request<proxy::http::Body>,
         Response = http::Response<B>,
         Error = E,
-        RouteError = F,
-    >
-        + Send + Sync + 'static,
-    R::Key: Send,
-    R::Service: Send,
-    <R::Service as svc::Service>::Future: Send,
-    Router<R>: Send,
+    >,
+    <M::Output as svc::Service>::Future: Send,
     G: GetOriginalDst + Send + 'static,
 {
 

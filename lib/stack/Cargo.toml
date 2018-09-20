@@ -13,3 +13,4 @@ tower-service = { git = "https://github.com/tower-rs/tower" }
 [dev-dependencies]
 linkerd2-task = { path = "../task" }
 log = "0.4"
+tokio = "0.1.7"

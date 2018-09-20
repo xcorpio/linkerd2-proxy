@@ -13,10 +13,8 @@
 //! This module is intended only to store the infrastructure for building a
 //! proxy. The specific logic implemented by a proxy should live elsewhere.
 
-use std::collections::HashMap;
 use std::net::SocketAddr;
-use transport::{DnsNameAndPort, tls};
-use Conditional;
+use transport::DnsNameAndPort;
 
 pub mod http;
 mod protocol;
@@ -43,14 +41,6 @@ pub enum Destination {
     Addr(SocketAddr),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Endpoint {
-    address: SocketAddr,
-    labels: HashMap<String, String>,
-    h2_prior_knowledge: ProtocolHint,
-    tls_identity: Conditional<tls::Identity, tls::ReasonForNoIdentity>,
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProtocolHint {
     /// We don't what the destination understands, so forward messages in the
@@ -58,10 +48,4 @@ pub enum ProtocolHint {
     Unknown,
     /// The destination can receive HTTP2 messages.
     Http2,
-}
-
-pub struct Client {
-    address: SocketAddr,
-    labels: HashMap<String, String>
-
 }

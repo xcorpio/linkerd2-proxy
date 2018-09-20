@@ -66,10 +66,13 @@ where
 
 #[cfg(test)]
 mod tests {
+    extern crate linkerd2_task;
+    extern crate tokio;
+
     use futures::future;
+    use self::task::test_util::BlockOnFor;
+    use self::tokio::runtime::current_thread::Runtime;
     use std::time::Duration;
-    use task::test_util::BlockOnFor;
-    use tokio::runtime::current_thread::Runtime;
     use super::*;
 
     const TIMEOUT: Duration = Duration::from_secs(60);
@@ -77,7 +80,7 @@ mod tests {
     #[test]
     fn rebind() {
         struct Svc(usize);
-        impl Service for Svc {
+        impl svc::Service for Svc {
             type Request = ();
             type Response = usize;
             type Error = ();
@@ -104,8 +107,17 @@ mod tests {
             };
         }
 
-        let (watch, mut store) = Watch::new(1);
-        let mut svc = Watch::new(watch, |n: &usize| Svc(*n));
+        struct Make;
+        impl ::Make<usize> for Make {
+            type Output = Svc;
+            type Error = ();
+            fn make(&self, n: &usize) -> Result<Svc, ()> {
+                Ok(Svc(*n))
+            }
+        }
+
+        let (watch, mut store) = futures_watch::Watch::new(1);
+        let mut svc = Service::try(watch, Make).unwrap();
 
         assert_ready!(svc);
         assert_eq!(call!(svc), 1);

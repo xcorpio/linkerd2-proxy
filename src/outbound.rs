@@ -1,3 +1,5 @@
+#![allow(unused_imports)]
+
 use std::{error, fmt};
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -6,34 +8,47 @@ use std::sync::Arc;
 use http;
 use futures::{Async, Poll};
 use tower_balance::{choose, load, Balance};
-use tower_buffer::Buffer;
+use tower_buffer::{Buffer, SpawnError};
 use tower_discover::{Change, Discover};
 use tower_in_flight_limit::InFlightLimit;
 use tower_h2;
 use tower_h2_balance::{PendingUntilFirstData, PendingUntilFirstDataBody};
 
-use bind::{self, Bind, Protocol};
-use control::destination::{self, Resolution};
+use bind::{self, Protocol};
+use control::destination::{self, Endpoint, Resolution};
 use ctx;
 use proxy::{self, http::h1};
-use proxy::http::router::Recognize;
-use svc::{self, Make};
+use proxy::http::router;
+use svc;
 use telemetry::http::service::{ResponseBody as SensorBody};
 use timeout::Timeout;
 use transport::{DnsNameAndPort, Host, HostAndPort};
 
-type BindProtocol<B> = bind::BindProtocol<ctx::Proxy, B>;
+pub struct Recognize;
 
-pub struct Outbound<B> {
-    bind: Bind<ctx::Proxy, B>,
-    discovery: destination::Resolver,
+#[derive(Clone, Debug)]
+pub struct Layer {
+    resolver: destination::Resolver,
     bind_timeout: Duration,
+}
+
+#[derive(Clone, Debug)]
+pub struct Make<E: svc::Make<Endpoint>> {
+    resolver: destination::Resolver,
+    bind_timeout: Duration,
+    make_endpoint: E,
 }
 
 const MAX_IN_FLIGHT: usize = 10_000;
 
 /// This default is used by Finagle.
 const DEFAULT_DECAY: Duration = Duration::from_secs(10);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Target  {
+    destination: Destination,
+    protocol: Protocol,
+}
 
 /// Describes a destination for HTTP requests.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -45,21 +60,102 @@ pub enum Destination {
     Addr(SocketAddr),
 }
 
-// ===== impl Outbound =====
-
-impl<B> Outbound<B> {
-    pub fn new(bind: Bind<ctx::Proxy, B>,
-               discovery: destination::Resolver,
-               bind_timeout: Duration)
-               -> Outbound<B> {
+impl Layer {
+    pub fn new(
+        resolver:  destination::Resolver,
+        bind_timeout: Duration
+    ) -> Self {
         Self {
-            bind,
-            discovery,
+            resolver,
             bind_timeout,
         }
     }
+}
 
+impl<E, A, B> svc::Layer<E> for Layer
+where
+    E: svc::Make<Endpoint> + Clone + Send + Sync + 'static,
+    E::Output: Send + Sync,
+    E::Output: svc::Service<
+        Request = http::Request<A>,
+        Response = http::Response<B>,
+    >,
+    <E::Output as svc::Service>::Future: Send,
+    E::Error: Send,
+    A: tower_h2::Body + Send + 'static,
+    B: tower_h2::Body + Send + 'static,
+{
+    type Bound = Make<E>;
 
+    fn bind(&self, make_endpoint: E) -> Self::Bound {
+        Make {
+            resolver: self.resolver.clone(),
+            bind_timeout: self.bind_timeout,
+            make_endpoint,
+        }
+    }
+}
+
+type Bal<E> = Balance<
+    load::WithPeakEwma<Discovery<E>, PendingUntilFirstData>,
+    choose::PowerOfTwoChoices,
+>;
+
+impl<E, A, B> svc::Make<Target> for Make<E>
+where
+    E: svc::Make<Endpoint> + Clone + Send + 'static,
+    E::Output: Send,
+    E::Output: svc::Service<
+        Request = http::Request<A>,
+        Response = http::Response<B>,
+    >,
+    <E::Output as svc::Service>::Future: Send,
+    E::Error: Send,
+    A: tower_h2::Body + Send + 'static,
+    B: tower_h2::Body + Send + 'static,
+{
+    type Output = InFlightLimit<Timeout<Buffer<Bal<E>>>>;
+    type Error = SpawnError<Bal<E>>;
+
+    fn make(&self, target: &Target) -> Result<Self::Output, Self::Error> {
+        let &Target { ref destination, ref protocol } = target;
+        debug!("building outbound {:?} client to {:?}", protocol, destination);
+
+        let resolve = match *destination {
+            Destination::Name(ref authority) =>
+                Discovery::Name(self.resolver.resolve(authority, self.make_endpoint.clone())),
+            Destination::Addr(addr) => Discovery::Addr(Some((addr, self.make_endpoint.clone()))),
+        };
+
+        let balance = {
+            let instrument = PendingUntilFirstData::default();
+            let loaded = load::WithPeakEwma::new(resolve, DEFAULT_DECAY, instrument);
+            Balance::p2c(loaded)
+        };
+
+        let log = ::logging::proxy().client("out", Dst(destination.clone()))
+            .with_protocol(protocol.clone());
+        let buffer = Buffer::new(balance, &log.executor())?;
+
+        let timeout = Timeout::new(buffer, self.bind_timeout);
+
+        Ok(InFlightLimit::new(timeout, MAX_IN_FLIGHT))
+    }
+}
+
+impl<B> router::Recognize<http::Request<B>> for Recognize {
+    type Target = Target;
+
+    // Route the request by its destination AND PROTOCOL. This prevents HTTP/1
+    // requests from being routed to HTTP/2 servers, and vice versa.
+    fn recognize(&self, req: &http::Request<B>) -> Option<Self::Target> {
+        let destination = Self::destination(req)?;
+        let protocol = Protocol::detect(req);
+        Some(Target { destination, protocol })
+    }
+}
+
+impl Recognize {
     /// TODO: Return error when `HostAndPort::normalize()` fails.
     /// TODO: Use scheme-appropriate default port.
     fn normalize(authority: &http::uri::Authority) -> Option<HostAndPort> {
@@ -73,7 +169,7 @@ impl<B> Outbound<B> {
     /// authority from the `Host` header.
     ///
     /// The port is either parsed from the authority or a default of 80 is used.
-    fn host_port(req: &http::Request<B>) -> Option<HostAndPort> {
+    fn host_port<B>(req: &http::Request<B>) -> Option<HostAndPort> {
         // Note: Calls to `normalize` cannot be deduped without cloning `authority`.
         req.uri()
             .authority_part()
@@ -97,7 +193,7 @@ impl<B> Outbound<B> {
     /// configured by the `proxy-init` program).
     ///
     /// If none of this information is available, no `Destination` is returned.
-    fn destination(req: &http::Request<B>) -> Option<Destination> {
+    fn destination<B>(req: &http::Request<B>) -> Option<Destination> {
         match Self::host_port(req) {
             Some(HostAndPort { host: Host::DnsName(host), port }) => {
                 let dst = DnsNameAndPort { host, port };
@@ -119,113 +215,34 @@ impl<B> Outbound<B> {
     }
 }
 
-impl<B> Clone for Outbound<B>
-where
-    B: tower_h2::Body + Send + 'static,
-    B::Data: Send,
-{
-    fn clone(&self) -> Self {
-        Self {
-            bind: self.bind.clone(),
-            discovery: self.discovery.clone(),
-            bind_timeout: self.bind_timeout.clone(),
-        }
-    }
+pub enum Discovery<M: svc::Make<Endpoint>> {
+    Name(Resolution<M>),
+    Addr(Option<(SocketAddr, M)>),
 }
 
-impl<B> Recognize for Outbound<B>
+impl<M> Discover for Discovery<M>
 where
-    B: tower_h2::Body + Send + 'static,
-    <B::Data as ::bytes::IntoBuf>::Buf: Send,
-{
-    type Request = http::Request<B>;
-    type Response = http::Response<PendingUntilFirstDataBody<
-        load::peak_ewma::Handle,
-        SensorBody<proxy::http::Body>,
-    >>;
-    type Error = <Self::Service as svc::Service>::Error;
-    type Key = (Destination, Protocol);
-    type RouteError = bind::BufferSpawnError;
-    type Service = InFlightLimit<Timeout<Buffer<Balance<
-        load::WithPeakEwma<Discovery<B>, PendingUntilFirstData>,
-        choose::PowerOfTwoChoices,
-    >>>>;
-
-    // Route the request by its destination AND PROTOCOL. This prevents HTTP/1
-    // requests from being routed to HTTP/2 servers, and vice versa.
-    fn recognize(&self, req: &Self::Request) -> Option<Self::Key> {
-        let dest = Self::destination(req)?;
-        let proto = bind::Protocol::detect(req);
-        Some((dest, proto))
-    }
-
-    /// Builds a dynamic, load balancing service.
-    ///
-    /// Resolves the authority in service discovery and initializes a service that buffers
-    /// and load balances requests across.
-    fn bind_service(
-        &self,
-        key: &Self::Key,
-    ) -> Result<Self::Service, Self::RouteError> {
-        let &(ref dest, ref protocol) = key;
-        debug!("building outbound {:?} client to {:?}", protocol, dest);
-
-        let resolve = {
-            let proto = self.bind.clone().with_protocol(protocol.clone());
-            match *dest {
-                Destination::Name(ref authority) =>
-                    Discovery::Name(self.discovery.resolve(authority, proto)),
-                Destination::Addr(addr) => Discovery::Addr(Some((addr, proto))),
-            }
-        };
-
-        let balance = {
-            let instrument = PendingUntilFirstData::default();
-            let loaded = load::WithPeakEwma::new(resolve, DEFAULT_DECAY, instrument);
-            Balance::p2c(loaded)
-        };
-
-        let log = ::logging::proxy().client("out", Dst(dest.clone()))
-            .with_protocol(protocol.clone());
-        let buffer = Buffer::new(balance, &log.executor())
-            .map_err(|_| bind::BufferSpawnError::Outbound)?;
-
-        let timeout = Timeout::new(buffer, self.bind_timeout);
-
-        Ok(InFlightLimit::new(timeout, MAX_IN_FLIGHT))
-    }
-}
-
-pub enum Discovery<B> {
-    Name(Resolution<BindProtocol<B>>),
-    Addr(Option<(SocketAddr, BindProtocol<B>)>),
-}
-
-impl<B> Discover for Discovery<B>
-where
-    B: tower_h2::Body + Send + 'static,
-    <B::Data as ::bytes::IntoBuf>::Buf: Send,
+    M: svc::Make<Endpoint>,
+    M::Output: svc::Service,
 {
     type Key = SocketAddr;
-    type Request = <Self::Service as svc::Service>::Request;
-    type Response = <Self::Service as svc::Service>::Response;
-    type Error = <Self::Service as svc::Service>::Error;
-    type Service = bind::BoundService<B>;
-    type DiscoverError = BindError;
+    type Request = <M::Output as svc::Service>::Request;
+    type Response = <M::Output as svc::Service>::Response;
+    type Error = <M::Output as svc::Service>::Error;
+    type Service = M::Output;
+    type DiscoverError = M::Error;
 
     fn poll(&mut self) -> Poll<Change<Self::Key, Self::Service>, Self::DiscoverError> {
         match *self {
-            Discovery::Name(ref mut w) => w.poll()
-                .map_err(|_| BindError::Internal),
+            Discovery::Name(ref mut w) => w.poll(),
             Discovery::Addr(ref mut opt) => {
                 // This "discovers" a single address for an external service
                 // that never has another change. This can mean it floats
                 // in the Balancer forever. However, when we finally add
                 // circuit-breaking, this should be able to take care of itself,
                 // closing down when the connection is no longer usable.
-                if let Some((addr, mut bind)) = opt.take() {
-                    let svc = bind.make(&addr.into())
-                        .map_err(|_| BindError::External { addr })?;
+                if let Some((addr, mut stack)) = opt.take() {
+                    let svc = stack.make(&addr.into())?;
                     Ok(Async::Ready(Change::Insert(addr, svc)))
                 } else {
                     Ok(Async::NotReady)
@@ -233,35 +250,6 @@ where
             }
         }
     }
-}
-
-#[derive(Copy, Clone, Debug)]
-pub enum BindError {
-    External { addr: SocketAddr },
-    Internal,
-}
-
-impl fmt::Display for BindError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            BindError::External { addr } =>
-                write!(f, "binding external service for {:?} failed", addr),
-            BindError::Internal =>
-                write!(f, "binding internal service failed"),
-        }
-    }
-
-}
-
-impl error::Error for BindError {
-    fn description(&self) -> &str {
-        match *self {
-            BindError::External { .. } => "binding external service failed",
-            BindError::Internal => "binding internal service failed",
-        }
-    }
-
-    fn cause(&self) -> Option<&error::Error> { None }
 }
 
 struct Dst(Destination);

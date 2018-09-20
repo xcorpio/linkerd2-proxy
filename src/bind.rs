@@ -129,78 +129,49 @@ where
     }
 }
 
-/// Binds the innermost layers of the stack with a TLS configuration.
-///
-/// A reconnecting HTTP client is established with the given endpont,
-/// protocol, and TLS configuration.
-///
-/// This client is instrumented with metrics.
-fn bind_with_tls(
-    &self,
-    ep: &Endpoint,
-    protocol: &Protocol,
-    tls_client_config: &tls::ConditionalClientConfig,
-) -> TlsStack<B> {
-    debug!("bind_with_tls endpoint={:?}, protocol={:?}", ep, protocol);
-    let addr = ep.address();
+// fn bind_with_tls(
+//     ep: &Endpoint,
+//     protocol: &Protocol,
+//     tls_client_config: &tls::ConditionalClientConfig,
+// ) {
+//     debug!("bind_with_tls endpoint={:?}, protocol={:?}", ep, protocol);
+//     let tls = ep.tls_identity().and_then(|identity| {
+//         tls_client_config.as_ref().map(|config| {
+//             tls::ConnectionConfig {
+//                 server_identity: identity.clone(),
+//                 config: config.clone(),
+//             }
+//         })
+//     });
+//     let client_ctx = ctx::transport::Client::new(
+//         self.ctx,
+//         &addr,
+//         ep.metadata().clone(),
+//         TlsStatus::from(&tls),
+//     );
+//     // Map a socket address to a connection.
+//     let connect = self.transport_registry
+//         .new_connect(client_ctx.as_ref(), transport::Connect::new(addr, tls));
+//     // TODO: Add some sort of backoff logic between reconnects.
+//     self.sensors.http(
+//         client_ctx.clone(),
+//         proxy::Reconnect::new(
+//             client_ctx.clone(),
+//             proxy::http::Client::new(protocol, connect, log.executor())
+//         )
+//     )
+// }
 
-    let log = ::logging::Client::proxy(self.ctx, addr)
-        .with_protocol(protocol.clone());
-
-    let tls = ep.tls_identity().and_then(|identity| {
-        tls_client_config.as_ref().map(|config| {
-            tls::ConnectionConfig {
-                server_identity: identity.clone(),
-                config: config.clone(),
-            }
-        })
-    });
-
-    let client_ctx = ctx::transport::Client::new(
-        self.ctx,
-        &addr,
-        ep.metadata().clone(),
-        TlsStatus::from(&tls),
-    );
-
-    // Map a socket address to a connection.
-    let connect = self.transport_registry
-        .new_connect(client_ctx.as_ref(), transport::Connect::new(addr, tls));
-
-    // TODO: Add some sort of backoff logic between reconnects.
-    self.sensors.http(
-        client_ctx.clone(),
-        proxy::Reconnect::new(
-            client_ctx.clone(),
-            proxy::http::Client::new(protocol, connect, log.executor())
-        )
-    )
-}
-
-/// Build a `Service` for the given endpoint and `Protocol`.
-///
-/// The service attempts to upgrade HTTP/1 requests to HTTP/2 (if it's known
-/// with prior knowledge that the endpoint supports HTTP/2).
-///
-/// As `tls_client_config` updates, `bind_with_tls` is called to rebuild the
-/// client with the appropriate TLS configuraiton.
-fn bind_stack(&self, ep: &Endpoint, protocol: &Protocol) -> Stack<B> {
-    debug!("bind_stack: endpoint={:?}, protocol={:?}", ep, protocol);
-    let rebind = RebindTls {
-        bind: self.clone(),
-        endpoint: ep.clone(),
-        protocol: protocol.clone(),
-    };
-    let watch_tls = watch::Service::try(self.tls_client_config.clone(), rebind)
-        .expect("tls client must not fail");
-
-    proxy::http::orig_proto::upgrade()
-        .and_then(svc::stack::make_per_request::layer())
-        .and_then(proxy::http::normalize_uri::layer())
-        .and_then(svc::Watch::layer(self.tls_client_config.clone()))
-        .and_then(self.sensors.layer())
-        .bind(proxy::http::client::make())
-}
+// fn bind_stack(&self, ep: &Endpoint, protocol: &Protocol) {
+//     debug!("bind_stack: endpoint={:?}, protocol={:?}", ep, protocol);
+//     let rebind = RebindTls {
+//         bind: self.clone(),
+//         endpoint: ep.clone(),
+//         protocol: protocol.clone(),
+//     };
+//     let watch_tls = watch::Service::try(self.tls_client_config.clone(), rebind)
+//         .expect("tls client must not fail");
+// }
 
 pub fn bind_service(&self, ep: &Endpoint, protocol: &Protocol) {
     // If the endpoint is another instance of this proxy, AND the usage

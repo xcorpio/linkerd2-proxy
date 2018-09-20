@@ -125,11 +125,8 @@ impl svc::Make<tls::ConditionalClientConfig> for BindClient {
     type Output = ClientService;
     type Error = ();
 
-    fn make(
-        &mut self,
-        client_cfg: &tls::ConditionalClientConfig,
-    ) -> Result<Self::Output, Self::Error> {
-        let conn_cfg = match (&self.identity, client_cfg) {
+    fn make(&self, cfg: &tls::ConditionalClientConfig) -> Result<Self::Output, Self::Error> {
+        let conn_cfg = match (&self.identity, cfg) {
             (Conditional::Some(ref id), Conditional::Some(ref cfg)) =>
                 Conditional::Some(tls::ConnectionConfig {
                     server_identity: id.clone(),
@@ -282,6 +279,7 @@ impl<'a> fmt::Display for HumanError<'a> {
 mod tests {
     use super::*;
     use futures::future;
+    use svc::Service as _Service;
     use tokio::runtime::current_thread::Runtime;
 
     struct MockService {

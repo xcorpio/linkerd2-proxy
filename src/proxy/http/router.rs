@@ -3,6 +3,7 @@ use h2;
 use http;
 use http::header::CONTENT_LENGTH;
 use std::{fmt, error};
+use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -14,35 +15,36 @@ extern crate linkerd2_router;
 use self::linkerd2_router::Error;
 pub use self::linkerd2_router::{Recognize, Router};
 
-pub struct Layer<R>
+pub struct Layer<Req, Rec>
 where
-    R: Recognize,
+    Rec: Recognize<Req>,
 {
-    recognize: R,
+    recognize: Rec,
     capacity: usize,
     max_idle_age: Duration,
+    _p: PhantomData<fn() -> Req>,
 }
 
-pub struct Make<R, M>
+pub struct Make<Req, Rec, Mk>
 where
-    R: Recognize,
-    M: svc::Make<R::Target>,
-    M::Output: svc::Service<Request = R::Request>,
-    <M::Output as svc::Service>::Error: error::Error,
-    M::Error: fmt::Display,
+    Rec: Recognize<Req>,
+    Mk: svc::Make<Rec::Target>,
+    Mk::Output: svc::Service<Request = Req>,
+    <Mk::Output as svc::Service>::Error: error::Error,
+    Mk::Error: fmt::Display,
 {
-    router: Router<R, M>,
+    router: Router<Req, Rec, Mk>,
 }
 
-pub struct Service<R, M>
+pub struct Service<Req, Rec, Mk>
 where
-    R: Recognize,
-    M: svc::Make<R::Target>,
-    M::Output: svc::Service<Request = R::Request>,
-    <M::Output as svc::Service>::Error: error::Error,
-    M::Error: fmt::Display,
+    Rec: Recognize<Req>,
+    Mk: svc::Make<Rec::Target>,
+    Mk::Output: svc::Service<Request = Req>,
+    <Mk::Output as svc::Service>::Error: error::Error,
+    Mk::Error: fmt::Display,
 {
-    inner: Router<R, M>,
+    inner: Router<Req, Rec, Mk>,
 }
 
 /// Catches errors from the inner future and maps them to 500 responses.
@@ -52,29 +54,33 @@ pub struct ResponseFuture<F> {
 
 // ===== impl Layer =====
 
-impl<R, A> Layer<R>
+impl<Req, Rec> Layer<Req, Rec>
 where
-    R: Recognize<Request = http::Request<A>> + Send + Sync + 'static,
-    A: Send + 'static,
+    Rec: Recognize<Req> + Send + Sync + 'static,
+    Req: Send + 'static,
 {
-    pub fn new(recognize: R, capacity: usize, max_idle_age: Duration) -> Self {
-        Self { recognize, capacity, max_idle_age }
+    pub fn new(recognize: Rec, capacity: usize, max_idle_age: Duration) -> Self {
+        Self {
+            recognize,
+            capacity,
+            max_idle_age,
+            _p: PhantomData,
+        }
     }
 }
 
-impl<R, M, A, B> svc::Layer<M> for Layer<R>
+impl<Req, Rec, Mk, B> svc::Layer<Mk> for Layer<Req, Rec>
 where
-    R: Recognize<Request = http::Request<A>> + Clone + Send + Sync + 'static,
-    M: svc::Make<R::Target> + Send + Sync + 'static,
-    M::Output: svc::Service<Request = R::Request, Response = http::Response<B>>,
-    <M::Output as svc::Service>::Error: error::Error,
-    M::Error: fmt::Display,
-    A: Send + 'static,
+    Rec: Recognize<Req> + Clone + Send + Sync + 'static,
+    Mk: svc::Make<Rec::Target> + Send + Sync + 'static,
+    Mk::Output: svc::Service<Request = Req, Response = http::Response<B>>,
+    <Mk::Output as svc::Service>::Error: error::Error,
+    Mk::Error: fmt::Display,
     B: Default + Send + 'static,
 {
-    type Bound = Make<R, M>;
+    type Bound = Make<Req, Rec, Mk>;
 
-    fn bind(&self, next: M) -> Self::Bound {
+    fn bind(&self, next: Mk) -> Self::Bound {
         let router = Router::new(
             self.recognize.clone(),
             next,
@@ -87,13 +93,13 @@ where
 
 // ===== impl Make =====
 
-impl<R, M> Clone for Make<R, M>
+impl<Req, Rec, Mk> Clone for Make<Req, Rec, Mk>
 where
-    R: Recognize,
-    M: svc::Make<R::Target>,
-    M::Output: svc::Service<Request = R::Request>,
-    <M::Output as svc::Service>::Error: error::Error,
-    M::Error: fmt::Display,
+    Rec: Recognize<Req>,
+    Mk: svc::Make<Rec::Target>,
+    Mk::Output: svc::Service<Request = Req>,
+    <Mk::Output as svc::Service>::Error: error::Error,
+    Mk::Error: fmt::Display,
 {
     fn clone(&self) -> Self {
         Self {
@@ -102,17 +108,16 @@ where
     }
 }
 
-impl<R, M, A, B> svc::Make<Arc<ctx::transport::Server>> for Make<R, M>
+impl<Req, Rec, Mk, B> svc::Make<Arc<ctx::transport::Server>> for Make<Req, Rec, Mk>
 where
-    R: Recognize<Request = http::Request<A>> + Send + Sync + 'static,
-    M: svc::Make<R::Target> + Send + Sync + 'static,
-    M::Output: svc::Service<Request = R::Request, Response = http::Response<B>>,
-    <M::Output as svc::Service>::Error: error::Error,
-    M::Error: fmt::Display,
-    A: Send + 'static,
+    Rec: Recognize<Req> + Send + Sync + 'static,
+    Mk: svc::Make<Rec::Target> + Send + Sync + 'static,
+    Mk::Output: svc::Service<Request = Req, Response = http::Response<B>>,
+    <Mk::Output as svc::Service>::Error: error::Error,
+    Mk::Error: fmt::Display,
     B: Default + Send + 'static,
 {
-    type Output = Service<R, M>;
+    type Output = Service<Req, Rec, Mk>;
     type Error = ();
 
     fn make(&self, _: &Arc<ctx::transport::Server>) -> Result<Self::Output, Self::Error> {
@@ -150,19 +155,19 @@ where
 
 // ===== impl Service =====
 
-impl<R, M, B> svc::Service for Service<R, M>
+impl<Req, Rec, Mk, B> svc::Service for Service<Req, Rec, Mk>
 where
-    R: Recognize + Send + Sync + 'static,
-    M: svc::Make<R::Target> + Send + Sync + 'static,
-    M::Output: svc::Service<Request = R::Request, Response = http::Response<B>>,
-    <M::Output as svc::Service>::Error: error::Error,
-    M::Error: fmt::Display,
+    Rec: Recognize<Req> + Send + Sync + 'static,
+    Mk: svc::Make<Rec::Target> + Send + Sync + 'static,
+    Mk::Output: svc::Service<Request = Req, Response = http::Response<B>>,
+    <Mk::Output as svc::Service>::Error: error::Error,
+    Mk::Error: fmt::Display,
     B: Default + Send + 'static,
 {
-    type Request = <Router<R, M> as svc::Service>::Request;
-    type Response = <Router<R, M> as svc::Service>::Response;
+    type Request = <Router<Req, Rec, Mk> as svc::Service>::Request;
+    type Response = <Router<Req, Rec, Mk> as svc::Service>::Response;
     type Error = h2::Error;
-    type Future = ResponseFuture<<Router<R, M> as svc::Service>::Future>;
+    type Future = ResponseFuture<<Router<Req, Rec, Mk> as svc::Service>::Future>;
 
     fn poll_ready(&mut self) -> Poll<(), Self::Error> {
         self.inner.poll_ready().map_err(|e| {

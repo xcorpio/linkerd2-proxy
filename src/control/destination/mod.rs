@@ -196,13 +196,16 @@ where
     type Response = <N::Output as svc::Service>::Response;
     type Error = <N::Output as svc::Service>::Error;
     type Service = N::Output;
-    type DiscoverError = ();
+    type DiscoverError = N::Error;
 
     fn poll(&mut self) -> Poll<Change<Self::Key, Self::Service>, Self::DiscoverError> {
         loop {
-            let up = self.update_rx.poll();
+            let up = self.update_rx.poll().expect("destination stream must not fail");
             trace!("watch: {:?}", up);
-            let update = try_ready!(up).expect("destination stream must be infinite");
+            let update = match up {
+                Async::NotReady => return Ok(Async::NotReady),
+                Async::Ready(up) => up.expect("destination stream must be infinite"),
+            };
 
             match update {
                 Update::NewClient(addr, meta) => {
@@ -211,10 +214,8 @@ where
                     // insertions of new endpoints and metadata changes for
                     // existing ones can be handled in the same way.
                     let endpoint = Endpoint::new(addr, meta);
-
-                    let service = self.new_endpoint.make(&endpoint).map_err(|_| ())?;
-
-                    return Ok(Async::Ready(Change::Insert(addr, service)));
+                    let svc = self.new_endpoint.make(&endpoint)?;
+                    return Ok(Async::Ready(Change::Insert(addr, svc)));
                 },
                 Update::Remove(addr) => {
                     return Ok(Async::Ready(Change::Remove(addr)));
