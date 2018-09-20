@@ -6,19 +6,16 @@ use std::time::Duration;
 use std::sync::Arc;
 
 use http;
-use futures::{Async, Poll};
-use tower_balance::{choose, load, Balance};
+use futures::{Async, Poll, Stream};
 use tower_buffer::{Buffer, SpawnError};
-use tower_discover::{Change, Discover};
 use tower_in_flight_limit::InFlightLimit;
 use tower_h2;
-use tower_h2_balance::{PendingUntilFirstData, PendingUntilFirstDataBody};
 
-use bind::{self, Protocol};
+use bind::Protocol;
 use control::destination::{self, Endpoint, Resolution};
 use ctx;
 use proxy::{self, http::h1};
-use proxy::http::router;
+use proxy::http::{balance, router};
 use svc;
 use telemetry::http::service::{ResponseBody as SensorBody};
 use timeout::Timeout;
@@ -224,15 +221,14 @@ impl Recognize {
     }
 }
 
-pub enum Discovery<M: svc::Make<Endpoint>> {
-    Name(Resolution<M>),
-    Addr(Option<(SocketAddr, M)>),
+pub enum Discovery<U: Stream<Item = Update<Endpoint>>> {
+    Name(U),
+    Addr(Option<SocketAddr>),
 }
 
-impl<M> Discover for Discovery<M>
+impl<U> Stream for Discovery<U>
 where
-    M: svc::Make<Endpoint>,
-    M::Output: svc::Service,
+    U: Stream<Item = Update<Endpoint>>
 {
     type Key = SocketAddr;
     type Request = <M::Output as svc::Service>::Request;

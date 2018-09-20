@@ -227,7 +227,7 @@ where
                             // them onto the new watch first
                             match occ.get().addrs {
                                 Exists::Yes(ref cache) => for (&addr, meta) in cache {
-                                    let update = Update::NewClient(addr, meta.clone());
+                                    let update = Update::Make(addr, meta.clone());
                                     resolve.responder.update_tx
                                         .unbounded_send(update)
                                         .expect("unbounded_send does not fail");

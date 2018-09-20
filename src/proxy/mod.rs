@@ -19,10 +19,12 @@ use transport::DnsNameAndPort;
 pub mod http;
 mod protocol;
 mod reconnect;
+pub mod resolve;
 mod server;
 mod tcp;
 
 pub use self::reconnect::Reconnect;
+pub use self::resolve::{Resolve, Resolution};
 pub use self::server::Server;
 
 pub struct Source {
