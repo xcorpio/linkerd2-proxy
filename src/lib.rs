@@ -36,12 +36,9 @@ extern crate tokio;
 extern crate tokio_connect;
 extern crate tokio_timer;
 extern crate tower_add_origin;
-extern crate tower_balance;
 extern crate tower_buffer;
-extern crate tower_discover;
 extern crate tower_grpc;
 extern crate tower_h2;
-extern crate tower_h2_balance;
 extern crate tower_reconnect;
 extern crate tower_util;
 extern crate tower_in_flight_limit;
@@ -283,18 +280,16 @@ where
 
         let (drain_tx, drain_rx) = drain::channel();
 
-        let endpoint =
-
         // Setup the public listener. This will listen on a publicly accessible
         // address and listen for inbound connections that should be forwarded
         // to the managed application (private destination).
         let inbound = {
-            let ctx = ctx::Proxy::Inbound;
-            let bind = bind.clone().with_ctx(ctx);
-            let default_addr = config.private_forward.map(|a| a.into());
+            let recognize = config.private_forward
+                .map(inbound::Recognize::new)
+                .unwrap_or_default();
             let router = Router::new(
-
-                Inbound::new(default_addr, bind),
+                recognize,
+                endpoint_stack.clone(),
                 config.inbound_router_capacity,
                 config.inbound_router_max_idle_age,
             );
@@ -303,7 +298,7 @@ where
                 router,
                 config.private_connect_timeout,
                 config.inbound_ports_disable_protocol_detection,
-                ctx,
+                ctx::Proxy::Inbound,
                 transport_registry.clone(),
                 get_original_dst.clone(),
                 drain_rx.clone(),
@@ -314,10 +309,9 @@ where
         // address and listen for outbound requests that should be routed
         // to a remote service (public destination).
         let outbound = {
-            let ctx = ctx::Proxy::Outbound;
-            let bind = bind.clone().with_ctx(ctx);
             let router = Router::new(
-                Outbound::new(bind, resolver, config.bind_timeout),
+                outbound::Recognize::default(),
+                endpoint_stack,
                 config.outbound_router_capacity,
                 config.outbound_router_max_idle_age,
             );
@@ -326,7 +320,7 @@ where
                 router,
                 config.public_connect_timeout,
                 config.outbound_ports_disable_protocol_detection,
-                ctx,
+                ctx::Proxy::Outbound,
                 transport_registry,
                 get_original_dst,
                 drain_rx,
@@ -412,15 +406,13 @@ where
     <M::Output as svc::Service>::Future: Send,
     G: GetOriginalDst + Send + 'static,
 {
-
-
     // Install the request open timestamp module at the very top of the
     // stack, in order to take the timestamp as close as possible to the
     // beginning of the request's lifetime.
     //
     // TODO replace with a metrics module that is registered to the server
     // transport.
-    let stack = timestamp_request_open::Layer::new()
+    let source_stack = timestamp_request_open::Layer::new()
         .bind(proxy::http::router::Make::new(router));
 
     let listen_addr = bound_port.local_addr();
@@ -429,7 +421,7 @@ where
         proxy_ctx,
         transport_registry,
         get_orig_dst,
-        stack,
+        source_stack,
         tcp_connect_timeout,
         disable_protocol_detection_ports,
         drain_rx.clone(),

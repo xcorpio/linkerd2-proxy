@@ -2,7 +2,6 @@ use indexmap::IndexMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use futures::Poll;
 use http::{self, uri};
 use tower_h2;
 
@@ -101,7 +100,7 @@ where
     type Error = M::Error;
 
     fn make(
-        &mut self,
+        &self,
         tls_client_config: &tls::ConditionalClientConfig
     ) -> Result<Self::Output, Self::Error> {
         debug!(
@@ -117,13 +116,6 @@ where
                 }
             })
         });
-
-        let client_ctx = ctx::transport::Client::new(
-            self.ctx,
-            &addr,
-            ep.metadata().clone(),
-            TlsStatus::from(&tls),
-        );
 
         self.inner.make(&client_ctx)
     }
@@ -173,19 +165,19 @@ where
 //         .expect("tls client must not fail");
 // }
 
-pub fn bind_service(&self, ep: &Endpoint, protocol: &Protocol) {
-    // If the endpoint is another instance of this proxy, AND the usage
-    // of HTTP/1.1 Upgrades are not needed, then bind to an HTTP2 service
-    // instead.
-    //
-    // The related `orig_proto` middleware will automatically translate
-    // if the protocol was originally HTTP/1.
-    let protocol = if ep.can_use_orig_proto() && !protocol.is_h1_upgrade() {
-        &Protocol::Http2
-    } else {
-        protocol
-    };
-}
+// pub fn bind_service(&self, ep: &Endpoint, protocol: &Protocol) {
+//     // If the endpoint is another instance of this proxy, AND the usage
+//     // of HTTP/1.1 Upgrades are not needed, then bind to an HTTP2 service
+//     // instead.
+//     //
+//     // The related `orig_proto` middleware will automatically translate
+//     // if the protocol was originally HTTP/1.
+//     let protocol = if ep.can_use_orig_proto() && !protocol.is_h1_upgrade() {
+//         &Protocol::Http2
+//     } else {
+//         protocol
+//     };
+// }
 
 // ===== impl Protocol =====
 

@@ -24,18 +24,23 @@ use telemetry::http::service::{ResponseBody as SensorBody};
 use timeout::Timeout;
 use transport::{DnsNameAndPort, Host, HostAndPort};
 
-pub struct Recognize;
+#[derive(Clone, Debug, Default)]
+pub struct Recognize {}
 
 #[derive(Clone, Debug)]
-pub struct Layer {
+pub struct Router {
     resolver: destination::Resolver,
     bind_timeout: Duration,
+    router_capacity: usize,
+    router_max_idle_age: Duration,
 }
 
 #[derive(Clone, Debug)]
 pub struct Make<E: svc::Make<Endpoint>> {
     resolver: destination::Resolver,
     bind_timeout: Duration,
+    router_capacity: usize,
+    router_max_idle_age: Duration,
     make_endpoint: E,
 }
 
@@ -60,14 +65,18 @@ pub enum Destination {
     Addr(SocketAddr),
 }
 
-impl Layer {
+impl Router {
     pub fn new(
         resolver:  destination::Resolver,
-        bind_timeout: Duration
+        bind_timeout: Duration,
+        router_capacity: usize,
+        router_max_idle_age: Duration,
     ) -> Self {
         Self {
             resolver,
             bind_timeout,
+            router_capacity,
+            router_max_idle_age,
         }
     }
 }
@@ -101,7 +110,7 @@ type Bal<E> = Balance<
     choose::PowerOfTwoChoices,
 >;
 
-impl<E, A, B> svc::Make<Target> for Make<E>
+impl<E, A, B> svc::Make<Target> for MakeDst<E>
 where
     E: svc::Make<Endpoint> + Clone + Send + 'static,
     E::Output: Send,
