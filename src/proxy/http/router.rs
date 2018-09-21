@@ -15,6 +15,7 @@ extern crate linkerd2_router;
 use self::linkerd2_router::Error;
 pub use self::linkerd2_router::{Recognize, Router};
 
+#[derive(Clone, Debug)]
 pub struct Layer<Req, Rec>
 where
     Rec: Recognize<Req>,
@@ -85,7 +86,7 @@ where
             self.recognize.clone(),
             next,
             self.capacity,
-            self.max_idle_age
+            self.max_idle_age,
         );
         Make { router }
     }

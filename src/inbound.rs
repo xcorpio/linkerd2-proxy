@@ -1,17 +1,24 @@
 use http;
 //use std::marker::PhantomData;
-use std::net::{SocketAddr};
+use std::net::SocketAddr;
 use std::sync::Arc;
-use tower_buffer::{Buffer, SpawnError};
-use tower_in_flight_limit::InFlightLimit;
+use std::time::Duration;
 
 use bind::Protocol;
-use control::destination::Endpoint;
 use ctx;
-use proxy::http::router;
-use proxy::http::orig_proto;
-use svc::{self, Layer as _Layer};
-use tower_h2;
+use proxy::http::{router, orig_proto};
+
+pub fn router<A>(
+    default_addr: Option<SocketAddr>,
+    capacity: usize,
+    max_idle_age: Duration
+) -> router::Layer<http::Request<A>, Recognize>
+where
+    A: Send + 'static,
+{
+    let r = Recognize { default_addr };
+    router::Layer::new(r, capacity, max_idle_age)
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Target {
@@ -19,18 +26,10 @@ pub struct Target {
     protocol: Protocol,
 }
 
-pub struct Layer {}
-
-pub struct Make<E: svc::Make<Endpoint>> {
-    make_endpoint: E,
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct Recognize {
     default_addr: Option<SocketAddr>,
 }
-
-const MAX_IN_FLIGHT: usize = 10_000;
 
 // ===== impl Recognize =====
 
@@ -53,45 +52,6 @@ impl<A> router::Recognize<http::Request<A>> for Recognize {
         let protocol = orig_proto::detect(req);
         Some(Target { addr, protocol })
     }
-}
-
-impl<E, A, B> svc::Make<Target> for Make<E>
-where
-    E: svc::Make<Endpoint> + Clone + Send + 'static,
-    E::Output: Send,
-    E::Output: svc::Service<
-        Request = http::Request<A>,
-        Response = http::Response<B>,
-    >,
-    <E::Output as svc::Service>::Future: Send,
-    E::Error: Send,
-    A: tower_h2::Body + Send + 'static,
-    B: tower_h2::Body + Send + 'static,
-{
-    type Output = InFlightLimit<Buffer<orig_proto::Downgrade<E::Output>>>;
-    type Error = Error<E::Error, orig_proto::Downgrade<E::Output>>;
-
-    fn make(&self, target: &Target) -> Result<Self::Output, Self::Error> {
-        let &Target { ref addr, ref protocol } = target;
-        debug!("building inbound {:?} client to {}", protocol, addr);
-
-        let endpoint = (*addr).into();
-        let svc = orig_proto::downgrade()
-            .bind(self.make_endpoint.clone())
-            .make(&endpoint)
-            .map_err(Error::Endpoint)?;
-
-        let log = ::logging::proxy().client("in", "local").with_remote(*addr);
-        let buffer = Buffer::new(svc, &log.executor()).map_err(Error::Buffer)?;
-
-        Ok(InFlightLimit::new(buffer, MAX_IN_FLIGHT))
-    }
-}
-
-#[derive(Debug)]
-pub enum Error<E, S> {
-    Endpoint(E),
-    Buffer(SpawnError<S>),
 }
 
 #[cfg(test)]

@@ -36,12 +36,10 @@ extern crate tokio;
 extern crate tokio_connect;
 extern crate tokio_timer;
 extern crate tower_add_origin;
-extern crate tower_buffer;
 extern crate tower_grpc;
 extern crate tower_h2;
 extern crate tower_reconnect;
 extern crate tower_util;
-extern crate tower_in_flight_limit;
 extern crate trust_dns_resolver;
 extern crate try_lock;
 
@@ -56,6 +54,7 @@ use futures::*;
 use std::error::Error;
 use std::io;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, SystemTime};
 
@@ -83,14 +82,11 @@ mod svc;
 mod transport;
 
 use conditional::Conditional;
-use inbound;
 use task::MainRuntime;
-use proxy::http::router::Router;
 //use svc::Layer;
 use telemetry::http::timestamp_request_open;
 use transport::{BoundPort, Connection};
 pub use transport::{AddrInfo, GetOriginalDst, SoOriginalDst, tls};
-use outbound::Outbound;
 
 /// Runs a sidecar proxy.
 ///
@@ -280,19 +276,20 @@ where
 
         let (drain_tx, drain_rx) = drain::channel();
 
+        let endpoint_stack
+
         // Setup the public listener. This will listen on a publicly accessible
         // address and listen for inbound connections that should be forwarded
         // to the managed application (private destination).
         let inbound = {
-            let recognize = config.private_forward
-                .map(inbound::Recognize::new)
-                .unwrap_or_default();
-            let router = Router::new(
-                recognize,
-                endpoint_stack.clone(),
-                config.inbound_router_capacity,
-                config.inbound_router_max_idle_age,
-            );
+            let router = timestamp_request_open::Layer::new()
+                .and_then(proxy::buffer::Layer::default())
+                .and_then(inbound::router(
+                    config.private_forward.map(|a| a.into()),
+                    config.inbound_router_capacity,
+                    config.inbound_router_max_idle_age,
+                ))
+                .and_then(endpoint_stack.clone());
             serve(
                 inbound_listener,
                 router,
@@ -309,13 +306,15 @@ where
         // address and listen for outbound requests that should be routed
         // to a remote service (public destination).
         let outbound = {
-            let router = Router::new(
-                outbound::Recognize::default(),
-                endpoint_stack,
-                config.outbound_router_capacity,
-                config.outbound_router_max_idle_age,
-            );
-            serve(
+            let router = timestamp_request_open::Layer::new()
+                .and_then(proxy::buffer::Layer::default())
+                .and_then(outbound::router(
+                    config.outbound_router_capacity,
+                    config.outbound_router_max_idle_age,
+                ))
+                .and_then(outbound::balance(resolver))
+                .and_then(endpoint_stack);
+           serve(
                 outbound_listener,
                 router,
                 config.public_connect_timeout,
@@ -412,8 +411,8 @@ where
     //
     // TODO replace with a metrics module that is registered to the server
     // transport.
-    let source_stack = timestamp_request_open::Layer::new()
-        .bind(proxy::http::router::Make::new(router));
+    let source_stack =
+        .bind(router);
 
     let listen_addr = bound_port.local_addr();
     let server = proxy::Server::new(

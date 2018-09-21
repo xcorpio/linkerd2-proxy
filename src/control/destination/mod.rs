@@ -65,7 +65,7 @@ struct ResolveRequest {
 #[derive(Debug)]
 struct Responder {
     /// Sends updates from the controller to a `Resolution`.
-    update_tx: mpsc::UnboundedSender<Update<Endpoint>>,
+    update_tx: mpsc::UnboundedSender<Update<Metadata>>,
 
     /// Indicates whether the corresponding `Resolution` is still active.
     active: Weak<()>,
@@ -74,7 +74,7 @@ struct Responder {
 #[derive(Debug)]
 pub struct Resolution {
     /// Receives updates from the controller.
-    update_rx: mpsc::UnboundedReceiver<Update<Endpoint>>,
+    update_rx: mpsc::UnboundedReceiver<Update<Metadata>>,
 
     /// Allows `Responder` to detect when its `Resolution` has been lost.
     ///
@@ -136,6 +136,9 @@ pub fn new(
 // ==== impl Resolver =====
 
 impl Resolve<DnsNameAndPort> for Resolver {
+    type Endpoint = Metadata;
+    type Resolution = Resolution;
+
     /// Start watching for address changes for a certain authority.
     fn resolve(&self, authority: &DnsNameAndPort) -> Resolution {
         trace!("resolve; authority={:?}", authority);
@@ -163,7 +166,7 @@ impl Resolve<DnsNameAndPort> for Resolver {
 }
 
 impl resolve::Resolution for Resolution {
-    type Endpoint = Endpoint;
+    type Endpoint = Metadata;
     type Error = ();
 
     fn poll(&mut self) -> Poll<Update<Self::Endpoint>, Self::Error> {

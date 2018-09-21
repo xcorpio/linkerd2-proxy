@@ -15,10 +15,7 @@ pub struct Make<T, M> {
     _p: PhantomData<fn() -> T>
 }
 
-impl<T, M> Layer<T>
-where
-    M: svc::Make<T>,
-{
+impl<T> Layer<T> {
     pub fn new(timeout: Duration) -> Self {
         Self {
             timeout,

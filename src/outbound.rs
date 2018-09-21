@@ -8,8 +8,6 @@ use std::sync::Arc;
 
 use http;
 use futures::{Async, Poll, Stream};
-use tower_buffer::{Buffer, SpawnError};
-use tower_in_flight_limit::InFlightLimit;
 use tower_h2;
 
 use bind::Protocol;
@@ -17,39 +15,30 @@ use ctx;
 use proxy::{self, resolve::{self, Resolve as _Resolve}};
 use proxy::http::{balance, h1, router};
 use svc::{self, Layer as _Layer};
+use svc::stack::layer::AndThen;
 use telemetry::http::service::{ResponseBody as SensorBody};
 use timeout::Timeout;
 use transport::{DnsNameAndPort, Host, HostAndPort};
 
-#[derive(Clone, Debug, Default)]
-pub struct Recognize {}
-
-#[derive(Clone, Debug)]
-pub struct Layer<T, M, L>
-{
-    inner: L,
-    router_capacity: usize,
-    router_max_idle_age: Duration,
-    _p: PhantomData<fn() -> (T, M)>,
-}
-
-#[derive(Clone, Debug)]
-pub struct Make<R, M>
+pub fn router<A>(capacity: usize, max_idle_age: Duration)
+    -> router::Layer<http::Request<A>, Recognize>
 where
-    R: resolve::Resolve<DnsNameAndPort>,
-    M: svc::Make<R::Endpoint>
+    A: Send + 'static,
 {
-    resolve: Resolve<R>,
-    bind_timeout: Duration,
-    router_capacity: usize,
-    router_max_idle_age: Duration,
-    make_endpoint: M,
+    router::Layer::new(Recognize, capacity, max_idle_age)
 }
 
-const MAX_IN_FLIGHT: usize = 10_000;
+pub fn balance<R>(resolve: R)
+    -> balance::Layer<Target, Resolve<R>>
+where
+    R: resolve::Resolve<DnsNameAndPort> + Clone,
+    R::Endpoint: From<SocketAddr> + fmt::Debug,
+{
+    balance::Layer::new(Resolve(resolve))
+}
 
-/// This default is used by Finagle.
-const DEFAULT_DECAY: Duration = Duration::from_secs(10);
+#[derive(Clone, Debug, Default)]
+pub struct Recognize;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Target  {
@@ -76,58 +65,6 @@ pub enum Resolution<R: resolve::Resolution> {
     Addr(Option<SocketAddr>),
 }
 
-
-impl<T, L, M, A, B> Layer<T, M, L>
-where
-    T: fmt::Debug,
-    L: svc::Layer<M>,
-    M: svc::Make<T>,
-    M::Output: svc::Service<
-        Request = http::Request<A>,
-        Response = http::Request<B>,
-    >,
-{
-    pub fn new<R>(
-        resolve: R,
-        bind_timeout: Duration,
-        router_capacity: usize,
-        router_max_idle_age: Duration,
-    )
-        -> Self
-    where
-        R: resolve::Resolve<DnsNameAndPort, Endpoint = T> + Clone,
-    {
-        let inner = proxy::timeout::Layer::new(bind_timeout)
-            .and_then(proxy::buffer::Layer::default())
-            .and_then(proxy::http::balance::Layer::new(Resolve(resolve)));
-        Self {
-            inner,
-            router_capacity,
-            router_max_idle_age,
-        }
-    }
-}
-
-impl<T, L, M, A, B> svc::Layer<M> for Layer<T, M, L>
-where
-    L: svc::Layer<M>,
-    M: svc::Make<T> + Clone + Send + Sync + 'static,
-    M::Output: Send + Sync,
-    M::Output: svc::Service<
-        Request = http::Request<A>,
-        Response = http::Response<B>,
-    >,
-    <M::Output as svc::Service>::Future: Send,
-    M::Error: Send,
-    A: tower_h2::Body + Send + 'static,
-    B: tower_h2::Body + Send + 'static,
-{
-    type Bound = L::Bound;
-
-    fn bind(&self, make: M) -> Self::Bound {
-        self.inner.bind(make)
-    }
-}
 
 impl<B> router::Recognize<http::Request<B>> for Recognize {
     type Target = Target;
