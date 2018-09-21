@@ -3,11 +3,9 @@ use h2;
 use http;
 use http::header::CONTENT_LENGTH;
 use std::marker::PhantomData;
-use std::sync::Arc;
 use std::time::Duration;
 use std::{error, fmt};
 
-use ctx;
 use svc;
 
 extern crate linkerd2_router;
@@ -113,7 +111,7 @@ where
     }
 }
 
-impl<Req, Rec, Mk, B> svc::Make<Arc<ctx::transport::Server>> for Make<Req, Rec, Mk>
+impl<T, Req, Rec, Mk, B> svc::Make<T> for Make<Req, Rec, Mk>
 where
     Rec: Recognize<Req> + Send + Sync + 'static,
     Mk: svc::Make<Rec::Target> + Send + Sync + 'static,
@@ -125,7 +123,7 @@ where
     type Value = Service<Req, Rec, Mk>;
     type Error = ();
 
-    fn make(&self, _: &Arc<ctx::transport::Server>) -> Result<Self::Value, Self::Error> {
+    fn make(&self, _: &T) -> Result<Self::Value, Self::Error> {
         let inner = self.router.clone();
         Ok(Service { inner })
     }

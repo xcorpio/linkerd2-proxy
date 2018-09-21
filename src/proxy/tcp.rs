@@ -7,9 +7,9 @@ use tokio_connect::Connect;
 
 use svc;
 
-fn forward<I, C, T>(
+pub(super) fn forward<I, C, T>(
     server_io: I,
-    connect: C,
+    connect: &C,
     target: &T,
 ) -> impl Future<Item=(), Error=()> + Send + 'static
 where

@@ -1,22 +1,14 @@
-#![allow(unused_imports)]
-
-use std::{error, fmt};
-use std::marker::PhantomData;
+use std::fmt;
 use std::net::SocketAddr;
-use std::time::Duration;
 use std::sync::Arc;
 
 use http;
 use futures::{Async, Poll, Stream};
-use tower_h2;
 
 use ctx;
-use proxy::{self, resolve::{self, Resolve as _Resolve}};
+use proxy::{resolve::{self, Resolve as _Resolve}};
 use proxy::http::{balance, h1, router, Settings};
-use svc::{self, Layer as _Layer};
-use svc::stack::layer::AndThen;
-use telemetry::http::service::{ResponseBody as SensorBody};
-use timeout::Timeout;
+use svc::{Layer as _Layer};
 use transport::{DnsNameAndPort, Host, HostAndPort};
 
 pub fn balance<R>(resolve: R)

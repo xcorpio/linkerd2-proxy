@@ -1,13 +1,11 @@
 use http;
-//use std::marker::PhantomData;
 use std::net::SocketAddr;
-use std::sync::Arc;
 
-use ctx;
 use proxy::http::{router, orig_proto, Settings};
+use proxy::server::Source;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Target {
+pub struct Endpoint {
     addr: SocketAddr,
     settings: Settings,
 }
@@ -28,15 +26,15 @@ impl Recognize {
 }
 
 impl<A> router::Recognize<http::Request<A>> for Recognize {
-    type Target = Target;
+    type Target = Endpoint;
 
     fn recognize(&self, req: &http::Request<A>) -> Option<Self::Target> {
-        let ctx = req.extensions().get::<Arc<ctx::transport::Server>>()?;
-        trace!("recognize local={} orig={:?}", ctx.local, ctx.orig_dst);
+        let source = req.extensions().get::<Source>()?;
+        trace!("recognize local={} orig={:?}", source.local, source.orig_dst);
 
-        let addr = ctx.orig_dst_if_not_local().or(self.default_addr)?;
+        let addr = source.orig_dst_if_not_local().or(self.default_addr)?;
         let settings = orig_proto::detect(req);
-        Some(Target { addr, settings })
+        Some(Endpoint { addr, settings })
     }
 }
 
@@ -48,18 +46,18 @@ mod tests {
     use proxy::http::router::Recognize as _Recognize;
     use proxy::http::settings::{Host, Settings};
 
-    use super::{Recognize, Target};
+    use super::{Recognize, Endpoint};
     use ctx;
     use conditional::Conditional;
     use tls;
 
-    fn make_target_http1(addr: net::SocketAddr) -> Target {
+    fn make_target_http1(addr: net::SocketAddr) -> Endpoint {
         let settings = Settings::Http1 {
             host: Host::NoAuthority,
             is_h1_upgrade: false,
             was_absolute_form: false,
         };
-        Target { addr, settings }
+        Endpoint { addr, settings }
     }
 
     const TLS_DISABLED: Conditional<(), tls::ReasonForNoTls> =

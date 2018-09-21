@@ -3,15 +3,14 @@ use h2;
 use http;
 use hyper;
 use indexmap::IndexSet;
-use std::error;
+use std::{error, fmt};
 use std::net::SocketAddr;
 use tokio_connect::Connect;
-use tokio::io::{AsyncRead, AsyncWrite};
 use tower_h2;
 
 use drain;
 use svc::{Make, Service, stack::MakeNewService};
-use transport::{self, tls, Connection, GetOriginalDst, Peek};
+use transport::{tls, Connection, GetOriginalDst, Peek};
 use proxy::http::glue::{HttpBody, HttpBodyNewSvc, HyperServerSvc};
 use proxy::protocol::Protocol;
 use proxy::tcp;
@@ -33,16 +32,20 @@ pub struct Source {
 /// service.
 pub struct Server<A, C, R, B, G>
 where
+    // Prepares a server transport, e.g. with telemetry.
     A: Make<Source, Error = ()> + Clone,
     A::Value: Accept<Connection>,
-    C: Make<SocketAddr, Error = ()> + Clone,
+    // Prepares a client connecter (e.g. with telemetry, timeouts).
+    C: Make<Source, Error = ()> + Clone,
     C::Value: Connect,
+    // Prepares a route.
     R: Make<Source, Error = ()> + Clone,
     R::Value: Service<
         Request = http::Request<HttpBody>,
         Response = http::Response<B>,
     >,
     B: tower_h2::Body,
+    // Determines the original destination of an intercepted server socket.
     G: GetOriginalDst,
 {
     disable_protocol_detection_ports: IndexSet<u16>,
@@ -57,18 +60,64 @@ where
     log: ::logging::Server,
 }
 
+impl Source {
+    pub fn orig_dst_if_not_local(&self) -> Option<SocketAddr> {
+        match self.orig_dst {
+            None => None,
+            Some(orig_dst) => {
+                // If the original destination is actually the listening socket,
+                // we don't want to create a loop.
+                if Self::same_addr(&orig_dst, &self.local) {
+                    None
+                } else {
+                    Some(orig_dst)
+                }
+            }
+        }
+    }
+
+    fn same_addr(a0: &SocketAddr, a1: &SocketAddr) -> bool {
+        use std::net::IpAddr::{V4, V6};
+        (a0.port() == a1.port()) && match (a0.ip(), a1.ip()) {
+            (V6(a0), V4(a1)) => a0.to_ipv4() == Some(a1),
+            (V4(a0), V6(a1)) => Some(a0) == a1.to_ipv4(),
+            (a0, a1) => (a0 == a1),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn for_test(
+        remote: SocketAddr,
+        local: SocketAddr,
+        orig_dst: Option<SocketAddr>,
+        tls_status: tls::Status
+    ) -> Self {
+       Self {
+           remote,
+           local,
+           orig_dst,
+           tls_status,
+           _p: (),
+       }
+   }
+}
+
 impl<A, C, R, B, G> Server<A, C, R, B, G>
 where
     A: Make<Source, Error = ()> + Clone,
     A::Value: Accept<Connection>,
-    <A::Value as Accept<Connection>>::Io: Peek,
-    C: Make<SocketAddr, Error = ()> + Clone,
+    C: Make<Source, Error = ()> + Clone,
+    <A::Value as Accept<Connection>>::Io: Send + Peek + 'static,
     C::Value: Connect,
+    <C::Value as Connect>::Connected: Send + 'static,
+    <C::Value as Connect>::Future: Send + 'static,
+    <C::Value as Connect>::Error: fmt::Debug + 'static,
     R: Make<Source, Error = ()> + Clone,
     R::Value: Service<
         Request = http::Request<HttpBody>,
         Response = http::Response<B>,
     >,
+    R::Value: 'static,
     <R::Value as Service>::Error: error::Error + Send + Sync + 'static,
     <R::Value as Service>::Future: Send + 'static,
     B: tower_h2::Body + Default + Send + 'static,
@@ -77,7 +126,7 @@ where
     G: GetOriginalDst,
 {
 
-   /// Creates a new `Server`.
+    /// Creates a new `Server`.
     pub fn new(
         proxy_ctx: ::ctx::Proxy,
         listen_addr: SocketAddr,
@@ -145,13 +194,8 @@ where
 
         if disable_protocol_detection {
             trace!("protocol detection disabled for {:?}", orig_dst);
-            let fut = forward_tcp(
-                io,
-                self.connect.clone(),
-                &source,
-                self.drain_signal.clone(),
-            );
-
+            let fwd = tcp::forward(io, &self.connect, &source);
+            let fut = self.drain_signal.watch(fwd, |_| {});
             return log.future(Either::B(fut));
         }
 
@@ -172,7 +216,8 @@ where
             .and_then(move |(proto, io)| match proto {
                 None => Either::A({
                     trace!("did not detect protocol; forwarding TCP");
-                    forward_tcp(io, connect, &source, drain_signal)
+                    let fwd = tcp::forward(io, &connect, &source);
+                    drain_signal.watch(fwd, |_| {})
                 }),
 
                 Some(proto) => Either::B(match proto {
@@ -222,34 +267,4 @@ where
 
         log.future(Either::A(serve))
     }
-}
-
-fn forward_tcp<I, C, T>(
-    io: I,
-    connect: C,
-    target: &T,
-    drain_signal: drain::Watch,
-) -> impl Future<Item=(), Error=()> + Send + 'static
-where
-    I: AsyncRead + AsyncWrite + Send + 'static,
-    C: Make<T, Error = ()>,
-    C::Value: Connect,
-    <C::Value as Connect>::Connected: Send + 'static,
-{
-    let connect = match connect.make(&target) {
-        Ok(c) => c,
-        Err(()) => {
-            error!("tcp forward error: {:?}", source);
-            return Either::A(future::ok(()));
-        }
-    };
-
-    let fwd = connect.connect()
-        .and_then(move |client| tcp::Duplex::new(io, client))
-        .map_err(|e| error!("tcp forward duplex error: {}", e));
-
-    // There's nothing to do when drain is signaled, we just have to hope
-    // the sockets finish soon. However, the drain signal still needs to
-    // 'watch' the TCP future so that the process doesn't close early.
-    Either::B(drain_signal.watch(fwd, |_| ()))
 }

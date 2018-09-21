@@ -54,9 +54,8 @@ use futures::*;
 use std::error::Error;
 use std::io;
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 use indexmap::IndexSet;
 use tokio::{
@@ -299,10 +298,8 @@ where
         let serve_inbound = serve(
             inbound_listener,
             inbound,
-            config.private_connect_timeout,
             config.inbound_ports_disable_protocol_detection,
             ctx::Proxy::Inbound,
-            transport_registry.clone(),
             get_original_dst.clone(),
             drain_rx.clone(),
         );
@@ -310,10 +307,8 @@ where
         let serve_outbound = serve(
             outbound_listener,
             outbound,
-            config.public_connect_timeout,
             config.outbound_ports_disable_protocol_detection,
             ctx::Proxy::Outbound,
-            transport_registry,
             get_original_dst,
             drain_rx,
         );
@@ -372,13 +367,11 @@ where
     }
 }
 
-fn serve<M, B, E, G>(
+fn serve<M, B, G>(
     bound_port: MakePort,
     router: M,
-    tcp_connect_timeout: Duration,
     disable_protocol_detection_ports: IndexSet<u16>,
     proxy_ctx: ctx::Proxy,
-    transport_registry: transport::metrics::Registry,
     get_orig_dst: G,
     drain_rx: drain::Watch,
 ) -> impl Future<Item = (), Error = io::Error> + Send + 'static
@@ -386,9 +379,7 @@ where
     B: tower_h2::Body + Default + Send + 'static,
     B::Data: Send,
     <B::Data as ::bytes::IntoBuf>::Buf: Send,
-    E: Error + Send + 'static,
-    M: svc::Make<Arc<ctx::transport::Server>, Error = ()> + Clone + Send + Sync + 'static,
-    //M::Error: Error + Send + 'static,
+    M: svc::Make<proxy::server::Source, Error = ()> + Clone + Send + Sync + 'static,
     M::Value: Send + svc::Service<
         Request = http::Request<proxy::http::Body>,
         Response = http::Response<B>,
@@ -408,10 +399,8 @@ where
     let server = proxy::Server::new(
         listen_addr,
         proxy_ctx,
-        transport_registry,
         get_orig_dst,
         router,
-        tcp_connect_timeout,
         disable_protocol_detection_ports,
         drain_rx.clone(),
         h2::server::Builder::default(),

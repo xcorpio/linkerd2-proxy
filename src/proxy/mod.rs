@@ -45,3 +45,14 @@ pub trait Accept<T: AsyncRead + AsyncWrite> {
 
     fn accept(&self, inner: T) -> Self::Io;
 }
+
+impl<T> Accept<T> for ()
+where
+    T: AsyncRead + AsyncWrite,
+{
+    type Io = T;
+
+    fn accept(&self, inner: T) -> T {
+        inner
+    }
+}
