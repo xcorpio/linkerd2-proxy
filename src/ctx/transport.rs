@@ -1,14 +1,11 @@
 use indexmap::IndexMap;
-use std::{
-    self,
-    net::{IpAddr, SocketAddr},
-    sync::Arc,
-};
+use std::net::{IpAddr, SocketAddr};
+use std::sync::Arc;
 
-use ctx;
-use control::destination;
-use transport::tls;
 use conditional::Conditional;
+use control::destination;
+use ctx;
+use transport::tls;
 
 #[derive(Debug)]
 pub enum Ctx {

@@ -1,14 +1,11 @@
-use std::{
-    error,
-    net::SocketAddr,
-    time::Duration,
-};
-
 use futures::{future::{self, Either}, Future};
 use h2;
 use http;
 use hyper;
 use indexmap::IndexSet;
+use std::error;
+use std::net::SocketAddr;
+use tokio_connect::Connect;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tower_h2;
 
@@ -18,6 +15,7 @@ use transport::{self, tls, Connection, GetOriginalDst, Peek};
 use proxy::http::glue::{HttpBody, HttpBodyNewSvc, HyperServerSvc};
 use proxy::protocol::Protocol;
 use proxy::tcp;
+use super::Accept;
 
 #[derive(Clone, Debug)]
 pub struct Source {
@@ -33,10 +31,14 @@ pub struct Source {
 /// This type can `serve` new connections, determine what protocol
 /// the connection is speaking, and route it to the corresponding
 /// service.
-pub struct Server<M, B, G>
+pub struct Server<A, C, R, B, G>
 where
-    M: Make<Source, Error = ()> + Clone,
-    M::Value: Service<
+    A: Make<Source, Error = ()> + Clone,
+    A::Value: Accept<Connection>,
+    C: Make<SocketAddr, Error = ()> + Clone,
+    C::Value: Connect,
+    R: Make<Source, Error = ()> + Clone,
+    R::Value: Service<
         Request = http::Request<HttpBody>,
         Response = http::Response<B>,
     >,
@@ -49,22 +51,26 @@ where
     h1: hyper::server::conn::Http,
     h2_settings: h2::server::Builder,
     listen_addr: SocketAddr,
-    make: M,
-    transport_registry: transport::metrics::Registry,
-    tcp: tcp::Forward,
+    accept: A,
+    connect: C,
+    route: R,
     log: ::logging::Server,
 }
 
-impl<M, B, G> Server<M, B, G>
+impl<A, C, R, B, G> Server<A, C, R, B, G>
 where
-    M: Make<Source, Error = ()> + Clone,
-    M::Value: Service<
+    A: Make<Source, Error = ()> + Clone,
+    A::Value: Accept<Connection>,
+    <A::Value as Accept<Connection>>::Io: Peek,
+    C: Make<SocketAddr, Error = ()> + Clone,
+    C::Value: Connect,
+    R: Make<Source, Error = ()> + Clone,
+    R::Value: Service<
         Request = http::Request<HttpBody>,
         Response = http::Response<B>,
     >,
-    M::Value: Send + 'static,
-    <M::Value as Service>::Error: error::Error + Send + Sync + 'static,
-    <M::Value as Service>::Future: Send + 'static,
+    <R::Value as Service>::Error: error::Error + Send + Sync + 'static,
+    <R::Value as Service>::Future: Send + 'static,
     B: tower_h2::Body + Default + Send + 'static,
     B::Data: Send,
     <B::Data as ::bytes::IntoBuf>::Buf: Send,
@@ -73,17 +79,16 @@ where
 
    /// Creates a new `Server`.
     pub fn new(
-        listen_addr: SocketAddr,
         proxy_ctx: ::ctx::Proxy,
-        transport_registry: transport::metrics::Registry,
+        listen_addr: SocketAddr,
         get_orig_dst: G,
-        make: M,
-        tcp_connect_timeout: Duration,
+        accept: A,
+        connect: C,
+        route: R,
         disable_protocol_detection_ports: IndexSet<u16>,
         drain_signal: drain::Watch,
         h2_settings: h2::server::Builder,
     ) -> Self {
-        let tcp = tcp::Forward::new(tcp_connect_timeout, transport_registry.clone());
         let log = ::logging::Server::proxy(proxy_ctx, listen_addr);
         Server {
             disable_protocol_detection_ports,
@@ -92,9 +97,9 @@ where
             h1: hyper::server::conn::Http::new(),
             h2_settings,
             listen_addr,
-            make,
-            transport_registry,
-            tcp,
+            accept,
+            connect,
+            route,
             log,
         }
     }
@@ -125,8 +130,9 @@ where
             _p: (),
         };
 
-        // record telemetry
-        let io = self.transport_registry.accept(&source, connection);
+        let io = self.accept.make(&source)
+            .expect("source must be acceptable")
+            .accept(connection);
 
         // We are using the port from the connection's SO_ORIGINAL_DST to
         // determine whether to skip protocol detection, not any port that
@@ -139,10 +145,10 @@ where
 
         if disable_protocol_detection {
             trace!("protocol detection disabled for {:?}", orig_dst);
-            let fut = tcp_serve(
-                &self.tcp,
+            let fut = forward_tcp(
                 io,
-                source,
+                self.connect.clone(),
+                &source,
                 self.drain_signal.clone(),
             );
 
@@ -158,21 +164,21 @@ where
 
         let h1 = self.h1.clone();
         let h2_settings = self.h2_settings.clone();
-        let make = self.make.clone();
-        let tcp = self.tcp.clone();
+        let route = self.route.clone();
+        let connect = self.connect.clone();
         let drain_signal = self.drain_signal.clone();
         let log_clone = log.clone();
         let serve = detect_protocol
             .and_then(move |(proto, io)| match proto {
                 None => Either::A({
                     trace!("did not detect protocol; forwarding TCP");
-                    tcp_serve(&tcp, io, source, drain_signal)
+                    forward_tcp(io, connect, &source, drain_signal)
                 }),
 
                 Some(proto) => Either::B(match proto {
                     Protocol::Http1 => Either::A({
                         trace!("detected HTTP/1");
-                        match make.make(&source) {
+                        match route.make(&source) {
                             Err(()) => Either::A({
                                 error!("failed to build HTTP/1 client");
                                 future::err(())
@@ -180,7 +186,6 @@ where
                             Ok(s) => Either::B({
                                 let svc = HyperServerSvc::new(
                                     s,
-                                    source,
                                     drain_signal.clone(),
                                     log_clone.executor(),
                                 );
@@ -199,7 +204,7 @@ where
                     }),
                     Protocol::Http2 => Either::B({
                         trace!("detected HTTP/2");
-                        let new_service = MakeNewService::new(make, source.clone());
+                        let new_service = MakeNewService::new(route, source.clone());
                         let h2 = tower_h2::Server::new(
                             HttpBodyNewSvc::new(new_service),
                             h2_settings,
@@ -219,16 +224,31 @@ where
     }
 }
 
-fn tcp_serve<T: AsyncRead + AsyncWrite + Send + 'static>(
-    tcp: &tcp::Forward,
-    io: T,
-    source: Source,
+fn forward_tcp<I, C, T>(
+    io: I,
+    connect: C,
+    target: &T,
     drain_signal: drain::Watch,
-) -> impl Future<Item=(), Error=()> + Send + 'static {
-    let fut = tcp.serve(io, source);
+) -> impl Future<Item=(), Error=()> + Send + 'static
+where
+    I: AsyncRead + AsyncWrite + Send + 'static,
+    C: Make<T, Error = ()>,
+    C::Value: Connect,
+    <C::Value as Connect>::Connected: Send + 'static,
+{
+    let connect = match connect.make(&target) {
+        Ok(c) => c,
+        Err(()) => {
+            error!("tcp forward error: {:?}", source);
+            return Either::A(future::ok(()));
+        }
+    };
+
+    let fwd = connect.connect()
+        .and_then(move |dst| tcp::duplex(io, dst));
 
     // There's nothing to do when drain is signaled, we just have to hope
     // the sockets finish soon. However, the drain signal still needs to
     // 'watch' the TCP future so that the process doesn't close early.
-    drain_signal.watch(fut, |_| ())
+    Either::B(drain_signal.watch(fwd, |_| ()))
 }

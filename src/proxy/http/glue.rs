@@ -1,9 +1,3 @@
-use std::{
-    error::Error,
-    fmt,
-    sync::Arc,
-};
-
 use bytes::{Bytes, IntoBuf};
 use futures::{future, Async, Future, Poll};
 use futures::future::Either;
@@ -11,10 +5,11 @@ use h2;
 use http;
 use hyper::{self, body::Payload};
 use hyper::client::connect as hyper_connect;
+use std::error::Error;
+use std::fmt;
 use tokio_connect::Connect;
 use tower_h2;
 
-use ctx::transport::{Server as ServerCtx};
 use drain;
 use proxy::http::h1;
 use proxy::http::upgrade::Http11Upgrade;
@@ -43,7 +38,6 @@ pub(in proxy) struct BodyPayload<B> {
 #[derive(Debug)]
 pub(in proxy) struct HyperServerSvc<S, E> {
     service: S,
-    srv_ctx: Arc<ServerCtx>,
     /// Watch any spawned HTTP/1.1 upgrade tasks.
     upgrade_drain_signal: drain::Watch,
     /// Executor used to spawn HTTP/1.1 upgrade tasks, and TCP proxies
@@ -224,13 +218,11 @@ where
 impl<S, E> HyperServerSvc<S, E> {
     pub(in proxy) fn new(
         service: S,
-        srv_ctx: Arc<ServerCtx>,
         upgrade_drain_signal: drain::Watch,
         upgrade_executor: E,
     ) -> Self {
         HyperServerSvc {
             service,
-            srv_ctx,
             upgrade_drain_signal,
             upgrade_executor,
         }
@@ -268,9 +260,6 @@ where
             *res.status_mut() = http::StatusCode::BAD_REQUEST;
             return Either::B(future::ok(res));
         }
-
-
-        req.extensions_mut().insert(self.srv_ctx.clone());
 
         let upgrade = if h1::wants_upgrade(&req) {
             trace!("server request wants HTTP/1.1 upgrade");
