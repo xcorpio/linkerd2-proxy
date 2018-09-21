@@ -16,6 +16,7 @@
 use std::net::SocketAddr;
 use transport::DnsNameAndPort;
 
+pub mod buffer;
 pub mod http;
 mod protocol;
 mod reconnect;
