@@ -17,12 +17,15 @@ pub use self::tower_h2_balance::{PendingUntilFirstData, PendingUntilFirstDataBod
 use proxy::resolve::{Resolve, Resolution, Update};
 use svc;
 
-pub struct Layer<T, R: Resolve<T> + Clone>  {
+#[derive(Clone, Debug)]
+pub struct Layer<T, R>  {
+    decay: Duration,
     resolve: R,
     _p: PhantomData<fn() -> T>,
 }
 
-pub struct Make<T, R: Resolve<T>, M: svc::Make<R::Endpoint>> {
+#[derive(Clone, Debug)]
+pub struct Make<T, R, M> {
     decay: Duration,
     resolve: R,
     inner: M,
@@ -32,6 +35,47 @@ pub struct Make<T, R: Resolve<T>, M: svc::Make<R::Endpoint>> {
 struct Discover<R: Resolution, M: svc::Make<R::Endpoint>> {
     resolution: R,
     make: M,
+}
+
+impl<T, R> Layer<T, R>
+where
+    R: Resolve<T> + Clone,
+    R::Endpoint: fmt::Debug,
+{
+    pub const DEFAULT_DECAY: Duration = Duration::from_secs(10);
+
+    pub fn new(resolve: R) -> Self {
+        Self {
+            resolve,
+            decay: Self::DEFAULT_DECAY,
+            _p: PhantomData,
+        }
+    }
+
+    pub fn with_decay(self, decay: Duration) -> Self {
+        Self {
+            decay,
+            .. self
+        }
+    }
+}
+
+impl<T, R, M> svc::Layer<M> for Layer<T, R>
+where
+    R: Resolve<T> + Clone,
+    R::Endpoint: fmt::Debug,
+    M: svc::Make<R::Endpoint>,
+{
+    type Bound = Make<T, R, M>;
+
+    fn bind(&self, inner: M) -> Self::Bound {
+        Make {
+            decay: self.decay,
+            resolve: self.resolve.clone(),
+            inner,
+            _p: PhantomData,
+        }
+    }
 }
 
 impl<T, R, M, A, B> svc::Make<T> for Make<T, R, M>
@@ -69,6 +113,7 @@ where
     R: Resolution,
     R::Endpoint: fmt::Debug,
     M: svc::Make<R::Endpoint>,
+    M::Output: svc::Service,
 {
     type Key = SocketAddr;
     type Request = <M::Output as svc::Service>::Request;

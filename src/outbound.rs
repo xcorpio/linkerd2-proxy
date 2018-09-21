@@ -12,10 +12,9 @@ use tower_in_flight_limit::InFlightLimit;
 use tower_h2;
 
 use bind::Protocol;
-use control::destination::{self, Endpoint, Resolution};
 use ctx;
-use proxy::{self, http::h1};
-use proxy::http::{balance, router};
+use proxy::{self, resolve::{self, Resolve as _Resolve}};
+use proxy::http::{balance, h1, router};
 use svc;
 use telemetry::http::service::{ResponseBody as SensorBody};
 use timeout::Timeout;
@@ -25,20 +24,27 @@ use transport::{DnsNameAndPort, Host, HostAndPort};
 pub struct Recognize {}
 
 #[derive(Clone, Debug)]
-pub struct Router {
-    resolver: destination::Resolver,
+pub struct Layer<R>
+where
+    R: resolve::Resolve<DnsNameAndPort> + Clone
+{
+    resolve: Resolve<R>,
     bind_timeout: Duration,
     router_capacity: usize,
     router_max_idle_age: Duration,
 }
 
 #[derive(Clone, Debug)]
-pub struct Make<E: svc::Make<Endpoint>> {
-    resolver: destination::Resolver,
+pub struct Make<R, M>
+where
+    R: resolve::Resolve<DnsNameAndPort>,
+    M: svc::Make<R::Endpoint>
+{
+    resolve: Resolve<R>,
     bind_timeout: Duration,
     router_capacity: usize,
     router_max_idle_age: Duration,
-    make_endpoint: E,
+    make_endpoint: M,
 }
 
 const MAX_IN_FLIGHT: usize = 10_000;
@@ -62,15 +68,28 @@ pub enum Destination {
     Addr(SocketAddr),
 }
 
-impl Router {
+#[derive(Clone, Debug)]
+struct Resolve<R: resolve::Resolve<DnsNameAndPort>>(R);
+
+#[derive(Debug)]
+pub enum Resolution<R: resolve::Resolution> {
+    Name(R),
+    Addr(Option<SocketAddr>),
+}
+
+
+impl<R> Layer<R>
+where
+    R: resolve::Resolve<DnsNameAndPort> + Clone,
+{
     pub fn new(
-        resolver:  destination::Resolver,
+        resolve: R,
         bind_timeout: Duration,
         router_capacity: usize,
         router_max_idle_age: Duration,
     ) -> Self {
         Self {
-            resolver,
+            resolve: Resolve(resolve),
             bind_timeout,
             router_capacity,
             router_max_idle_age,
@@ -78,26 +97,27 @@ impl Router {
     }
 }
 
-impl<E, A, B> svc::Layer<E> for Layer
+impl<R, M, A, B> svc::Layer<M> for Layer<R>
 where
-    E: svc::Make<Endpoint> + Clone + Send + Sync + 'static,
-    E::Output: Send + Sync,
-    E::Output: svc::Service<
+    R: resolve::Resolve<DnsNameAndPort> + Clone,
+    M: svc::Make<R::Endpoint> + Clone + Send + Sync + 'static,
+    M::Output: Send + Sync,
+    M::Output: svc::Service<
         Request = http::Request<A>,
         Response = http::Response<B>,
     >,
-    <E::Output as svc::Service>::Future: Send,
-    E::Error: Send,
+    <M::Output as svc::Service>::Future: Send,
+    M::Error: Send,
     A: tower_h2::Body + Send + 'static,
     B: tower_h2::Body + Send + 'static,
 {
-    type Bound = Make<E>;
+    type Bound = Make<R, M>;
 
-    fn bind(&self, make_endpoint: E) -> Self::Bound {
+    fn bind(&self, make: M) -> Self::Bound {
         Make {
-            resolver: self.resolver.clone(),
+            resolve: self.resolve.clone(),
             bind_timeout: self.bind_timeout,
-            make_endpoint,
+            make,
         }
     }
 }
@@ -107,16 +127,17 @@ type Bal<E> = Balance<
     choose::PowerOfTwoChoices,
 >;
 
-impl<E, A, B> svc::Make<Target> for MakeDst<E>
+impl<R, M, A, B> svc::Make<Target> for Make<R, M>
 where
-    E: svc::Make<Endpoint> + Clone + Send + 'static,
-    E::Output: Send,
-    E::Output: svc::Service<
+    R: resolve::Resolve<DnsNameAndPort>,
+    M: svc::Make<R::Endpoint> + Clone + Send + 'static,
+    M::Output: Send,
+    M::Output: svc::Service<
         Request = http::Request<A>,
         Response = http::Response<B>,
     >,
-    <E::Output as svc::Service>::Future: Send,
-    E::Error: Send,
+    <M::Output as svc::Service>::Future: Send,
+    M::Error: Send,
     A: tower_h2::Body + Send + 'static,
     B: tower_h2::Body + Send + 'static,
 {
@@ -127,11 +148,7 @@ where
         let &Target { ref destination, ref protocol } = target;
         debug!("building outbound {:?} client to {:?}", protocol, destination);
 
-        let resolve = match *destination {
-            Destination::Name(ref authority) =>
-                Discovery::Name(self.resolver.resolve(authority, self.make_endpoint.clone())),
-            Destination::Addr(addr) => Discovery::Addr(Some((addr, self.make_endpoint.clone()))),
-        };
+        let resolve = self.resolve.resolve(destination);
 
         let balance = {
             let instrument = PendingUntilFirstData::default();
@@ -221,37 +238,39 @@ impl Recognize {
     }
 }
 
-pub enum Discovery<U: Stream<Item = Update<Endpoint>>> {
-    Name(U),
-    Addr(Option<SocketAddr>),
+impl<R> resolve::Resolve<Destination> for Resolve<R>
+where
+    R: resolve::Resolve<DnsNameAndPort>,
+    R::Endpoint: From<SocketAddr>,
+{
+    type Endpoint = R::Endpoint;
+    type Resolution = Resolution<R::Resolution>;
+
+    fn resolve(&self, dst: &Destination) -> Self::Resolution {
+        match dst {
+            Destination::Name(ref name) => Resolution::Name(self.0.resolve(&name)),
+            Destination::Addr(ref addr) => Resolution::Addr(Some(*addr)),
+        }
+    }
 }
 
-impl<U> Stream for Discovery<U>
+impl<R> resolve::Resolution for Resolution<R>
 where
-    U: Stream<Item = Update<Endpoint>>
+    R: resolve::Resolution,
+    R::Endpoint: From<SocketAddr>,
 {
-    type Key = SocketAddr;
-    type Request = <M::Output as svc::Service>::Request;
-    type Response = <M::Output as svc::Service>::Response;
-    type Error = <M::Output as svc::Service>::Error;
-    type Service = M::Output;
-    type DiscoverError = M::Error;
+    type Endpoint = R::Endpoint;
+    type Error = R::Error;
 
-    fn poll(&mut self) -> Poll<Change<Self::Key, Self::Service>, Self::DiscoverError> {
-        match *self {
-            Discovery::Name(ref mut w) => w.poll(),
-            Discovery::Addr(ref mut opt) => {
-                // This "discovers" a single address for an external service
-                // that never has another change. This can mean it floats
-                // in the Balancer forever. However, when we finally add
-                // circuit-breaking, this should be able to take care of itself,
-                // closing down when the connection is no longer usable.
-                if let Some((addr, mut stack)) = opt.take() {
-                    let svc = stack.make(&addr.into())?;
-                    Ok(Async::Ready(Change::Insert(addr, svc)))
-                } else {
-                    Ok(Async::NotReady)
+    fn poll(&mut self) -> Poll<resolve::Update<Self::Endpoint>, Self::Error> {
+        match self {
+            Resolution::Name(ref mut res ) => res.poll(),
+            Resolution::Addr(ref mut addr) => match addr.take() {
+                Some(addr) => {
+                    let up = resolve::Update::Make(addr, addr.into());
+                    Ok(Async::Ready(up))
                 }
+                None => Ok(Async::NotReady),
             }
         }
     }
