@@ -65,7 +65,6 @@ use tokio::{
 };
 
 pub mod app;
-mod bind;
 pub mod config;
 pub mod conditional;
 pub mod control;
