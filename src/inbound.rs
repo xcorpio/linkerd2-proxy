@@ -2,7 +2,6 @@ use http;
 //use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
 
 use bind::Protocol;
 use ctx;
@@ -94,7 +93,7 @@ mod tests {
             local: net::SocketAddr,
             remote: net::SocketAddr
         ) -> bool {
-            let inbound = default.map(Recognize::new).unwrap_or_default();
+            let inbound = Recognize::new(default);
 
             let mut req = http::Request::new(());
             req.extensions_mut()
@@ -112,7 +111,7 @@ mod tests {
         fn recognize_default_no_ctx(default: Option<net::SocketAddr>) -> bool {
             let ctx = ctx::Proxy::Inbound;
 
-            let inbound = default.map(Recognize::new).unwrap_or_default();
+            let inbound = Recognize::new(default);
 
             let req = http::Request::new(());
 
@@ -124,7 +123,7 @@ mod tests {
             local: net::SocketAddr,
             remote: net::SocketAddr
         ) -> bool {
-            let inbound = default.map(Recognize::new).unwrap_or_default();
+            let inbound = Recognize::new(default);
 
             let mut req = http::Request::new(());
             req.extensions_mut()

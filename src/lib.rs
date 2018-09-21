@@ -274,63 +274,50 @@ where
             config.destination_concurrency_limit,
         );
 
-        let (drain_tx, drain_rx) = drain::channel();
-
-        let endpoint_stack =
-            proxy::http::orig_proto::upgrade();
-
         const MAX_IN_FLIGHT: usize = 10_000;
 
-        // Setup the public listener. This will listen on a publicly accessible
-        // address and listen for inbound connections that should be forwarded
-        // to the managed application (private destination).
-        let inbound = {
-            let router = timestamp_request_open::Layer::new()
-                .and_then(proxy::buffer::Layer::new(MAX_IN_FLIGHT))
-                .and_then(proxy::http::router::Layer::new(
-                    inbound::Recognize::new(config.private_forward.map(|a| a.into())),
-                    config.inbound_router_capacity,
-                    config.inbound_router_max_idle_age,
-                ))
-                .and_then(endpoint_stack.clone());
+        let inbound = timestamp_request_open::Layer::new()
+            .and_then(proxy::buffer::Layer::new(MAX_IN_FLIGHT))
+            .and_then(proxy::http::orig_proto::downgrade())
+            .and_then(proxy::http::router::Layer::new(
+                inbound::Recognize::new(config.private_forward.map(|a| a.into())),
+                config.inbound_router_capacity,
+                config.inbound_router_max_idle_age,
+            ));
 
-            serve(
-                inbound_listener,
-                router,
-                config.private_connect_timeout,
-                config.inbound_ports_disable_protocol_detection,
-                ctx::Proxy::Inbound,
-                transport_registry.clone(),
-                get_original_dst.clone(),
-                drain_rx.clone(),
-            )
-        };
+        let outbound = timestamp_request_open::Layer::new()
+            .and_then(proxy::buffer::Layer::new(MAX_IN_FLIGHT))
+            .and_then(proxy::http::router::Layer::new(
+                outbound::Recognize::new(),
+                config.outbound_router_capacity,
+                config.outbound_router_max_idle_age,
+            ))
+            .and_then(outbound::balance(resolver))
+            .and_then(proxy::http::orig_proto::upgrade());
 
-        // Setup the private listener. This will listen on a locally accessible
-        // address and listen for outbound requests that should be routed
-        // to a remote service (public destination).
-        let outbound = {
-            let router = timestamp_request_open::Layer::new()
-                .and_then(proxy::buffer::Layer::new(MAX_IN_FLIGHT))
-                .and_then(proxy::http::router::Layer::new(
-                    outbound::Recognize,
-                    config.outbound_router_capacity,
-                    config.outbound_router_max_idle_age,
-                ))
-                .and_then(outbound::balance(resolver))
-                .and_then(endpoint_stack);
+        let (drain_tx, drain_rx) = drain::channel();
 
-           serve(
-                outbound_listener,
-                router,
-                config.public_connect_timeout,
-                config.outbound_ports_disable_protocol_detection,
-                ctx::Proxy::Outbound,
-                transport_registry,
-                get_original_dst,
-                drain_rx,
-            )
-        };
+        let serve_inbound = serve(
+            inbound_listener,
+            inbound,
+            config.private_connect_timeout,
+            config.inbound_ports_disable_protocol_detection,
+            ctx::Proxy::Inbound,
+            transport_registry.clone(),
+            get_original_dst.clone(),
+            drain_rx.clone(),
+        );
+
+        let serve_outound = serve(
+            outbound_listener,
+            outbound,
+            config.public_connect_timeout,
+            config.outbound_ports_disable_protocol_detection,
+            ctx::Proxy::Outbound,
+            transport_registry,
+            get_original_dst,
+            drain_rx,
+        );
 
         trace!("running");
 
@@ -369,8 +356,8 @@ where
             trace!("controller client thread spawned");
         }
 
-        let fut = inbound
-            .join(outbound)
+        let fut = serve_inbound
+            .join(serve_outbound)
             .map(|_| ())
             .map_err(|err| error!("main error: {:?}", err));
 

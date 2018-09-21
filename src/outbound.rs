@@ -30,7 +30,7 @@ where
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct Recognize;
+pub struct Recognize {}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Target  {
@@ -71,6 +71,10 @@ impl<B> router::Recognize<http::Request<B>> for Recognize {
 }
 
 impl Recognize {
+    pub fn new() -> Self {
+        Self {}
+    }
+
     /// TODO: Return error when `HostAndPort::normalize()` fails.
     /// TODO: Use scheme-appropriate default port.
     fn normalize(authority: &http::uri::Authority) -> Option<HostAndPort> {
