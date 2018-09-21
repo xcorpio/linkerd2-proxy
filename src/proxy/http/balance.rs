@@ -4,7 +4,7 @@ extern crate tower_h2_balance;
 
 use futures::{Async, Poll, Stream};
 use http;
-use std::fmt;
+use std::{error, fmt};
 use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -157,4 +157,24 @@ where
 pub enum Error<R, M> {
     Resolve(R),
     Make(M),
+}
+
+impl<R, M> fmt::Display for Error<R, M>
+where
+    R: fmt::Display,
+    M: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Error::Resolve(e) => e.fmt(f),
+            Error::Make(e) => e.fmt(f),
+        }
+    }
+}
+
+impl<R, M> error::Error for Error<R, M>
+where
+    R: error::Error,
+    M: error::Error,
+{
 }
