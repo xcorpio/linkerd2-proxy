@@ -23,6 +23,7 @@ mod reconnect;
 pub mod resolve;
 mod server;
 mod tcp;
+pub mod timeout;
 
 pub use self::reconnect::Reconnect;
 pub use self::resolve::{Resolve, Resolution};

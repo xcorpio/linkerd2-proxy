@@ -10,11 +10,13 @@ pub use self::tower_in_flight_limit::InFlightLimit;
 use logging;
 use svc;
 
+#[derive(Debug)]
 pub struct Layer<T> {
     max_in_flight: usize,
     _p: PhantomData<fn() -> T>
 }
 
+#[derive(Debug)]
 pub struct Make<T, M> {
     max_in_flight: usize,
     inner: M,
@@ -24,7 +26,7 @@ pub struct Make<T, M> {
 #[derive(Debug)]
 pub enum Error<M, S> {
     Make(M),
-    Spawn(S),
+    Spawn(SpawnError<S>),
 }
 
 impl<T> Default for Layer<T> {
@@ -62,9 +64,11 @@ where
 
 impl<T, M> svc::Make<T> for Make<T, M>
 where
-    T: fmt::Display + Clone,
+    T: fmt::Display + Clone + Send + Sync + 'static,
     M: svc::Make<T>,
-    M::Output: svc::Service,
+    M::Output: svc::Service + Send + 'static,
+    <M::Output as svc::Service>::Request: Send,
+    <M::Output as svc::Service>::Future: Send,
 {
     type Output = InFlightLimit<Buffer<M::Output>>;
     type Error = Error<M::Error, M::Output>;
@@ -73,7 +77,7 @@ where
         let inner = self.inner.make(&target).map_err(Error::Make)?;
 
         let executor = logging::context_executor(target.clone());
-        let buffer = Buffer::new(inner, executor).map_err(Error::Spawn)?;
+        let buffer = Buffer::new(inner, &executor).map_err(Error::Spawn)?;
 
         Ok(InFlightLimit::new(buffer, self.max_in_flight))
     }

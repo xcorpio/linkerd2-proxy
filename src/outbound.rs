@@ -1,6 +1,7 @@
 #![allow(unused_imports)]
 
 use std::{error, fmt};
+use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::time::Duration;
 use std::sync::Arc;
@@ -15,7 +16,7 @@ use bind::Protocol;
 use ctx;
 use proxy::{self, resolve::{self, Resolve as _Resolve}};
 use proxy::http::{balance, h1, router};
-use svc;
+use svc::{self, Layer as _Layer};
 use telemetry::http::service::{ResponseBody as SensorBody};
 use timeout::Timeout;
 use transport::{DnsNameAndPort, Host, HostAndPort};
@@ -24,14 +25,12 @@ use transport::{DnsNameAndPort, Host, HostAndPort};
 pub struct Recognize {}
 
 #[derive(Clone, Debug)]
-pub struct Layer<R>
-where
-    R: resolve::Resolve<DnsNameAndPort> + Clone
+pub struct Layer<T, M, L>
 {
-    resolve: Resolve<R>,
-    bind_timeout: Duration,
+    inner: L,
     router_capacity: usize,
     router_max_idle_age: Duration,
+    _p: PhantomData<fn() -> (T, M)>,
 }
 
 #[derive(Clone, Debug)]
@@ -78,29 +77,41 @@ pub enum Resolution<R: resolve::Resolution> {
 }
 
 
-impl<R> Layer<R>
+impl<T, L, M, A, B> Layer<T, M, L>
 where
-    R: resolve::Resolve<DnsNameAndPort> + Clone,
+    T: fmt::Debug,
+    L: svc::Layer<M>,
+    M: svc::Make<T>,
+    M::Output: svc::Service<
+        Request = http::Request<A>,
+        Response = http::Request<B>,
+    >,
 {
-    pub fn new(
+    pub fn new<R>(
         resolve: R,
         bind_timeout: Duration,
         router_capacity: usize,
         router_max_idle_age: Duration,
-    ) -> Self {
+    )
+        -> Self
+    where
+        R: resolve::Resolve<DnsNameAndPort, Endpoint = T> + Clone,
+    {
+        let inner = proxy::timeout::Layer::new(bind_timeout)
+            .and_then(proxy::buffer::Layer::default())
+            .and_then(proxy::http::balance::Layer::new(Resolve(resolve)));
         Self {
-            resolve: Resolve(resolve),
-            bind_timeout,
+            inner,
             router_capacity,
             router_max_idle_age,
         }
     }
 }
 
-impl<R, M, A, B> svc::Layer<M> for Layer<R>
+impl<T, L, M, A, B> svc::Layer<M> for Layer<T, M, L>
 where
-    R: resolve::Resolve<DnsNameAndPort> + Clone,
-    M: svc::Make<R::Endpoint> + Clone + Send + Sync + 'static,
+    L: svc::Layer<M>,
+    M: svc::Make<T> + Clone + Send + Sync + 'static,
     M::Output: Send + Sync,
     M::Output: svc::Service<
         Request = http::Request<A>,
@@ -111,58 +122,10 @@ where
     A: tower_h2::Body + Send + 'static,
     B: tower_h2::Body + Send + 'static,
 {
-    type Bound = Make<R, M>;
+    type Bound = L::Bound;
 
     fn bind(&self, make: M) -> Self::Bound {
-        Make {
-            resolve: self.resolve.clone(),
-            bind_timeout: self.bind_timeout,
-            make,
-        }
-    }
-}
-
-type Bal<E> = Balance<
-    load::WithPeakEwma<Discovery<E>, PendingUntilFirstData>,
-    choose::PowerOfTwoChoices,
->;
-
-impl<R, M, A, B> svc::Make<Target> for Make<R, M>
-where
-    R: resolve::Resolve<DnsNameAndPort>,
-    M: svc::Make<R::Endpoint> + Clone + Send + 'static,
-    M::Output: Send,
-    M::Output: svc::Service<
-        Request = http::Request<A>,
-        Response = http::Response<B>,
-    >,
-    <M::Output as svc::Service>::Future: Send,
-    M::Error: Send,
-    A: tower_h2::Body + Send + 'static,
-    B: tower_h2::Body + Send + 'static,
-{
-    type Output = InFlightLimit<Timeout<Buffer<Bal<E>>>>;
-    type Error = SpawnError<Bal<E>>;
-
-    fn make(&self, target: &Target) -> Result<Self::Output, Self::Error> {
-        let &Target { ref destination, ref protocol } = target;
-        debug!("building outbound {:?} client to {:?}", protocol, destination);
-
-        let resolve = self.resolve.resolve(destination);
-
-        let balance = {
-            let instrument = PendingUntilFirstData::default();
-            let loaded = load::WithPeakEwma::new(resolve, DEFAULT_DECAY, instrument);
-            Balance::p2c(loaded)
-        };
-
-        let log = ::logging::proxy().client("out", Dst(destination.clone()))
-            .with_protocol(protocol.clone());
-        let buffer = Buffer::new(balance, &log.executor())?;
-
-        let timeout = Timeout::new(buffer, self.bind_timeout);
-
-        Ok(InFlightLimit::new(timeout, MAX_IN_FLIGHT))
+        self.inner.bind(make)
     }
 }
 
@@ -238,7 +201,7 @@ impl Recognize {
     }
 }
 
-impl<R> resolve::Resolve<Destination> for Resolve<R>
+impl<R> resolve::Resolve<Target> for Resolve<R>
 where
     R: resolve::Resolve<DnsNameAndPort>,
     R::Endpoint: From<SocketAddr>,
@@ -246,8 +209,8 @@ where
     type Endpoint = R::Endpoint;
     type Resolution = Resolution<R::Resolution>;
 
-    fn resolve(&self, dst: &Destination) -> Self::Resolution {
-        match dst {
+    fn resolve(&self, t: &Target) -> Self::Resolution {
+        match t.destination {
             Destination::Name(ref name) => Resolution::Name(self.0.resolve(&name)),
             Destination::Addr(ref addr) => Resolution::Addr(Some(*addr)),
         }
