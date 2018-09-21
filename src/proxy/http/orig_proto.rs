@@ -3,8 +3,7 @@ use http;
 use http::header::{TRANSFER_ENCODING, HeaderValue};
 use std::marker::PhantomData;
 
-use bind;
-use super::h1;
+use super::{h1, settings::Host, Settings};
 use svc;
 
 const L5D_ORIG_PROTO: &str = "l5d-orig-proto";
@@ -22,15 +21,15 @@ pub struct Downgrade<S> {
     inner: S,
 }
 
-pub fn detect<B>(req: &http::Request<B>) -> bind::Protocol {
+pub fn detect<B>(req: &http::Request<B>) -> Settings {
     if req.version() == http::Version::HTTP_2 {
         if let Some(orig_proto) = req.headers().get(L5D_ORIG_PROTO) {
             trace!("detected orig-proto: {:?}", orig_proto);
             let val = orig_proto.as_bytes();
             let was_absolute_form = was_absolute_form(val);
-            let host = bind::Host::detect(req);
+            let host = Host::detect(req);
 
-            return bind::Protocol::Http1 {
+            return Settings::Http1 {
                 host,
                 is_h1_upgrade: false, // orig-proto is never used with upgrades
                 was_absolute_form,
@@ -38,7 +37,7 @@ pub fn detect<B>(req: &http::Request<B>) -> bind::Protocol {
         }
     }
 
-    bind::Protocol::detect(req)
+    Settings::detect(req)
 }
 
 #[derive(Debug)]

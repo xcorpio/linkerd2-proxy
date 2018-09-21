@@ -3,14 +3,13 @@ use http;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use bind::Protocol;
 use ctx;
-use proxy::http::{router, orig_proto};
+use proxy::http::{router, orig_proto, Settings};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Target {
     addr: SocketAddr,
-    protocol: Protocol,
+    settings: Settings,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -36,8 +35,8 @@ impl<A> router::Recognize<http::Request<A>> for Recognize {
         trace!("recognize local={} orig={:?}", ctx.local, ctx.orig_dst);
 
         let addr = ctx.orig_dst_if_not_local().or(self.default_addr)?;
-        let protocol = orig_proto::detect(req);
-        Some(Target { addr, protocol })
+        let settings = orig_proto::detect(req);
+        Some(Target { addr, settings })
     }
 }
 
@@ -47,20 +46,20 @@ mod tests {
 
     use http;
     use proxy::http::router::Recognize as _Recognize;
+    use proxy::http::settings::{Host, Settings};
 
     use super::{Recognize, Target};
-    use bind::{self, Host};
     use ctx;
     use conditional::Conditional;
     use tls;
 
     fn make_target_http1(addr: net::SocketAddr) -> Target {
-        let protocol = bind::Protocol::Http1 {
+        let settings = Settings::Http1 {
             host: Host::NoAuthority,
             is_h1_upgrade: false,
             was_absolute_form: false,
         };
-        Target { addr, protocol }
+        Target { addr, settings }
     }
 
     const TLS_DISABLED: Conditional<(), tls::ReasonForNoTls> =

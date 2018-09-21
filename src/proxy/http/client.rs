@@ -8,10 +8,9 @@ use tokio::executor::Executor;
 use tokio_connect::Connect;
 use tower_h2;
 
-use bind;
-use proxy::http::glue::{BodyPayload, HttpBody, HyperConnect};
-use proxy::http::h1;
-use proxy::http::upgrade::{HttpConnect, Http11Upgrade};
+use super::{h1, Settings};
+use super::glue::{BodyPayload, HttpBody, HyperConnect};
+use super::upgrade::{HttpConnect, Http11Upgrade};
 use svc;
 use task::BoxExecutor;
 
@@ -113,20 +112,20 @@ where
    <B::Data as IntoBuf>::Buf: Send + 'static,
 {
     /// Create a new `Client`, bound to a specific protocol (HTTP/1 or HTTP/2).
-    pub fn new(protocol: &bind::Protocol, connect: C, executor: E) -> Self {
-        match *protocol {
-            bind::Protocol::Http1 { was_absolute_form, .. } => {
+    pub fn new(settings: &Settings, connect: C, executor: E) -> Self {
+        match settings {
+            Settings::Http1 { was_absolute_form, .. } => {
                 let h1 = hyper::Client::builder()
                     .executor(executor)
                     // hyper should never try to automatically set the Host
                     // header, instead always just passing whatever we received.
                     .set_host(false)
-                    .build(HyperConnect::new(connect, was_absolute_form));
+                    .build(HyperConnect::new(connect, *was_absolute_form));
                 Client {
                     inner: ClientInner::Http1(h1),
                 }
             },
-            bind::Protocol::Http2 => {
+            Settings::Http2 => {
                 let mut h2_builder = h2::client::Builder::default();
                 // h2 currently doesn't handle PUSH_PROMISE that well, so we just
                 // disable it for now.

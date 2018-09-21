@@ -10,10 +10,9 @@ use http;
 use futures::{Async, Poll, Stream};
 use tower_h2;
 
-use bind::Protocol;
 use ctx;
 use proxy::{self, resolve::{self, Resolve as _Resolve}};
-use proxy::http::{balance, h1, router};
+use proxy::http::{balance, h1, router, Settings};
 use svc::{self, Layer as _Layer};
 use svc::stack::layer::AndThen;
 use telemetry::http::service::{ResponseBody as SensorBody};
@@ -35,7 +34,7 @@ pub struct Recognize {}
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Target  {
     destination: Destination,
-    protocol: Protocol,
+    settings: Settings,
 }
 
 /// Describes a destination for HTTP requests.
@@ -65,8 +64,8 @@ impl<B> router::Recognize<http::Request<B>> for Recognize {
     // requests from being routed to HTTP/2 servers, and vice versa.
     fn recognize(&self, req: &http::Request<B>) -> Option<Self::Target> {
         let destination = Self::destination(req)?;
-        let protocol = Protocol::detect(req);
-        Some(Target { destination, protocol })
+        let settings = Settings::detect(req);
+        Some(Target { destination, settings })
     }
 }
 
