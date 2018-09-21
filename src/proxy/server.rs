@@ -1,7 +1,6 @@
 use std::{
     error,
     net::SocketAddr,
-    sync::Arc,
     time::Duration,
 };
 
@@ -13,14 +12,21 @@ use indexmap::IndexSet;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tower_h2;
 
-use ctx::Proxy as ProxyCtx;
-use ctx::transport::{Server as ServerCtx};
 use drain;
 use svc::{Make, Service, stack::MakeNewService};
-use transport::{self, Connection, GetOriginalDst, Peek};
+use transport::{self, tls, Connection, GetOriginalDst, Peek};
 use proxy::http::glue::{HttpBody, HttpBodyNewSvc, HyperServerSvc};
 use proxy::protocol::Protocol;
 use proxy::tcp;
+
+#[derive(Clone, Debug)]
+pub struct Source {
+    pub remote: SocketAddr,
+    pub local: SocketAddr,
+    pub orig_dst: Option<SocketAddr>,
+    pub tls_status: tls::Status,
+    _p: (),
+}
 
 /// A protocol-transparent Server!
 ///
@@ -29,7 +35,7 @@ use proxy::tcp;
 /// service.
 pub struct Server<M, B, G>
 where
-    M: Make<Arc<ServerCtx>, Error = ()> + Clone,
+    M: Make<Source, Error = ()> + Clone,
     M::Value: Service<
         Request = http::Request<HttpBody>,
         Response = http::Response<B>,
@@ -44,7 +50,6 @@ where
     h2_settings: h2::server::Builder,
     listen_addr: SocketAddr,
     make: M,
-    proxy_ctx: ProxyCtx,
     transport_registry: transport::metrics::Registry,
     tcp: tcp::Forward,
     log: ::logging::Server,
@@ -52,7 +57,7 @@ where
 
 impl<M, B, G> Server<M, B, G>
 where
-    M: Make<Arc<ServerCtx>, Error = ()> + Clone,
+    M: Make<Source, Error = ()> + Clone,
     M::Value: Service<
         Request = http::Request<HttpBody>,
         Response = http::Response<B>,
@@ -69,7 +74,7 @@ where
    /// Creates a new `Server`.
     pub fn new(
         listen_addr: SocketAddr,
-        proxy_ctx: ProxyCtx,
+        proxy_ctx: ::ctx::Proxy,
         transport_registry: transport::metrics::Registry,
         get_orig_dst: G,
         make: M,
@@ -88,7 +93,6 @@ where
             h2_settings,
             listen_addr,
             make,
-            proxy_ctx,
             transport_registry,
             tcp,
             log,
@@ -108,21 +112,21 @@ where
     pub fn serve(&self, connection: Connection, remote_addr: SocketAddr)
         -> impl Future<Item=(), Error=()>
     {
-        // create Server context
         let orig_dst = connection.original_dst_addr(&self.get_orig_dst);
-        let local_addr = connection.local_addr().unwrap_or(self.listen_addr);
-        let srv_ctx = ServerCtx::new(
-            self.proxy_ctx,
-            &local_addr,
-            &remote_addr,
-            &orig_dst,
-            connection.tls_status(),
-        );
+
         let log = self.log.clone()
             .with_remote(remote_addr);
 
+        let source = Source {
+            remote: remote_addr,
+            local: connection.local_addr().unwrap_or(self.listen_addr),
+            orig_dst,
+            tls_status: connection.tls_status(),
+            _p: (),
+        };
+
         // record telemetry
-        let io = self.transport_registry.accept(&srv_ctx, connection);
+        let io = self.transport_registry.accept(&source, connection);
 
         // We are using the port from the connection's SO_ORIGINAL_DST to
         // determine whether to skip protocol detection, not any port that
@@ -138,7 +142,7 @@ where
             let fut = tcp_serve(
                 &self.tcp,
                 io,
-                srv_ctx,
+                source,
                 self.drain_signal.clone(),
             );
 
@@ -162,13 +166,13 @@ where
             .and_then(move |(proto, io)| match proto {
                 None => Either::A({
                     trace!("did not detect protocol; forwarding TCP");
-                    tcp_serve(&tcp, io, srv_ctx, drain_signal)
+                    tcp_serve(&tcp, io, source, drain_signal)
                 }),
 
                 Some(proto) => Either::B(match proto {
                     Protocol::Http1 => Either::A({
                         trace!("detected HTTP/1");
-                        match make.make(&srv_ctx) {
+                        match make.make(&source) {
                             Err(()) => Either::A({
                                 error!("failed to build HTTP/1 client");
                                 future::err(())
@@ -176,7 +180,7 @@ where
                             Ok(s) => Either::B({
                                 let svc = HyperServerSvc::new(
                                     s,
-                                    srv_ctx,
+                                    source,
                                     drain_signal.clone(),
                                     log_clone.executor(),
                                 );
@@ -195,14 +199,14 @@ where
                     }),
                     Protocol::Http2 => Either::B({
                         trace!("detected HTTP/2");
-                        let new_service = MakeNewService::new(make, srv_ctx.clone());
+                        let new_service = MakeNewService::new(make, source.clone());
                         let h2 = tower_h2::Server::new(
                             HttpBodyNewSvc::new(new_service),
                             h2_settings,
                             log_clone.executor(),
                         );
                         let serve = h2.serve_modified(io, move |r: &mut http::Request<()>| {
-                            r.extensions_mut().insert(srv_ctx.clone());
+                            r.extensions_mut().insert(source.clone());
                         });
                         drain_signal
                             .watch(serve, |conn| conn.graceful_shutdown())
@@ -218,10 +222,10 @@ where
 fn tcp_serve<T: AsyncRead + AsyncWrite + Send + 'static>(
     tcp: &tcp::Forward,
     io: T,
-    srv_ctx: Arc<ServerCtx>,
+    source: Source,
     drain_signal: drain::Watch,
 ) -> impl Future<Item=(), Error=()> + Send + 'static {
-    let fut = tcp.serve(io, srv_ctx);
+    let fut = tcp.serve(io, source);
 
     // There's nothing to do when drain is signaled, we just have to hope
     // the sockets finish soon. However, the drain signal still needs to

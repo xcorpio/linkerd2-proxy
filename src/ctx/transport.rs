@@ -1,7 +1,6 @@
 use indexmap::IndexMap;
 use std::{
     self,
-    fmt,
     net::{IpAddr, SocketAddr},
     sync::Arc,
 };
@@ -38,30 +37,7 @@ pub struct Client {
 
 /// Identifies whether or not a connection was secured with TLS,
 /// and, if it was not, the reason why.
-pub type TlsStatus = Conditional<(), tls::ReasonForNoTls>;
-
-impl TlsStatus {
-    pub fn from<C>(c: &Conditional<C, tls::ReasonForNoTls>) -> Self
-    where C: Clone + std::fmt::Debug
-    {
-        c.as_ref().map(|_| ())
-    }
-}
-
-impl fmt::Display for TlsStatus {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.pad(match *self {
-            Conditional::Some(()) => "true",
-            Conditional::None(tls::ReasonForNoTls::NoConfig) => "no_config",
-            Conditional::None(tls::ReasonForNoTls::HandshakeFailed) => "handshake_failed",
-            Conditional::None(tls::ReasonForNoTls::Disabled) => "disabled",
-            Conditional::None(tls::ReasonForNoTls::InternalTraffic) => "internal_traffic",
-            Conditional::None(tls::ReasonForNoTls::NoIdentity(_)) => "no_identity",
-            Conditional::None(tls::ReasonForNoTls::NotProxyTls) => "no_proxy_tls"
-        })
-    }
-}
-
+pub type TlsStatus = tls::Status;
 
 impl Ctx {
     pub fn proxy(&self) -> ctx::Proxy {
