@@ -85,7 +85,7 @@ use conditional::Conditional;
 use task::MainRuntime;
 use svc::Layer as _Layer;
 use telemetry::http::timestamp_request_open;
-use transport::{BoundPort, Connection};
+use transport::{MakePort, Connection};
 pub use transport::{AddrInfo, GetOriginalDst, SoOriginalDst, tls};
 
 /// Runs a sidecar proxy.
@@ -107,10 +107,10 @@ pub struct Main<G> {
 
     start_time: SystemTime,
 
-    control_listener: BoundPort,
-    inbound_listener: BoundPort,
-    outbound_listener: BoundPort,
-    metrics_listener: BoundPort,
+    control_listener: MakePort,
+    inbound_listener: MakePort,
+    outbound_listener: MakePort,
+    metrics_listener: MakePort,
 
     get_original_dst: G,
 
@@ -134,7 +134,7 @@ where
         let tls_config_watch = tls::ConfigWatch::new(config.tls_settings.clone());
 
         // TODO: Serve over TLS.
-        let control_listener = BoundPort::new(
+        let control_listener = MakePort::new(
             config.control_listener.addr,
             Conditional::None(tls::ReasonForNoIdentity::NotImplementedForTap.into()))
             .expect("controller listener bind");
@@ -148,11 +148,11 @@ where
                     }
                 })
             });
-            BoundPort::new(config.public_listener.addr, tls)
+            MakePort::new(config.public_listener.addr, tls)
                 .expect("public listener bind")
         };
 
-        let outbound_listener = BoundPort::new(
+        let outbound_listener = MakePort::new(
             config.private_listener.addr,
             Conditional::None(tls::ReasonForNoTls::InternalTraffic))
             .expect("private listener bind");
@@ -160,7 +160,7 @@ where
         let runtime = runtime.into();
 
         // TODO: Serve over TLS.
-        let metrics_listener = BoundPort::new(
+        let metrics_listener = MakePort::new(
             config.metrics_listener.addr,
             Conditional::None(tls::ReasonForNoIdentity::NotImplementedForMetrics.into()))
             .expect("metrics listener bind");
@@ -382,7 +382,7 @@ where
 }
 
 fn serve<M, B, E, G>(
-    bound_port: BoundPort,
+    bound_port: MakePort,
     router: M,
     tcp_connect_timeout: Duration,
     disable_protocol_detection_ports: IndexSet<u16>,
@@ -398,12 +398,12 @@ where
     E: Error + Send + 'static,
     M: svc::Make<Arc<ctx::transport::Server>, Error = ()> + Send + Sync + 'static,
     //M::Error: Error + Send + 'static,
-    M::Output: Send + svc::Service<
+    M::Value: Send + svc::Service<
         Request = http::Request<proxy::http::Body>,
         Response = http::Response<B>,
     >,
-    <M::Output as svc::Service>::Error: Error + Send + 'static,
-    <M::Output as svc::Service>::Future: Send,
+    <M::Value as svc::Service>::Error: Error + Send + 'static,
+    <M::Value as svc::Service>::Future: Send,
     G: GetOriginalDst + Send + 'static,
 {
     // Install the request open timestamp module at the very top of the
@@ -480,7 +480,7 @@ where
 }
 
 fn serve_tap<N, B>(
-    bound_port: BoundPort,
+    bound_port: MakePort,
     new_service: N,
 ) -> impl Future<Item = (), Error = ()> + 'static
 where

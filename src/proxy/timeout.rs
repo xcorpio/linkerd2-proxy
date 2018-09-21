@@ -24,13 +24,13 @@ impl<T> Layer<T> {
     }
 }
 
-impl<T, M> svc::Layer<M> for Layer<T>
+impl<T, M> svc::Layer<T, T, M> for Layer<T>
 where
     M: svc::Make<T>,
 {
-    type Bound = Make<T, M>;
+    type Make = Make<T, M>;
 
-    fn bind(&self, inner: M) -> Self::Bound {
+    fn bind(&self, inner: M) -> Self::Make {
         Make {
             inner,
             timeout: self.timeout,
@@ -43,10 +43,10 @@ impl<T, M> svc::Make<T> for Make<T, M>
 where
     M: svc::Make<T>,
 {
-    type Output = Timeout<M::Output>;
+    type Value = Timeout<M::Value>;
     type Error = M::Error;
 
-    fn make(&self, target: &T) -> Result<Self::Output, Self::Error> {
+    fn make(&self, target: &T) -> Result<Self::Value, Self::Error> {
         let inner = self.inner.make(&target)?;
         Ok(Timeout::new(inner, self.timeout))
     }

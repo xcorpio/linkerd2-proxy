@@ -19,7 +19,7 @@ pub struct Router<Req, Rec, Mk>
 where
     Rec: Recognize<Req>,
     Mk: stack::Make<Rec::Target>,
-    Mk::Output: svc::Service<Request = Req>,
+    Mk::Value: svc::Service<Request = Req>,
 {
     inner: Arc<Inner<Req, Rec, Mk>>,
 }
@@ -57,11 +57,11 @@ struct Inner<Req, Rec, Mk>
 where
     Rec: Recognize<Req>,
     Mk: stack::Make<Rec::Target>,
-    Mk::Output: svc::Service<Request = Req>,
+    Mk::Value: svc::Service<Request = Req>,
 {
     recognize: Rec,
     make: Mk,
-    cache: Mutex<Cache<Rec::Target, Mk::Output>>,
+    cache: Mutex<Cache<Rec::Target, Mk::Value>>,
 }
 
 enum State<F, E>
@@ -81,7 +81,7 @@ impl<Req, Rec, Mk> Router<Req, Rec, Mk>
 where
     Rec: Recognize<Req>,
     Mk: stack::Make<Rec::Target>,
-    Mk::Output: svc::Service<Request = Req>,
+    Mk::Value: svc::Service<Request = Req>,
 {
     pub fn new(recognize: Rec, make: Mk, capacity: usize, max_idle_age: Duration) -> Self {
         Router {
@@ -98,12 +98,12 @@ impl<Req, Rec, Mk> svc::Service for Router<Req, Rec, Mk>
 where
     Rec: Recognize<Req>,
     Mk: stack::Make<Rec::Target>,
-    Mk::Output: svc::Service<Request = Req>,
+    Mk::Value: svc::Service<Request = Req>,
 {
-    type Request = <Mk::Output as svc::Service>::Request;
-    type Response = <Mk::Output as svc::Service>::Response;
-    type Error = Error<<Mk::Output as svc::Service>::Error, Mk::Error>;
-    type Future = ResponseFuture<<Mk::Output as svc::Service>::Future, Mk::Error>;
+    type Request = <Mk::Value as svc::Service>::Request;
+    type Response = <Mk::Value as svc::Service>::Response;
+    type Error = Error<<Mk::Value as svc::Service>::Error, Mk::Error>;
+    type Future = ResponseFuture<<Mk::Value as svc::Service>::Future, Mk::Error>;
 
     /// Always ready to serve.
     ///
@@ -158,7 +158,7 @@ impl<Req, Rec, Mk> Clone for Router<Req, Rec, Mk>
 where
     Rec: Recognize<Req>,
     Mk: stack::Make<Rec::Target>,
-    Mk::Output: svc::Service<Request = Req>,
+    Mk::Value: svc::Service<Request = Req>,
 {
     fn clone(&self) -> Self {
         Router { inner: self.inner.clone() }
@@ -281,10 +281,10 @@ mod test_util {
     }
 
     impl Make<usize> for Recognize {
-        type Output = MultiplyAndAssign;
+        type Value = MultiplyAndAssign;
         type Error = ();
 
-        fn make(&self, _: &usize) -> Result<Self::Output, Self::Error> {
+        fn make(&self, _: &usize) -> Result<Self::Value, Self::Error> {
             Ok(MultiplyAndAssign(1))
         }
     }

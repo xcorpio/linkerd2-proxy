@@ -17,7 +17,7 @@ use ctx::transport::TlsStatus;
 use config::Addr;
 use transport::{AddrInfo, BoxedIo, GetOriginalDst, tls};
 
-pub struct BoundPort {
+pub struct MakePort {
     inner: std::net::TcpListener,
     local_addr: SocketAddr,
     tls: tls::ConditionalConnectionConfig<tls::ServerConfigWatch>,
@@ -112,15 +112,15 @@ pub struct PeekFuture<T> {
     inner: Option<T>,
 }
 
-// ===== impl BoundPort =====
+// ===== impl MakePort =====
 
-impl BoundPort {
+impl MakePort {
     pub fn new(addr: Addr, tls: tls::ConditionalConnectionConfig<tls::ServerConfigWatch>)
         -> Result<Self, io::Error>
     {
         let inner = std::net::TcpListener::bind(SocketAddr::from(addr))?;
         let local_addr = inner.local_addr()?;
-        Ok(BoundPort {
+        Ok(MakePort {
             inner,
             local_addr,
             tls,

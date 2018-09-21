@@ -21,7 +21,7 @@ pub use self::{
         LookupAddressAndConnect,
     },
     connection::{
-        BoundPort,
+        MakePort,
         Connection,
         Peek,
     },

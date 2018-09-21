@@ -30,7 +30,7 @@ use proxy::tcp;
 pub struct Server<M, B, G>
 where
     M: Make<Arc<ServerCtx>, Error = ()> + Clone,
-    M::Output: Service<
+    M::Value: Service<
         Request = http::Request<HttpBody>,
         Response = http::Response<B>,
     >,
@@ -53,13 +53,13 @@ where
 impl<M, B, G> Server<M, B, G>
 where
     M: Make<Arc<ServerCtx>, Error = ()> + Clone,
-    M::Output: Service<
+    M::Value: Service<
         Request = http::Request<HttpBody>,
         Response = http::Response<B>,
     >,
-    M::Output: Send + 'static,
-    <M::Output as Service>::Error: error::Error + Send + Sync + 'static,
-    <M::Output as Service>::Future: Send + 'static,
+    M::Value: Send + 'static,
+    <M::Value as Service>::Error: error::Error + Send + Sync + 'static,
+    <M::Value as Service>::Future: Send + 'static,
     B: tower_h2::Body + Default + Send + 'static,
     B::Data: Send,
     <B::Data as ::bytes::IntoBuf>::Buf: Send,

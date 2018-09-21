@@ -1,14 +1,22 @@
 use std::marker::PhantomData;
 
-pub struct Optional<N, L: super::Layer<N>>(Option<L>, PhantomData<N>);
+#[derive(Debug)]
+pub struct Optional<T, N, L> {
+    inner: Option<L>,
+    _p: PhantomData<fn() -> (T, N)>
+}
 
-impl<N, L: super::Layer<N>> Optional<N, L> {
+impl<T, N, L> Optional<T, N, L>
+where
+    N: super::Make<T>,
+    L: super::Layer<T, T, N, Value = N::Value, Error = N::Error>,
+{
     pub fn some(layer: L) -> Self {
-        Optional(Some(layer), PhantomData)
+        Some(layer).into()
     }
 
     pub fn none() -> Self {
-        Optional(None, PhantomData)
+        None.into()
     }
 
     pub fn when<F: FnOnce() -> L>(predicate: bool, mk: F) -> Self {
@@ -20,19 +28,29 @@ impl<N, L: super::Layer<N>> Optional<N, L> {
     }
 }
 
-impl<N, L: super::Layer<N>> super::Layer<N> for Optional<N, L> {
-    type Bound = super::Either<N, L::Bound>;
+impl<T, N, L> super::Layer<T, T, N> for Optional<T, N, L>
+where
+    N: super::Make<T>,
+    L: super::Layer<T, T, N, Value = N::Value, Error = N::Error>,
+{
+    type Value = <super::Either<N, L::Make> as super::Make<T>>::Value;
+    type Error = <super::Either<N, L::Make> as super::Make<T>>::Error;
+    type Make = super::Either<N, L::Make>;
 
-    fn bind(&self, next: N) -> Self::Bound {
-        match self.0.as_ref() {
+    fn bind(&self, next: N) -> Self::Make {
+        match self.inner.as_ref() {
             None => super::Either::A(next),
             Some(ref m) => super::Either::B(m.bind(next)),
         }
     }
 }
 
-impl<N, L: super::Layer<N>> From<Option<L>> for Optional<N, L> {
-    fn from(orig: Option<L>) -> Self {
-        Optional(orig, PhantomData)
+impl<T, N, L> From<Option<L>> for Optional<T, N, L>
+where
+    N: super::Make<T>,
+    L: super::Layer<T, T, N, Value = N::Value, Error = N::Error>,
+{
+    fn from(inner: Option<L>) -> Self {
+        Optional { inner, _p: PhantomData }
     }
 }

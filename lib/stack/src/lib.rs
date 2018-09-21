@@ -42,8 +42,8 @@ pub use self::make_new_service::MakeNewService;
 //pub use self::when::When;
 
 pub trait Make<Target> {
-    type Output;
+    type Value;
     type Error;
 
-    fn make(&self, t: &Target) -> Result<Self::Output, Self::Error>;
+    fn make(&self, t: &Target) -> Result<Self::Value, Self::Error>;
 }

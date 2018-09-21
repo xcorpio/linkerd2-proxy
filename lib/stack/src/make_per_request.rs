@@ -6,7 +6,7 @@ use std::marker::PhantomData;
 
 use svc;
 
-pub struct Layer<T>(PhantomData<fn() -> T>);
+pub struct Layer;
 
 /// A `Make` that builds a single-serving client for each request.
 #[derive(Clone, Debug)]
@@ -23,7 +23,7 @@ pub struct Service<T, M: super::Make<T>> {
     // When `poll_ready` is called, the _next_ service to be used may be bound
     // ahead-of-time. This stack is used only to serve the next request to this
     // service.
-    next: Option<M::Output>,
+    next: Option<M::Value>,
     make: MakeValid<T, M>
 }
 
@@ -34,19 +34,17 @@ struct MakeValid<T, M: super::Make<T>> {
 
 // === Layer ===
 
-pub fn layer<T>() -> Layer<T> {
-    Layer(PhantomData)
-}
-
-impl<T, N> super::Layer<N> for Layer<T>
+impl<T, N> super::Layer<T, T, N> for Layer
 where
     T: Clone,
     N: super::Make<T> + Clone,
     N::Error: fmt::Debug,
 {
-    type Bound = Make<T, N>;
+    type Value = <Make<T, N> as super::Make<T>>::Value;
+    type Error = <Make<T, N> as super::Make<T>>::Error;
+    type Make = Make<T, N>;
 
-    fn bind(&self, inner: N) -> Self::Bound {
+    fn bind(&self, inner: N) -> Self::Make {
         Make {
             inner,
             _p: PhantomData,
@@ -62,10 +60,10 @@ where
     N: super::Make<T> + Clone,
     N::Error: fmt::Debug,
 {
-    type Output = Service<T, N>;
+    type Value = Service<T, N>;
     type Error = N::Error;
 
-    fn make(&self, target: &T) -> Result<Self::Output, N::Error> {
+    fn make(&self, target: &T) -> Result<Self::Value, N::Error> {
         let next = self.inner.make(target)?;
         let valid = MakeValid {
             make: self.inner.clone(),
@@ -84,13 +82,13 @@ impl<T, N> svc::Service for Service<T, N>
 where
     T: Clone,
     N: super::Make<T> + Clone,
-    N::Output: svc::Service,
+    N::Value: svc::Service,
     N::Error: fmt::Debug,
 {
-    type Request = <N::Output as svc::Service>::Request;
-    type Response = <N::Output as svc::Service>::Response;
-    type Error = <N::Output as svc::Service>::Error;
-    type Future = <N::Output as svc::Service>::Future;
+    type Request = <N::Value as svc::Service>::Request;
+    type Response = <N::Value as svc::Service>::Response;
+    type Error = <N::Value as svc::Service>::Error;
+    type Future = <N::Value as svc::Service>::Future;
 
     fn poll_ready(&mut self) -> Poll<(), Self::Error> {
         if let Some(ref mut svc) = self.next {
@@ -121,7 +119,7 @@ where
     M: super::Make<T>,
     M::Error: fmt::Debug
 {
-    fn make_valid(&self) -> M::Output {
+    fn make_valid(&self) -> M::Value {
         self.make
             .make(&self.target)
             .expect("make must succeed")

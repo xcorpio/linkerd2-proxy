@@ -94,15 +94,15 @@ pub enum Host {
 impl<M> svc::Make<tls::ConditionalClientConfig> for SetTlsMake<M>
 where
     M: svc::Make<Endpoint>,
-    M::Output: svc::Service,
+    M::Value: svc::Service,
 {
-    type Output = M::Output;
+    type Value = M::Value;
     type Error = M::Error;
 
     fn make(
         &self,
         tls_client_config: &tls::ConditionalClientConfig
-    ) -> Result<Self::Output, Self::Error> {
+    ) -> Result<Self::Value, Self::Error> {
         debug!(
             "rebinding endpoint stack for {:?}:{:?} on TLS config change",
             self.endpoint, self.protocol,

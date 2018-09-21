@@ -60,15 +60,23 @@ where
     }
 }
 
-impl<T, R, M> svc::Layer<M> for Layer<T, R>
+impl<T, R, M, A, B> svc::Layer<T, R::Endpoint, M> for Layer<T, R>
 where
     R: Resolve<T> + Clone,
     R::Endpoint: fmt::Debug,
-    M: svc::Make<R::Endpoint>,
+    M: svc::Make<R::Endpoint> + Clone,
+    M::Value: svc::Service<
+        Request = http::Request<A>,
+        Response = http::Response<B>,
+    >,
+    A: Body,
+    B: Body,
 {
-    type Bound = Make<T, R, M>;
+    type Value = <Make<T, R, M> as svc::Make<T>>::Value;
+    type Error = <Make<T, R, M> as svc::Make<T>>::Error;
+    type Make = Make<T, R, M>;
 
-    fn bind(&self, inner: M) -> Self::Bound {
+    fn bind(&self, inner: M) -> Self::Make {
         Make {
             decay: self.decay,
             resolve: self.resolve.clone(),
@@ -83,20 +91,20 @@ where
     R: Resolve<T>,
     R::Endpoint: fmt::Debug,
     M: svc::Make<R::Endpoint> + Clone,
-    M::Output: svc::Service<
+    M::Value: svc::Service<
         Request = http::Request<A>,
         Response = http::Response<B>,
     >,
     A: Body,
     B: Body,
 {
-    type Output = Balance<
+    type Value = Balance<
         WithPeakEwma<Discover<R::Resolution, M>, PendingUntilFirstData>,
         PowerOfTwoChoices,
     >;
     type Error = M::Error;
 
-    fn make(&self, target: &T) -> Result<Self::Output, Self::Error> {
+    fn make(&self, target: &T) -> Result<Self::Value, Self::Error> {
         let discover = Discover {
             resolution: self.resolve.resolve(&target),
             make: self.inner.clone(),
@@ -113,13 +121,13 @@ where
     R: Resolution,
     R::Endpoint: fmt::Debug,
     M: svc::Make<R::Endpoint>,
-    M::Output: svc::Service,
+    M::Value: svc::Service,
 {
     type Key = SocketAddr;
-    type Request = <M::Output as svc::Service>::Request;
-    type Response = <M::Output as svc::Service>::Response;
-    type Error = <M::Output as svc::Service>::Error;
-    type Service = M::Output;
+    type Request = <M::Value as svc::Service>::Request;
+    type Response = <M::Value as svc::Service>::Response;
+    type Error = <M::Value as svc::Service>::Error;
+    type Service = M::Value;
     type DiscoverError = Error<R::Error, M::Error>;
 
     fn poll(&mut self)

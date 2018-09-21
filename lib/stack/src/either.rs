@@ -10,14 +10,17 @@ pub enum Either<A, B> {
     B(B),
 }
 
-impl<A, B, N> super::Layer<N> for Either<A, B>
+impl<T, U, A, B, N> super::Layer<T, U, N> for Either<A, B>
 where
-    A: super::Layer<N>,
-    B: super::Layer<N>,
+    A: super::Layer<T, U, N>,
+    B: super::Layer<T, U, N>,
+    N: super::Make<U>
 {
-    type Bound = Either<A::Bound, B::Bound>;
+    type Value = <Either<A::Make, B::Make> as super::Make<T>>::Value;
+    type Error = <Either<A::Make, B::Make> as super::Make<T>>::Error;
+    type Make = Either<A::Make, B::Make>;
 
-    fn bind(&self, next: N) -> Self::Bound {
+    fn bind(&self, next: N) -> Self::Make {
         match self {
             Either::A(ref a) => Either::A(a.bind(next)),
             Either::B(ref b) => Either::B(b.bind(next)),
@@ -28,12 +31,12 @@ where
 impl<T, N, M> super::Make<T> for Either<N, M>
 where
     N: super::Make<T>,
-    M: super::Make<T, Error = N::Error>,
+    M: super::Make<T>,
 {
-    type Output = Either<N::Output, M::Output>;
+    type Value = Either<N::Value, M::Value>;
     type Error = Either<N::Error, M::Error>;
 
-    fn make(&self, target: &T) -> Result<Self::Output, Self::Error> {
+    fn make(&self, target: &T) -> Result<Self::Value, Self::Error> {
         match self {
             Either::A(ref a) => a.make(target).map(Either::A).map_err(Either::A),
             Either::B(ref b) => b.make(target).map(Either::B).map_err(Either::B),

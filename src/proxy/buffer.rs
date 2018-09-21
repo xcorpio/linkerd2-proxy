@@ -46,14 +46,19 @@ impl<T> Layer<T> {
     }
 }
 
-impl<T, M> svc::Layer<M> for Layer<T>
+impl<T, M> svc::Layer<T, T, M> for Layer<T>
 where
+    T: fmt::Display + Clone + Send + Sync + 'static,
     M: svc::Make<T>,
-    M::Output: svc::Service,
+    M::Value: svc::Service + Send + 'static,
+    <M::Value as svc::Service>::Request: Send,
+    <M::Value as svc::Service>::Future: Send,
 {
-    type Bound = Make<T, M>;
+    type Value = <Make<T, M> as svc::Make<T>>::Value;
+    type Error = <Make<T, M> as svc::Make<T>>::Error;
+    type Make = Make<T, M>;
 
-    fn bind(&self, inner: M) -> Self::Bound {
+    fn bind(&self, inner: M) -> Self::Make {
         Make {
             inner,
             max_in_flight: self.max_in_flight,
@@ -66,14 +71,14 @@ impl<T, M> svc::Make<T> for Make<T, M>
 where
     T: fmt::Display + Clone + Send + Sync + 'static,
     M: svc::Make<T>,
-    M::Output: svc::Service + Send + 'static,
-    <M::Output as svc::Service>::Request: Send,
-    <M::Output as svc::Service>::Future: Send,
+    M::Value: svc::Service + Send + 'static,
+    <M::Value as svc::Service>::Request: Send,
+    <M::Value as svc::Service>::Future: Send,
 {
-    type Output = InFlightLimit<Buffer<M::Output>>;
-    type Error = Error<M::Error, M::Output>;
+    type Value = InFlightLimit<Buffer<M::Value>>;
+    type Error = Error<M::Error, M::Value>;
 
-    fn make(&self, target: &T) -> Result<Self::Output, Self::Error> {
+    fn make(&self, target: &T) -> Result<Self::Value, Self::Error> {
         let inner = self.inner.make(&target).map_err(Error::Make)?;
 
         let executor = logging::context_executor(target.clone());

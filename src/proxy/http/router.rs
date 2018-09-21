@@ -2,10 +2,10 @@ use futures::{Future, Poll};
 use h2;
 use http;
 use http::header::CONTENT_LENGTH;
-use std::{fmt, error};
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Duration;
+use std::{error, fmt};
 
 use ctx;
 use svc;
@@ -30,8 +30,8 @@ pub struct Make<Req, Rec, Mk>
 where
     Rec: Recognize<Req>,
     Mk: svc::Make<Rec::Target>,
-    Mk::Output: svc::Service<Request = Req>,
-    <Mk::Output as svc::Service>::Error: error::Error,
+    Mk::Value: svc::Service<Request = Req>,
+    <Mk::Value as svc::Service>::Error: error::Error,
     Mk::Error: fmt::Display,
 {
     router: Router<Req, Rec, Mk>,
@@ -41,8 +41,8 @@ pub struct Service<Req, Rec, Mk>
 where
     Rec: Recognize<Req>,
     Mk: svc::Make<Rec::Target>,
-    Mk::Output: svc::Service<Request = Req>,
-    <Mk::Output as svc::Service>::Error: error::Error,
+    Mk::Value: svc::Service<Request = Req>,
+    <Mk::Value as svc::Service>::Error: error::Error,
     Mk::Error: fmt::Display,
 {
     inner: Router<Req, Rec, Mk>,
@@ -70,18 +70,22 @@ where
     }
 }
 
-impl<Req, Rec, Mk, B> svc::Layer<Mk> for Layer<Req, Rec>
+impl<T, Req, Rec, Mk, B> svc::Layer<T, Rec::Target, Mk>
+    for Layer<Req, Rec>
 where
     Rec: Recognize<Req> + Clone + Send + Sync + 'static,
     Mk: svc::Make<Rec::Target> + Send + Sync + 'static,
-    Mk::Output: svc::Service<Request = Req, Response = http::Response<B>>,
-    <Mk::Output as svc::Service>::Error: error::Error,
+    Mk::Value: svc::Service<Request = Req, Response = http::Response<B>>,
+    <Mk::Value as svc::Service>::Error: error::Error,
     Mk::Error: fmt::Display,
     B: Default + Send + 'static,
+    Make<Req, Rec, Mk>: svc::Make<T>,
 {
-    type Bound = Make<Req, Rec, Mk>;
+    type Value = <Make<Req, Rec, Mk> as svc::Make<T>>::Value;
+    type Error = <Make<Req, Rec, Mk> as svc::Make<T>>::Error;
+    type Make = Make<Req, Rec, Mk>;
 
-    fn bind(&self, next: Mk) -> Self::Bound {
+    fn bind(&self, next: Mk) -> Self::Make {
         let router = Router::new(
             self.recognize.clone(),
             next,
@@ -98,8 +102,8 @@ impl<Req, Rec, Mk> Clone for Make<Req, Rec, Mk>
 where
     Rec: Recognize<Req>,
     Mk: svc::Make<Rec::Target>,
-    Mk::Output: svc::Service<Request = Req>,
-    <Mk::Output as svc::Service>::Error: error::Error,
+    Mk::Value: svc::Service<Request = Req>,
+    <Mk::Value as svc::Service>::Error: error::Error,
     Mk::Error: fmt::Display,
 {
     fn clone(&self) -> Self {
@@ -113,15 +117,15 @@ impl<Req, Rec, Mk, B> svc::Make<Arc<ctx::transport::Server>> for Make<Req, Rec, 
 where
     Rec: Recognize<Req> + Send + Sync + 'static,
     Mk: svc::Make<Rec::Target> + Send + Sync + 'static,
-    Mk::Output: svc::Service<Request = Req, Response = http::Response<B>>,
-    <Mk::Output as svc::Service>::Error: error::Error,
+    Mk::Value: svc::Service<Request = Req, Response = http::Response<B>>,
+    <Mk::Value as svc::Service>::Error: error::Error,
     Mk::Error: fmt::Display,
     B: Default + Send + 'static,
 {
-    type Output = Service<Req, Rec, Mk>;
+    type Value = Service<Req, Rec, Mk>;
     type Error = ();
 
-    fn make(&self, _: &Arc<ctx::transport::Server>) -> Result<Self::Output, Self::Error> {
+    fn make(&self, _: &Arc<ctx::transport::Server>) -> Result<Self::Value, Self::Error> {
         let inner = self.router.clone();
         Ok(Service { inner })
     }
@@ -160,8 +164,8 @@ impl<Req, Rec, Mk, B> svc::Service for Service<Req, Rec, Mk>
 where
     Rec: Recognize<Req> + Send + Sync + 'static,
     Mk: svc::Make<Rec::Target> + Send + Sync + 'static,
-    Mk::Output: svc::Service<Request = Req, Response = http::Response<B>>,
-    <Mk::Output as svc::Service>::Error: error::Error,
+    Mk::Value: svc::Service<Request = Req, Response = http::Response<B>>,
+    <Mk::Value as svc::Service>::Error: error::Error,
     Mk::Error: fmt::Display,
     B: Default + Send + 'static,
 {

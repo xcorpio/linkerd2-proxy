@@ -8,7 +8,7 @@ use svc;
 pub struct Service<T, M: super::Make<T>> {
     watch: futures_watch::Watch<T>,
     make: M,
-    inner: M::Output,
+    inner: M::Value,
 }
 
 #[derive(Debug)]
@@ -34,14 +34,14 @@ where
 impl<T, M> svc::Service for Service<T, M>
 where
     M: super::Make<T>,
-    M::Output: svc::Service,
+    M::Value: svc::Service,
 {
-    type Request = <M::Output as svc::Service>::Request;
-    type Response = <M::Output as svc::Service>::Response;
-    type Error = Error<<M::Output as svc::Service>::Error, M::Error>;
+    type Request = <M::Value as svc::Service>::Request;
+    type Response = <M::Value as svc::Service>::Response;
+    type Error = Error<<M::Value as svc::Service>::Error, M::Error>;
     type Future = MapErr<
-        <M::Output as svc::Service>::Future,
-        fn(<M::Output as svc::Service>::Error) -> Self::Error,
+        <M::Value as svc::Service>::Future,
+        fn(<M::Value as svc::Service>::Error) -> Self::Error,
     >;
 
     fn poll_ready(&mut self) -> Poll<(), Self::Error> {
@@ -109,7 +109,7 @@ mod tests {
 
         struct Make;
         impl ::Make<usize> for Make {
-            type Output = Svc;
+            type Value = Svc;
             type Error = ();
             fn make(&self, n: &usize) -> Result<Svc, ()> {
                 Ok(Svc(*n))
