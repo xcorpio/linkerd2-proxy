@@ -245,7 +245,8 @@ where
     };
 
     let fwd = connect.connect()
-        .and_then(move |dst| tcp::duplex(io, dst));
+        .and_then(move |client| tcp::Duplex::new(io, client))
+        .map_err(|e| error!("tcp forward duplex error: {}", e));
 
     // There's nothing to do when drain is signaled, we just have to hope
     // the sockets finish soon. However, the drain signal still needs to

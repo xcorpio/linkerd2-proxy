@@ -1,20 +1,47 @@
 use bytes::{Buf, BufMut};
 use futures::{Async, Future, Poll};
-use std::io;
+use futures::future::{self, Either};
+use std::{fmt, io};
 use tokio::io::{AsyncRead, AsyncWrite};
+use tokio_connect::Connect;
 
-pub(super) fn duplex<In, Out>(half_in: In, half_out: Out)
-    -> impl Future<Item=(), Error=()> + Send
+use svc;
+
+fn forward<I, C, T>(
+    server_io: I,
+    connect: C,
+    target: &T,
+) -> impl Future<Item=(), Error=()> + Send + 'static
 where
-    In: AsyncRead + AsyncWrite + Send + 'static,
-    Out: AsyncRead + AsyncWrite + Send + 'static,
+    T: fmt::Debug,
+    I: AsyncRead + AsyncWrite + Send + 'static,
+    C: svc::Make<T>,
+    C::Value: Connect,
+    C::Error: fmt::Debug,
+    <C::Value as Connect>::Future: Send + 'static,
+    <C::Value as Connect>::Error: fmt::Debug,
+    <C::Value as Connect>::Connected: Send + 'static,
 {
-    Duplex::new(half_in, half_out)
-        .map_err(|e| error!("tcp duplex error: {}", e))
+    let connect = match connect.make(&target) {
+        Ok(c) => c,
+        Err(e) => {
+            error!("forward error: {:?}: {:?}", target, e);
+            return Either::A(future::ok(()));
+        }
+    };
+
+    let fwd = connect.connect()
+        .map_err(|e| info!("forward connect error: {:?}", e))
+        .and_then(move |io| {
+            Duplex::new(server_io, io)
+                .map_err(|e| info!("forward duplex error: {}", e))
+        });
+
+    Either::B(fwd)
 }
 
 /// A future piping data bi-directionally to In and Out.
-struct Duplex<In, Out> {
+pub struct Duplex<In, Out> {
     half_in: HalfDuplex<In>,
     half_out: HalfDuplex<Out>,
 }
@@ -44,7 +71,7 @@ where
     In: AsyncRead + AsyncWrite,
     Out: AsyncRead + AsyncWrite,
 {
-    fn new(in_io: In, out_io: Out) -> Self {
+    pub(super) fn new(in_io: In, out_io: Out) -> Self {
         Duplex {
             half_in: HalfDuplex::new(in_io),
             half_out: HalfDuplex::new(out_io),
