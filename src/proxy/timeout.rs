@@ -28,6 +28,8 @@ impl<T, M> svc::Layer<T, T, M> for Layer<T>
 where
     M: svc::Make<T>,
 {
+    type Value = <Make<T, M> as svc::Make<T>>::Value;
+    type Error = <Make<T, M> as svc::Make<T>>::Error;
     type Make = Make<T, M>;
 
     fn bind(&self, inner: M) -> Self::Make {

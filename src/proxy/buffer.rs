@@ -29,16 +29,8 @@ pub enum Error<M, S> {
     Spawn(SpawnError<S>),
 }
 
-impl<T> Default for Layer<T> {
-    fn default() -> Self {
-        Self::new(Self::DEFAULT_MAX_IN_FLIGHT)
-    }
-}
-
 impl<T> Layer<T> {
-    pub const DEFAULT_MAX_IN_FLIGHT: usize = 10_000;
-
-    fn new(max_in_flight: usize) -> Self {
+    pub fn new(max_in_flight: usize) -> Self {
         Layer {
             max_in_flight,
             _p: PhantomData

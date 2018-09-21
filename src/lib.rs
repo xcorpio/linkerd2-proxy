@@ -279,12 +279,14 @@ where
         let endpoint_stack =
             proxy::http::orig_proto::upgrade();
 
+        const MAX_IN_FLIGHT: usize = 10_000;
+
         // Setup the public listener. This will listen on a publicly accessible
         // address and listen for inbound connections that should be forwarded
         // to the managed application (private destination).
         let inbound = {
             let router = timestamp_request_open::Layer::new()
-                .and_then(proxy::buffer::Layer::default())
+                .and_then(proxy::buffer::Layer::new(MAX_IN_FLIGHT))
                 .and_then(inbound::router(
                     config.private_forward.map(|a| a.into()),
                     config.inbound_router_capacity,
@@ -308,7 +310,7 @@ where
         // to a remote service (public destination).
         let outbound = {
             let router = timestamp_request_open::Layer::new()
-                .and_then(proxy::buffer::Layer::default())
+                .and_then(proxy::buffer::Layer::new(MAX_IN_FLIGHT))
                 .and_then(outbound::router(
                     config.outbound_router_capacity,
                     config.outbound_router_max_idle_age,
@@ -396,13 +398,13 @@ where
     B::Data: Send,
     <B::Data as ::bytes::IntoBuf>::Buf: Send,
     E: Error + Send + 'static,
-    M: svc::Make<Arc<ctx::transport::Server>, Error = ()> + Send + Sync + 'static,
+    M: svc::Make<Arc<ctx::transport::Server>, Error = ()> + Clone + Send + Sync + 'static,
     //M::Error: Error + Send + 'static,
     M::Value: Send + svc::Service<
         Request = http::Request<proxy::http::Body>,
         Response = http::Response<B>,
     >,
-    <M::Value as svc::Service>::Error: Error + Send + 'static,
+    <M::Value as svc::Service>::Error: Error + Send + Sync + 'static,
     <M::Value as svc::Service>::Future: Send,
     G: GetOriginalDst + Send + 'static,
 {
