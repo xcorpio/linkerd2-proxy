@@ -83,7 +83,7 @@ mod transport;
 
 use conditional::Conditional;
 use task::MainRuntime;
-//use svc::Layer;
+use svc::Layer as _Layer;
 use telemetry::http::timestamp_request_open;
 use transport::{BoundPort, Connection};
 pub use transport::{AddrInfo, GetOriginalDst, SoOriginalDst, tls};
@@ -276,7 +276,8 @@ where
 
         let (drain_tx, drain_rx) = drain::channel();
 
-        let endpoint_stack
+        let endpoint_stack =
+            proxy::http::orig_proto::upgrade();
 
         // Setup the public listener. This will listen on a publicly accessible
         // address and listen for inbound connections that should be forwarded
@@ -380,7 +381,7 @@ where
     }
 }
 
-fn serve<M, B, E, F, G>(
+fn serve<M, B, E, G>(
     bound_port: BoundPort,
     router: M,
     tcp_connect_timeout: Duration,
@@ -395,13 +396,13 @@ where
     B::Data: Send,
     <B::Data as ::bytes::IntoBuf>::Buf: Send,
     E: Error + Send + 'static,
-    F: Error + Send + 'static,
-    M: svc::Make<Arc<ctx::transport::Server>, Error = F> + Send + Sync + 'static,
+    M: svc::Make<Arc<ctx::transport::Server>, Error = ()> + Send + Sync + 'static,
+    //M::Error: Error + Send + 'static,
     M::Output: Send + svc::Service<
         Request = http::Request<proxy::http::Body>,
         Response = http::Response<B>,
-        Error = E,
     >,
+    <M::Output as svc::Service>::Error: Error + Send + 'static,
     <M::Output as svc::Service>::Future: Send,
     G: GetOriginalDst + Send + 'static,
 {
@@ -411,8 +412,6 @@ where
     //
     // TODO replace with a metrics module that is registered to the server
     // transport.
-    let source_stack =
-        .bind(router);
 
     let listen_addr = bound_port.local_addr();
     let server = proxy::Server::new(
@@ -420,7 +419,7 @@ where
         proxy_ctx,
         transport_registry,
         get_orig_dst,
-        source_stack,
+        router,
         tcp_connect_timeout,
         disable_protocol_detection_ports,
         drain_rx.clone(),
