@@ -308,7 +308,7 @@ where
             drain_rx.clone(),
         );
 
-        let serve_outound = serve(
+        let serve_outbound = serve(
             outbound_listener,
             outbound,
             config.public_connect_timeout,

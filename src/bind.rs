@@ -1,3 +1,5 @@
+#![allow(unused_imports)]
+
 use indexmap::IndexMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
