@@ -20,14 +20,6 @@ use telemetry::http::service::{ResponseBody as SensorBody};
 use timeout::Timeout;
 use transport::{DnsNameAndPort, Host, HostAndPort};
 
-pub fn router<A>(capacity: usize, max_idle_age: Duration)
-    -> router::Layer<http::Request<A>, Recognize>
-where
-    A: Send + 'static,
-{
-    router::Layer::new(Recognize, capacity, max_idle_age)
-}
-
 pub fn balance<R>(resolve: R)
     -> balance::Layer<Target, Resolve<R>>
 where

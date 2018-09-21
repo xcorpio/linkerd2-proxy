@@ -8,18 +8,6 @@ use bind::Protocol;
 use ctx;
 use proxy::http::{router, orig_proto};
 
-pub fn router<A>(
-    default_addr: Option<SocketAddr>,
-    capacity: usize,
-    max_idle_age: Duration
-) -> router::Layer<http::Request<A>, Recognize>
-where
-    A: Send + 'static,
-{
-    let r = Recognize { default_addr };
-    router::Layer::new(r, capacity, max_idle_age)
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Target {
     addr: SocketAddr,
@@ -34,9 +22,9 @@ pub struct Recognize {
 // ===== impl Recognize =====
 
 impl Recognize {
-    pub fn new(default_addr: SocketAddr) -> Self {
+    pub fn new(default_addr: Option<SocketAddr>) -> Self {
         Self {
-            default_addr: Some(default_addr),
+            default_addr,
         }
     }
 }

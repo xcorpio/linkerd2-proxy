@@ -287,12 +287,13 @@ where
         let inbound = {
             let router = timestamp_request_open::Layer::new()
                 .and_then(proxy::buffer::Layer::new(MAX_IN_FLIGHT))
-                .and_then(inbound::router(
-                    config.private_forward.map(|a| a.into()),
+                .and_then(proxy::http::router::Layer::new(
+                    inbound::Recognize::new(config.private_forward.map(|a| a.into())),
                     config.inbound_router_capacity,
                     config.inbound_router_max_idle_age,
                 ))
                 .and_then(endpoint_stack.clone());
+
             serve(
                 inbound_listener,
                 router,
@@ -311,12 +312,14 @@ where
         let outbound = {
             let router = timestamp_request_open::Layer::new()
                 .and_then(proxy::buffer::Layer::new(MAX_IN_FLIGHT))
-                .and_then(outbound::router(
+                .and_then(proxy::http::router::Layer::new(
+                    outbound::Recognize,
                     config.outbound_router_capacity,
                     config.outbound_router_max_idle_age,
                 ))
                 .and_then(outbound::balance(resolver))
                 .and_then(endpoint_stack);
+
            serve(
                 outbound_listener,
                 router,

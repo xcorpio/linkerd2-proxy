@@ -41,7 +41,10 @@ pub fn detect<B>(req: &http::Request<B>) -> bind::Protocol {
     bind::Protocol::detect(req)
 }
 
+#[derive(Debug)]
 pub struct LayerUpgrade<T>(PhantomData<fn() -> T>);
+
+#[derive(Debug)]
 pub struct LayerDowngrade<T>(PhantomData<fn() -> T>);
 
 pub struct MakeUpgrade<T, N>
@@ -64,6 +67,18 @@ where
 
 pub fn upgrade<T>() -> LayerUpgrade<T> {
     LayerUpgrade(PhantomData)
+}
+
+impl<T> Clone for LayerUpgrade<T> {
+    fn clone(&self) -> Self {
+        LayerUpgrade(PhantomData)
+    }
+}
+
+impl<T> Clone for LayerDowngrade<T> {
+    fn clone(&self) -> Self {
+        LayerDowngrade(PhantomData)
+    }
 }
 
 impl<T, N, A, B> svc::Layer<T, T, N> for LayerUpgrade<T>
