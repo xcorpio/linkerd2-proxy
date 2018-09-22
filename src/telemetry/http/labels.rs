@@ -6,7 +6,7 @@ use std::{
 use http;
 
 use ctx;
-use conditional::Conditional;
+use Conditional;
 use telemetry::metrics::FmtLabels;
 use transport::tls;
 

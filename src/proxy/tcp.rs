@@ -3,9 +3,9 @@ use futures::{Async, Future, Poll};
 use futures::future::{self, Either};
 use std::{fmt, io};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_connect::Connect;
 
 use svc;
+use transport::connect::Connect;
 
 pub(super) fn forward<I, C, T>(
     server_io: I,

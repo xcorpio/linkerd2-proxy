@@ -32,7 +32,7 @@ use control::{
 };
 use dns;
 use transport::{tls, DnsNameAndPort, HostAndPort};
-use conditional::Conditional;
+use Conditional;
 use svc::stack::watch;
 
 mod client;

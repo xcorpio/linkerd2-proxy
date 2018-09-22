@@ -36,7 +36,7 @@ pub mod test_util {
 
     use ctx;
     use control::destination;
-    use conditional::Conditional;
+    use Conditional;
     use transport::tls;
 
     fn addr() -> SocketAddr {

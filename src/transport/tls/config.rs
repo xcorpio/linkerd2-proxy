@@ -16,7 +16,7 @@ use super::{
     untrusted,
     webpki,
 };
-use conditional::Conditional;
+use Conditional;
 use telemetry::tls_config_reload;
 
 use futures::{future, stream, Future, Stream};
@@ -505,7 +505,7 @@ pub(super) const SIGNATURE_ALG_RUSTLS_ALGORITHM: rustls::internal::msgs::enums::
 pub mod test_util {
     use super::*;
     use std::path::PathBuf;
-    use conditional::Conditional;
+    use Conditional;
     use transport::tls::Identity;
 
     pub struct Strings {

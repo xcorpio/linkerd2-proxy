@@ -2,7 +2,7 @@ use indexmap::IndexMap;
 use std::net::SocketAddr;
 
 use super::{Metadata, ProtocolHint};
-use conditional::Conditional;
+use Conditional;
 use transport::tls;
 
 /// An individual traffic target.

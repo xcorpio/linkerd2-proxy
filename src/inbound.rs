@@ -1,8 +1,14 @@
+use bytes;
 use http;
+use std::error;
 use std::net::SocketAddr;
+use tower_h2::Body;
 
-use proxy::http::{router, orig_proto, Settings};
+use Conditional;
+use proxy::http::{client, router, orig_proto, Settings};
 use proxy::server::Source;
+use svc;
+use transport::{connect, tls};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Endpoint {
@@ -10,12 +16,12 @@ pub struct Endpoint {
     settings: Settings,
 }
 
+// === Recognize ===
+
 #[derive(Clone, Debug, Default)]
 pub struct Recognize {
     default_addr: Option<SocketAddr>,
 }
-
-// ===== impl Recognize =====
 
 impl Recognize {
     pub fn new(default_addr: Option<SocketAddr>) -> Self {
@@ -38,6 +44,52 @@ impl<A> router::Recognize<http::Request<A>> for Recognize {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct Client<C, B>
+where
+    C: svc::Make<connect::Target>,
+    C::Value: connect::Connect + Clone + Send + Sync + 'static,
+    B: Body + 'static,
+{
+    inner: client::Make<C, B>,
+}
+
+impl<C, B> Client<C, B>
+where
+    C: svc::Make<connect::Target>,
+    C::Value: connect::Connect + Clone + Send + Sync + 'static,
+    <C::Value as connect::Connect>::Connected: Send,
+    <C::Value as connect::Connect>::Future: Send + 'static,
+    <C::Value as connect::Connect>::Error: error::Error + Send + Sync,
+    B: Body + Send + 'static,
+    <B::Data as bytes::IntoBuf>::Buf: Send + 'static,
+{
+    pub fn new(connect: C) -> Client<C, B> {
+        Self { inner client::Make::new("in", connect) }
+    }
+}
+
+impl<C, B> svc::Make<Endpoint> for Client<C, B>
+where
+    C: svc::Make<connect::Target>,
+    C::Value: connect::Connect + Clone + Send + Sync + 'static,
+    <C::Value as connect::Connect>::Connected: Send,
+    <C::Value as connect::Connect>::Future: Send + 'static,
+    <C::Value as connect::Connect>::Error: error::Error + Send + Sync,
+    B: Body + Send + 'static,
+    <B::Data as bytes::IntoBuf>::Buf: Send + 'static,
+{
+    type Value = <client::Make<C, B> as svc::Make<client::Config>>::Value;
+    type Error = <client::Make<C, B> as svc::Make<client::Config>>::Error;
+
+    fn make(&self, ep: &Endpoint) -> Result<Self::Value, Self::Error> {
+        let tls = Conditional::None(tls::ReasonForNoTls::InternalTraffic);
+        let target = connect::Target::new(ep.addr, tls);
+        let config = client::Config::new(target, ep.settings.clone());
+        self.inner.make(&config)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::net;
@@ -48,7 +100,7 @@ mod tests {
 
     use super::{Recognize, Endpoint};
     use ctx;
-    use conditional::Conditional;
+    use Conditional;
     use transport::tls;
 
     fn make_target_http1(addr: net::SocketAddr) -> Endpoint {

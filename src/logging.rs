@@ -307,8 +307,8 @@ impl fmt::Display for Server {
 }
 
 impl<D: fmt::Display> Client<&'static str, D> {
-    pub fn proxy(ctx: ::ctx::Proxy, dst: D) -> Self {
-        Section::Proxy.client(ctx.as_str(), dst)
+    pub fn proxy(name: &'static str, dst: D) -> Self {
+        Section::Proxy.client(name, dst)
     }
 }
 

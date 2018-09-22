@@ -12,7 +12,7 @@ use trust_dns_resolver::config::ResolverOpts;
 
 use transport::{Host, HostAndPort, HostAndPortError, tls};
 use convert::TryFrom;
-use conditional::Conditional;
+use Conditional;
 
 // TODO:
 //

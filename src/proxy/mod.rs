@@ -29,8 +29,6 @@ pub use self::reconnect::Reconnect;
 pub use self::resolve::{Resolve, Resolution};
 pub use self::server::Server;
 
-
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProtocolHint {
     /// We don't what the destination understands, so forward messages in the

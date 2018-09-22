@@ -13,7 +13,7 @@ use tokio::{
 };
 
 use app::config::Addr;
-use conditional::Conditional;
+use Conditional;
 use ctx::transport::TlsStatus;
 use transport::{AddrInfo, BoxedIo, GetOriginalDst, tls};
 

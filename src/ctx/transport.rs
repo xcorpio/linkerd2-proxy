@@ -2,7 +2,7 @@ use indexmap::IndexMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
-use conditional::Conditional;
+use Conditional;
 use control::destination;
 use ctx;
 use transport::tls;

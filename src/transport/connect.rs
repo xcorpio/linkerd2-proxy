@@ -1,5 +1,8 @@
+extern crate tokio_connect;
+
+pub use self::tokio_connect::Connect;
+
 use futures::Future;
-use tokio_connect;
 
 use std::{fmt, io};
 use std::net::{IpAddr, SocketAddr};
@@ -9,10 +12,14 @@ use http;
 
 use convert::TryFrom;
 use dns;
+use svc;
 use transport::{connection, tls};
 
 #[derive(Debug, Clone)]
-pub struct Connect {
+pub struct Make {}
+
+#[derive(Debug, Clone)]
+pub struct Target {
     addr: SocketAddr,
     tls: tls::ConditionalConnectionConfig<tls::ClientConfig>,
 }
@@ -104,28 +111,45 @@ impl fmt::Display for HostAndPort {
     }
 }
 
-// ===== impl Connect =====
+// ===== impl Target =====
 
-impl Connect {
-    /// Returns a `Connect` to `addr`.
+impl Target {
     pub fn new(
         addr: SocketAddr,
-        tls: tls::ConditionalConnectionConfig<tls::ClientConfig>,
+        tls: tls::ConditionalConnectionConfig<tls::ClientConfig>
     ) -> Self {
-        Self {
-            addr,
-            tls,
-        }
+        Self { addr, tls }
     }
 }
 
-impl tokio_connect::Connect for Connect {
+impl Connect for Target {
     type Connected = connection::Connection;
     type Error = io::Error;
     type Future = connection::Connecting;
 
     fn connect(&self) -> Self::Future {
         connection::connect(&self.addr, self.tls.clone())
+    }
+}
+
+// ===== impl Make =====
+
+impl Make {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl<T> svc::Make<T> for Make
+where
+    T: Clone,
+    Target: From<T>,
+{
+    type Value = Target;
+    type Error = ();
+
+    fn make(&self, t: &T) -> Result<Target, ()> {
+        Ok(t.clone().into())
     }
 }
 

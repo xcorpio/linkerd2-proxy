@@ -218,7 +218,7 @@ mod tests {
     use ctx;
     use ctx::test_util::*;
     use super::*;
-    use conditional::Conditional;
+    use Conditional;
     use transport::tls;
 
     const TLS_DISABLED: Conditional<(), tls::ReasonForNoTls> =

@@ -3,7 +3,6 @@ use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_connect;
 
 use metrics::{
     latency,
@@ -18,7 +17,7 @@ use metrics::{
 
 use ctx;
 use telemetry::Errno;
-use transport::Connection;
+use transport::{connect, Connection};
 
 mod io;
 
@@ -169,7 +168,7 @@ impl Registry {
 
     pub fn new_connect<C>(&self, ctx: &ctx::transport::Client, inner: C) -> Connect<C>
     where
-        C: tokio_connect::Connect<Connected = Connection>,
+        C: connect::Connect<Connected = Connection>,
     {
         let metrics = match self.0.lock() {
             Ok(mut inner) => {

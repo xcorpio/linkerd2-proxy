@@ -17,7 +17,7 @@ use tower_reconnect::{
     Error as ReconnectError,
     ResponseFuture as ReconnectFuture,
 };
-use conditional::Conditional;
+use Conditional;
 use dns;
 use svc;
 use timeout::{Timeout, Error as TimeoutError};

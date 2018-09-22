@@ -5,7 +5,7 @@ use std::sync::atomic::Ordering;
 
 use ctx;
 use transport::tls;
-use conditional::Conditional;
+use Conditional;
 
 
 /// A `RequestId` can be mapped to a `u64`. No `RequestId`s will map to the

@@ -8,9 +8,10 @@ use std::net::SocketAddr;
 use tokio_connect::Connect;
 use tower_h2;
 
+use Conditional;
 use drain;
 use svc::{Make, Service, stack::MakeNewService};
-use transport::{tls, Connection, GetOriginalDst, Peek};
+use transport::{connect, tls, Connection, GetOriginalDst, Peek};
 use proxy::http::glue::{HttpBody, HttpBodyNewSvc, HyperServerSvc};
 use proxy::protocol::Protocol;
 use proxy::tcp;
@@ -27,9 +28,9 @@ where
     A: Make<Source, Error = ()> + Clone,
     A::Value: Accept<Connection>,
     // Prepares a client connecter (e.g. with telemetry, timeouts).
-    C: Make<Source, Error = ()> + Clone,
+    C: Make<connect::Target, Error = ()> + Clone,
     C::Value: Connect,
-    // Prepares a route.
+    // Prepares a route for each accepted HTTP connection.
     R: Make<Source, Error = ()> + Clone,
     R::Value: Service<
         Request = http::Request<HttpBody>,
@@ -46,7 +47,7 @@ where
     h2_settings: h2::server::Builder,
     listen_addr: SocketAddr,
     accept: A,
-    connect: C,
+    connect: ForwardConnect<C>,
     route: R,
     log: ::logging::Server,
 }
@@ -60,6 +61,15 @@ pub struct Source {
     pub tls_status: tls::Status,
     _p: (),
 }
+
+/// Establishes connections for forwarded connections.
+///
+/// Fails to produce a `Connect` if a `Source`'s `orig_dst` is None.
+#[derive(Clone, Debug)]
+struct ForwardConnect<C>(C);
+
+#[derive(Clone, Debug)]
+pub struct NoOriginalDst;
 
 impl Source {
     pub fn orig_dst_if_not_local(&self) -> Option<SocketAddr> {
@@ -103,12 +113,50 @@ impl Source {
    }
 }
 
+impl<C> Make<Source> for ForwardConnect<C>
+where
+    C: Make<connect::Target, Error = ()>
+{
+    type Value = C::Value;
+    type Error = NoOriginalDst;
+
+    fn make(&self, s: &Source) -> Result<Self::Value, Self::Error> {
+        let addr = match s.orig_dst {
+            Some(addr) => addr,
+            None => return Err(NoOriginalDst),
+        };
+
+        let tls = Conditional::None(tls::ReasonForNoIdentity::NotHttp.into());
+        let c = self.0.make(&connect::Target::new(addr, tls))
+            .expect("Forward connector must build");
+
+        Ok(c)
+    }
+}
+
+impl error::Error for NoOriginalDst {}
+
+impl fmt::Display for NoOriginalDst {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Missing SO_ORIGINAL_DST address")
+    }
+}
+
+// Allows `()` to be used for `Accept`.
+impl Make<Source> for () {
+    type Value = ();
+    type Error = ();
+    fn make(&self, _: &Source) -> Result<(), ()> {
+        Ok(())
+    }
+}
+
 impl<A, C, R, B, G> Server<A, C, R, B, G>
 where
     A: Make<Source, Error = ()> + Clone,
     A::Value: Accept<Connection>,
     <A::Value as Accept<Connection>>::Io: Send + Peek + 'static,
-    C: Make<Source, Error = ()> + Clone,
+    C: Make<connect::Target, Error = ()> + Clone,
     C::Value: Connect,
     <C::Value as Connect>::Connected: Send + 'static,
     <C::Value as Connect>::Future: Send + 'static,
@@ -148,7 +196,7 @@ where
             h2_settings,
             listen_addr,
             accept,
-            connect,
+            connect: ForwardConnect(connect),
             route,
             log,
         }

@@ -57,7 +57,7 @@ mod test {
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
-    use conditional::Conditional;
+    use Conditional;
     use ctx::{self, test_util::*, transport::TlsStatus};
     use super::*;
     use super::super::event;

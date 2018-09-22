@@ -3,9 +3,9 @@ use futures::{future, Async, Future, Poll};
 use h2;
 use http;
 use hyper;
-use std::{self, fmt};
+use std::{self, error, fmt, net};
+use std::marker::PhantomData;
 use tokio::executor::Executor;
-use tokio_connect::Connect;
 use tower_h2;
 
 use super::{h1, Settings};
@@ -13,9 +13,27 @@ use super::glue::{BodyPayload, HttpBody, HyperConnect};
 use super::upgrade::{HttpConnect, Http11Upgrade};
 use svc;
 use task::BoxExecutor;
+use transport::{connect, tls};
 
 type HyperClient<C, B> =
     hyper::Client<HyperConnect<C>, BodyPayload<B>>;
+
+#[derive(Clone, Debug)]
+pub struct Config {
+    target: connect::Target,
+    settings: Settings,
+}
+
+pub struct Make<C, B>
+where
+    C: svc::Make<connect::Target>,
+    C::Value: connect::Connect + Clone + Send + Sync + 'static,
+    B: tower_h2::Body + 'static,
+{
+    connect: C,
+    proxy_name: &'static str,
+    _p: PhantomData<fn() -> B>,
+}
 
 /// A wrapper around the error types produced by the HTTP/1 and HTTP/2 clients.
 ///
@@ -34,7 +52,7 @@ pub enum Error {
 pub struct Client<C, E, B>
 where
     B: tower_h2::Body + 'static,
-    C: Connect + 'static,
+    C: connect::Connect + 'static,
     E: Executor + Clone,
     E: future::Executor<Box<Future<Item = (), Error = ()> + Send + 'static>> + Send + Sync + 'static,
 {
@@ -44,7 +62,7 @@ where
 enum ClientInner<C, E, B>
 where
     B: tower_h2::Body + 'static,
-    C: Connect + 'static,
+    C: connect::Connect + 'static,
     E: Executor + Clone,
     E: future::Executor<Box<Future<Item = (), Error = ()> + Send + 'static>> + Send + Sync + 'static,
 {
@@ -56,7 +74,7 @@ where
 pub struct ClientNewServiceFuture<C, E, B>
 where
     B: tower_h2::Body + 'static,
-    C: Connect + 'static,
+    C: connect::Connect + 'static,
     E: Executor + Clone,
     E: future::Executor<Box<Future<Item = (), Error = ()> + Send + 'static>> + Send + Sync + 'static,
 {
@@ -66,7 +84,7 @@ where
 enum ClientNewServiceFutureInner<C, E, B>
 where
     B: tower_h2::Body + 'static,
-    C: Connect + 'static,
+    C: connect::Connect + 'static,
     E: Executor + Clone,
     E: future::Executor<Box<Future<Item = (), Error = ()> + Send + 'static>> + Send + Sync + 'static,
 {
@@ -78,7 +96,7 @@ where
 pub struct ClientService<C, E, B>
 where
     B: tower_h2::Body + 'static,
-    C: Connect,
+    C: connect::Connect,
     E: Executor + Clone,
     E: future::Executor<Box<Future<Item = (), Error = ()> + Send + 'static>> + Send + Sync + 'static,
 {
@@ -88,31 +106,74 @@ where
 enum ClientServiceInner<C, E, B>
 where
     B: tower_h2::Body + 'static,
-    C: Connect,
+    C: connect::Connect,
     E: Executor + Clone,
     E: future::Executor<Box<Future<Item = (), Error = ()> + Send + 'static>> + Send + Sync + 'static,
 {
     Http1(HyperClient<C, B>),
     Http2(tower_h2::client::Connection<
-        <C as Connect>::Connected,
+        <C as connect::Connect>::Connected,
         BoxExecutor<E>,
         B,
     >),
 }
 
+impl Config {
+    pub fn new(target: connect::Target, settings: Settings) -> Self {
+        Config { target, settings }
+    }
+}
+
+impl<C, B> Make<C, B>
+where
+    C: svc::Make<connect::Target>,
+    C::Value: connect::Connect + Clone + Send + Sync + 'static,
+    B: tower_h2::Body + 'static,
+{
+    pub fn new(proxy_name: &'static str, connect: C) -> Self {
+        Self {
+            connect,
+            proxy_name,
+            _p: PhantomData,
+        }
+    }
+}
+
+impl<C, B> svc::Make<Config> for Make<C, B>
+where
+    C: svc::Make<connect::Target>,
+    C::Value: connect::Connect + Clone + Send + Sync + 'static,
+    <C::Value as connect::Connect>::Connected: Send,
+    <C::Value as connect::Connect>::Future: Send + 'static,
+    <C::Value as connect::Connect>::Error: error::Error + Send + Sync,
+    B: tower_h2::Body + Send + 'static,
+    <B::Data as IntoBuf>::Buf: Send + 'static,
+{
+    type Value = Client<C::Value, ::logging::ClientExecutor<&'static str, net::SocketAddr>, B>;
+    type Error = C::Error;
+
+    fn make(&self, config: &Config) -> Result<Self::Value, Self::Error> {
+        let connect = self.connect.make(&config.target)?;
+        let executor = ::logging::Client::proxy(self.proxy_name, config.addr)
+            .with_settings(config.settings.clone())
+            .executor();
+        Ok(Client::new(&config.settings, connect, executor))
+    }
+}
+
 impl<C, E, B> Client<C, E, B>
 where
-    C: Connect + Clone + Send + Sync + 'static,
+    C: connect::Connect + Clone + Send + Sync + 'static,
     C::Future: Send + 'static,
-    <C::Future as Future>::Error: ::std::error::Error + Send + Sync,
+    C::Error: error::Error + Send + Sync,
     C::Connected: Send,
     E: Executor + Clone,
     E: future::Executor<Box<Future<Item = (), Error = ()> + Send + 'static>> + Send + Sync + 'static,
     B: tower_h2::Body + Send + 'static,
-   <B::Data as IntoBuf>::Buf: Send + 'static,
+    <B::Data as IntoBuf>::Buf: Send + 'static,
 {
     /// Create a new `Client`, bound to a specific protocol (HTTP/1 or HTTP/2).
-    pub fn new(settings: &Settings, connect: C, executor: E) -> Self {
+    fn new(settings: &Settings, connect: C, executor: E) -> Self {
         match settings {
             Settings::Http1 { was_absolute_form, .. } => {
                 let h1 = hyper::Client::builder()
@@ -142,9 +203,9 @@ where
 
 impl<C, E, B> svc::NewService for Client<C, E, B>
 where
-    C: Connect + Clone + Send + Sync + 'static,
+    C: connect::Connect + Clone + Send + Sync + 'static,
     C::Future: Send + 'static,
-    <C::Future as Future>::Error: ::std::error::Error + Send + Sync,
+    <C::Future as Future>::Error: error::Error + Send + Sync,
     C::Connected: Send,
     E: Executor + Clone,
     E: future::Executor<Box<Future<Item = (), Error = ()> + Send + 'static>> + Send + Sync + 'static,
@@ -175,7 +236,7 @@ where
 
 impl<C, E, B> Future for ClientNewServiceFuture<C, E, B>
 where
-    C: Connect + Send + 'static,
+    C: connect::Connect + Send + 'static,
     C::Connected: Send,
     C::Future: Send + 'static,
     B: tower_h2::Body + Send + 'static,
@@ -204,10 +265,10 @@ where
 
 impl<C, E, B> svc::Service for ClientService<C, E, B>
 where
-    C: Connect + Send + Sync + 'static,
+    C: connect::Connect + Send + Sync + 'static,
     C::Connected: Send,
     C::Future: Send + 'static,
-    <C::Future as Future>::Error: ::std::error::Error + Send + Sync,
+    <C::Future as Future>::Error: error::Error + Send + Sync,
     E: Executor + Clone,
     E: future::Executor<Box<Future<Item = (), Error = ()> + Send + 'static>> + Send + Sync + 'static,
     B: tower_h2::Body + Send + 'static,

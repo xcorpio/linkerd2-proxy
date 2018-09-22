@@ -26,7 +26,7 @@ use control::{
 };
 use dns::{self, IpAddrListFuture};
 use transport::{tls, DnsNameAndPort};
-use conditional::Conditional;
+use Conditional;
 
 use super::{ActiveQuery, DestinationServiceQuery, UpdateRx};
 

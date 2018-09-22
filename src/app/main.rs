@@ -7,12 +7,11 @@ use std::{error, fmt, io};
 use std::net::SocketAddr;
 use std::thread;
 use std::time::SystemTime;
-use tokio_connect::Connect;
 use tokio::executor::{self, DefaultExecutor, Executor};
 use tokio::runtime::current_thread;
 use tower_h2;
 
-use conditional::Conditional;
+use Conditional;
 use control;
 use ctx;
 use drain;
@@ -27,7 +26,7 @@ use svc;
 use task;
 use svc::Layer as _Layer;
 use telemetry::{self, http::timestamp_request_open};
-use transport::{self, tls, AddrInfo, Connection, GetOriginalDst, MakePort};
+use transport::{self, connect, tls, AddrInfo, Connection, GetOriginalDst, MakePort};
 
 use super::config::Config;
 
@@ -234,7 +233,7 @@ where
         let serve_inbound = {
             let accept = ();
 
-            let connect = ();
+            let connect = connect::Make::new();
 
             let route = timestamp_request_open::Layer::new()
                 .and_then(proxy::limit::Layer::new(MAX_IN_FLIGHT))
@@ -244,7 +243,8 @@ where
                     inbound::Recognize::new(config.private_forward.map(|a| a.into())),
                     config.inbound_router_capacity,
                     config.inbound_router_max_idle_age,
-                ));
+                ))
+                .bind(inbound::client(connect.clone()));
 
             serve(
                 inbound_listener,
@@ -335,11 +335,11 @@ where
     A: svc::Make<proxy::server::Source, Error = ()> + Send + Clone + 'static,
     A::Value: proxy::Accept<Connection>,
     <A::Value as proxy::Accept<Connection>>::Io: Send + transport::Peek + 'static,
-    C: svc::Make<proxy::server::Source, Error = ()> + Send + Clone + 'static,
-    C::Value: Connect + Send,
-    <C::Value as Connect>::Connected: Send + 'static,
-    <C::Value as Connect>::Future: Send + 'static,
-    <C::Value as Connect>::Error: fmt::Debug + 'static,
+    C: svc::Make<connect::Target, Error = ()> + Send + Clone + 'static,
+    C::Value: connect::Connect + Send,
+    <C::Value as connect::Connect>::Connected: Send + 'static,
+    <C::Value as connect::Connect>::Future: Send + 'static,
+    <C::Value as connect::Connect>::Error: fmt::Debug + 'static,
     R: svc::Make<proxy::server::Source, Error = ()> + Send + Clone + 'static,
     R::Value: svc::Service<
         Request = http::Request<proxy::http::Body>,

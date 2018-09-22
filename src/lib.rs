@@ -53,7 +53,7 @@ extern crate linkerd2_timeout as timeout;
 use self::linkerd2_metrics as metrics;
 
 pub mod app;
-pub mod conditional;
+mod conditional;
 pub mod control;
 pub mod convert;
 pub mod ctx;
@@ -66,3 +66,5 @@ mod proxy;
 mod svc;
 pub mod telemetry;
 pub mod transport;
+
+use self::conditional::Conditional;

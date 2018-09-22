@@ -6,7 +6,7 @@ extern crate webpki;
 
 use std::fmt;
 
-use conditional::Conditional;
+use Conditional;
 
 pub mod conditional_accept;
 mod config;

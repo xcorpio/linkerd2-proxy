@@ -45,7 +45,7 @@ pub mod background;
 mod endpoint;
 
 use app::config::Namespaces;
-use conditional::Conditional;
+use Conditional;
 pub use self::endpoint::Endpoint;
 
 /// A handle to request resolutions from the background discovery task.

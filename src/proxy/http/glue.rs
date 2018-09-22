@@ -7,7 +7,6 @@ use hyper::{self, body::Payload};
 use hyper::client::connect as hyper_connect;
 use std::error::Error;
 use std::fmt;
-use tokio_connect::Connect;
 use tower_h2;
 
 use drain;
@@ -15,6 +14,7 @@ use proxy::http::h1;
 use proxy::http::upgrade::Http11Upgrade;
 use svc;
 use task::{BoxSendFuture, ErasedExecutor, Executor};
+use transport::Connect;
 
 /// Glue between `hyper::Body` and `tower_h2::RecvBody`.
 #[derive(Debug)]
