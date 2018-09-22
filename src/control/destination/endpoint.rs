@@ -2,8 +2,8 @@ use indexmap::IndexMap;
 use std::net::SocketAddr;
 
 use super::{Metadata, ProtocolHint};
-use tls;
 use conditional::Conditional;
+use transport::tls;
 
 /// An individual traffic target.
 ///

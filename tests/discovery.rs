@@ -67,7 +67,7 @@ macro_rules! generate_outbound_dns_limit_test {
 
 macro_rules! generate_tests {
     (server: $make_server:path, client: $make_client:path) => {
-        use linkerd2_proxy_api as pb;
+        use api as pb;
 
         #[test]
         fn outbound_asks_controller_api() {

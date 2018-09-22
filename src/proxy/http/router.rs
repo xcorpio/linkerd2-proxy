@@ -13,7 +13,7 @@ extern crate linkerd2_router;
 use self::linkerd2_router::Error;
 pub use self::linkerd2_router::{Recognize, Router};
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Layer<Req, Rec>
 where
     Rec: Recognize<Req>,
@@ -55,8 +55,7 @@ pub struct ResponseFuture<F> {
 
 impl<Req, Rec> Layer<Req, Rec>
 where
-    Rec: Recognize<Req> + Send + Sync + 'static,
-    Req: Send + 'static,
+    Rec: Recognize<Req>,
 {
     pub fn new(recognize: Rec, capacity: usize, max_idle_age: Duration) -> Self {
         Self {
@@ -65,6 +64,15 @@ where
             max_idle_age,
             _p: PhantomData,
         }
+    }
+}
+
+impl<Req, Rec> Clone for Layer<Req, Rec>
+where
+    Rec: Recognize<Req> + Clone,
+{
+    fn clone(&self) -> Self {
+        Self::new(self.recognize.clone(), self.capacity, self.max_idle_age)
     }
 }
 

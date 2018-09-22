@@ -40,7 +40,7 @@ pub enum Destination {
 }
 
 #[derive(Clone, Debug)]
-struct Resolve<R: resolve::Resolve<DnsNameAndPort>>(R);
+pub struct Resolve<R: resolve::Resolve<DnsNameAndPort>>(R);
 
 #[derive(Debug)]
 pub enum Resolution<R: resolve::Resolution> {
@@ -124,6 +124,17 @@ impl Recognize {
         }
     }
 }
+
+impl<R> Resolve<R>
+where
+    R: resolve::Resolve<DnsNameAndPort>,
+    R::Endpoint: From<SocketAddr>,
+{
+    pub fn new(resolve: R) -> Self {
+        Resolve(resolve)
+    }
+}
+
 
 impl<R> resolve::Resolve<Target> for Resolve<R>
 where

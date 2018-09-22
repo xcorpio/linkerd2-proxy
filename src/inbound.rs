@@ -49,7 +49,7 @@ mod tests {
     use super::{Recognize, Endpoint};
     use ctx;
     use conditional::Conditional;
-    use tls;
+    use transport::tls;
 
     fn make_target_http1(addr: net::SocketAddr) -> Endpoint {
         let settings = Settings::Http1 {

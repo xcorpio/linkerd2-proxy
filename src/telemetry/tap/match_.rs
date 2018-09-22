@@ -7,8 +7,8 @@ use http;
 use ipnet::{Contains, Ipv4Net, Ipv6Net};
 
 use super::Event;
-use linkerd2_proxy_api::net::ip_address;
-use linkerd2_proxy_api::tap::observe_request;
+use api::net::ip_address;
+use api::tap::observe_request;
 use convert::TryFrom;
 use ctx;
 
@@ -159,7 +159,7 @@ impl<'a> TryFrom<&'a observe_request::match_::Match> for Match {
 
     #[allow(unconditional_recursion)]
     fn try_from(m: &observe_request::match_::Match) -> Result<Self, Self::Err> {
-        use linkerd2_proxy_api::tap::observe_request::match_;
+        use api::tap::observe_request::match_;
 
         let match_ = match *m {
             match_::Match::All(ref seq) => Match::All(Self::from_seq(seq)?),
@@ -227,7 +227,7 @@ impl<'a> TryFrom<&'a observe_request::match_::Tcp> for TcpMatch {
     type Err = InvalidMatch;
 
     fn try_from(m: &observe_request::match_::Tcp) -> Result<Self, InvalidMatch> {
-        use linkerd2_proxy_api::tap::observe_request::match_::tcp;
+        use api::tap::observe_request::match_::tcp;
 
         let m = match m.match_.as_ref() {
             None => return Err(InvalidMatch::Empty),
@@ -330,7 +330,7 @@ impl HttpMatch {
         string_match: &observe_request::match_::http::string_match::Match,
         value: &str,
     ) -> bool {
-        use linkerd2_proxy_api::tap::observe_request::match_::http::string_match::Match::*;
+        use api::tap::observe_request::match_::http::string_match::Match::*;
 
         match *string_match {
             Exact(ref exact) => value == exact,
@@ -342,7 +342,7 @@ impl HttpMatch {
 impl<'a> TryFrom<&'a observe_request::match_::Http> for HttpMatch {
     type Err = InvalidMatch;
     fn try_from(m: &'a observe_request::match_::Http) -> Result<Self, InvalidMatch> {
-        use linkerd2_proxy_api::tap::observe_request::match_::http::Match as Pb;
+        use api::tap::observe_request::match_::http::Match as Pb;
 
         m.match_
             .as_ref()
@@ -386,7 +386,7 @@ mod tests {
     use quickcheck::*;
 
     use super::*;
-    use linkerd2_proxy_api::tap;
+    use api::tap;
 
     impl Arbitrary for LabelMatch {
         fn arbitrary<G: Gen>(g: &mut G) -> Self {

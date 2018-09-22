@@ -1,7 +1,7 @@
 use futures_mpsc_lossy;
 use indexmap::IndexMap;
 
-use linkerd2_proxy_api::tap::observe_request;
+use api::tap::observe_request;
 
 use super::Event;
 

@@ -54,14 +54,15 @@ impl Record {
 
 #[cfg(test)]
 mod test {
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    use conditional::Conditional;
+    use ctx::{self, test_util::*, transport::TlsStatus};
     use super::*;
     use super::super::event;
     use super::super::labels::{RequestLabels, ResponseLabels};
-    use ctx::{self, test_util::*, transport::TlsStatus};
-    use std::sync::{Arc, Mutex};
-    use std::time::{Duration, Instant};
-    use conditional::Conditional;
-    use tls;
+    use transport::tls;
 
     const TLS_ENABLED: Conditional<(), tls::ReasonForNoTls> = Conditional::Some(());
     const TLS_DISABLED: Conditional<(), tls::ReasonForNoTls> =

@@ -14,8 +14,8 @@ use tokio::{
     prelude::*,
 };
 
+use app::config::Addr;
 use conditional::Conditional;
-use config::Addr;
 use ctx::transport::TlsStatus;
 
 use super::{

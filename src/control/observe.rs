@@ -7,7 +7,7 @@ use http::HeaderMap;
 use indexmap::{Equivalent, IndexSet};
 use tower_grpc::{self as grpc, Response};
 
-use linkerd2_proxy_api::tap::{server, ObserveRequest, TapEvent};
+use api::tap::{server, ObserveRequest, TapEvent};
 use convert::*;
 use ctx;
 use telemetry::Event;

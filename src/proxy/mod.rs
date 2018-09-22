@@ -17,6 +17,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 pub mod buffer;
 pub mod http;
+pub mod limit;
 mod protocol;
 mod reconnect;
 pub mod resolve;

@@ -5,7 +5,7 @@ use std::time::Instant;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_connect;
 
-use linkerd2_metrics::{
+use metrics::{
     latency,
     Counter,
     FmtLabels,

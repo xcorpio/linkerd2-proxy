@@ -1,6 +1,11 @@
-use config::{self, Config, Env};
 use convert::TryFrom;
 use logging;
+
+pub mod config;
+pub mod main;
+
+use self::config::{Config, Env};
+pub use self::main::Main;
 
 pub fn init() -> Result<Config, config::Error> {
     logging::init();

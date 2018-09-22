@@ -46,19 +46,19 @@ pub struct LayerUpgrade<T>(PhantomData<fn() -> T>);
 #[derive(Debug)]
 pub struct LayerDowngrade<T>(PhantomData<fn() -> T>);
 
-pub struct MakeUpgrade<T, N>
+pub struct MakeUpgrade<T, M>
 where
-    N: svc::Make<T>,
+    M: svc::Make<T>,
 {
-    inner: N,
+    inner: M,
     _p: PhantomData<fn() -> T>,
 }
 
-pub struct MakeDowngrade<T, N>
+pub struct MakeDowngrade<T, M>
 where
-    N: svc::Make<T>,
+    M: svc::Make<T>,
 {
-    inner: N,
+    inner: M,
     _p: PhantomData<fn() -> T>,
 }
 
@@ -74,33 +74,40 @@ impl<T> Clone for LayerUpgrade<T> {
     }
 }
 
-impl<T> Clone for LayerDowngrade<T> {
-    fn clone(&self) -> Self {
-        LayerDowngrade(PhantomData)
-    }
-}
-
-impl<T, N, A, B> svc::Layer<T, T, N> for LayerUpgrade<T>
+impl<T, M, A, B> svc::Layer<T, T, M> for LayerUpgrade<T>
 where
-    N: svc::Make<T>,
-    N::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
+    M: svc::Make<T>,
+    M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
 {
-    type Value = <MakeUpgrade<T, N> as svc::Make<T>>::Value;
-    type Error = <MakeUpgrade<T, N> as svc::Make<T>>::Error;
-    type Make = MakeUpgrade<T, N>;
+    type Value = <MakeUpgrade<T, M> as svc::Make<T>>::Value;
+    type Error = <MakeUpgrade<T, M> as svc::Make<T>>::Error;
+    type Make = MakeUpgrade<T, M>;
 
-    fn bind(&self, inner: N) -> Self::Make {
+    fn bind(&self, inner: M) -> Self::Make {
         MakeUpgrade { inner, _p: PhantomData }
     }
 }
 
-impl<T, N, A, B> svc::Make<T> for MakeUpgrade<T, N>
+impl<T, M, A, B> Clone for MakeUpgrade<T, M>
 where
-    N: svc::Make<T>,
-    N::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
+    M: svc::Make<T> + Clone,
+    M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
 {
-    type Value = Upgrade<N::Value>;
-    type Error = N::Error;
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            _p: PhantomData,
+        }
+    }
+}
+
+impl<T, M, A, B> svc::Make<T> for MakeUpgrade<T, M>
+where
+    M: svc::Make<T>,
+    M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
+{
+    type Value = Upgrade<M::Value>;
+    type Error = M::Error;
 
     fn make(&self, target: &T) -> Result<Self::Value, Self::Error> {
         let inner = self.inner.make(&target)?;
@@ -194,27 +201,46 @@ pub fn downgrade<T>() -> LayerDowngrade<T> {
     LayerDowngrade(PhantomData)
 }
 
-impl<T, N, A, B> svc::Layer<T, T, N> for LayerDowngrade<T>
-where
-    N: svc::Make<T>,
-    N::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
-{
-    type Value = <MakeDowngrade<T, N> as svc::Make<T>>::Value;
-    type Error = <MakeDowngrade<T, N> as svc::Make<T>>::Error;
-    type Make = MakeDowngrade<T, N>;
+impl<T> Clone for LayerDowngrade<T> {
+    fn clone(&self) -> Self {
+        LayerDowngrade(PhantomData)
+    }
+}
 
-    fn bind(&self, inner: N) -> Self::Make {
+impl<T, M, A, B> svc::Layer<T, T, M> for LayerDowngrade<T>
+where
+    M: svc::Make<T>,
+    M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
+{
+    type Value = <MakeDowngrade<T, M> as svc::Make<T>>::Value;
+    type Error = <MakeDowngrade<T, M> as svc::Make<T>>::Error;
+    type Make = MakeDowngrade<T, M>;
+
+    fn bind(&self, inner: M) -> Self::Make {
         MakeDowngrade { inner, _p: PhantomData }
     }
 }
 
-impl<T, N, A, B> svc::Make<T> for MakeDowngrade<T, N>
+impl<T, M, A, B> Clone for MakeDowngrade<T, M>
 where
-    N: svc::Make<T>,
-    N::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
+    M: svc::Make<T> + Clone,
+    M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
 {
-    type Value = Downgrade<N::Value>;
-    type Error = N::Error;
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            _p: PhantomData,
+        }
+    }
+}
+
+impl<T, M, A, B> svc::Make<T> for MakeDowngrade<T, M>
+where
+    M: svc::Make<T>,
+    M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
+{
+    type Value = Downgrade<M::Value>;
+    type Error = M::Error;
 
     fn make(&self, target: &T) -> Result<Self::Value, Self::Error> {
         let inner = self.inner.make(&target)?;

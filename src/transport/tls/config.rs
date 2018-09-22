@@ -506,7 +506,7 @@ pub mod test_util {
     use super::*;
     use std::path::PathBuf;
     use conditional::Conditional;
-    use tls::Identity;
+    use transport::tls::Identity;
 
     pub struct Strings {
         pub identity: &'static str,
@@ -578,8 +578,8 @@ pub mod test_util {
 
 #[cfg(test)]
 mod tests {
-    use tls::{ClientConfig, ServerConfig};
     use super::{CommonConfig, Error, test_util::*};
+    use transport::tls::{ClientConfig, ServerConfig};
 
     #[test]
     fn can_construct_client_and_server_config_from_valid_settings() {

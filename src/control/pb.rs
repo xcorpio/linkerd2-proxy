@@ -5,7 +5,7 @@ use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
 
-use linkerd2_proxy_api::*;
+use api::*;
 use convert::*;
 use ctx;
 use telemetry::http::event::{self, Event};

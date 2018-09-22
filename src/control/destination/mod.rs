@@ -37,16 +37,16 @@ use futures::{
 };
 
 use dns;
-use tls;
+use transport::tls;
 use proxy::resolve::{self, Resolve, Update};
 use transport::{DnsNameAndPort, HostAndPort};
 
 pub mod background;
 mod endpoint;
 
-pub use self::endpoint::Endpoint;
-use config::Namespaces;
+use app::config::Namespaces;
 use conditional::Conditional;
+pub use self::endpoint::Endpoint;
 
 /// A handle to request resolutions from the background discovery task.
 #[derive(Clone, Debug)]

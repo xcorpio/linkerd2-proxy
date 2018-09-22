@@ -10,7 +10,7 @@ use std::{
 use futures::{Async, Future, Stream,};
 use tower_h2::{BoxBody, HttpService, RecvBody};
 
-use linkerd2_proxy_api::{
+use api::{
     destination::{
         protocol_hint::Protocol,
         update::Update as PbUpdate2,
@@ -329,7 +329,7 @@ fn pb_to_addr_meta(
 }
 
 fn pb_to_sock_addr(pb: TcpAddress) -> Option<SocketAddr> {
-    use linkerd2_proxy_api::net::ip_address::Ip;
+    use api::net::ip_address::Ip;
     use std::net::{Ipv4Addr, Ipv6Addr};
     /*
     current structure is:

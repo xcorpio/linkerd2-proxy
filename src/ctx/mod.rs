@@ -36,8 +36,8 @@ pub mod test_util {
 
     use ctx;
     use control::destination;
-    use tls;
     use conditional::Conditional;
+    use transport::tls;
 
     fn addr() -> SocketAddr {
         ([1, 2, 3, 4], 5678).into()

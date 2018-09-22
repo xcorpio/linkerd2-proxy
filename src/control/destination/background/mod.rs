@@ -17,14 +17,14 @@ use futures_watch;
 use tower_grpc as grpc;
 use tower_h2::{BoxBody, HttpService, RecvBody};
 
-use linkerd2_proxy_api::destination::client::Destination;
-use linkerd2_proxy_api::destination::{
+use api::destination::client::Destination;
+use api::destination::{
     GetDestination,
     Update as PbUpdate,
 };
 
 use super::{ResolveRequest, Update};
-use config::Namespaces;
+use app::config::Namespaces;
 use control::{
     cache::Exists,
     fully_qualified_authority::FullyQualifiedAuthority,

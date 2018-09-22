@@ -12,9 +12,9 @@ use tokio::{
     reactor::Handle,
 };
 
+use app::config::Addr;
 use conditional::Conditional;
 use ctx::transport::TlsStatus;
-use config::Addr;
 use transport::{AddrInfo, BoxedIo, GetOriginalDst, tls};
 
 pub struct MakePort {

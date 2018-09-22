@@ -1,4 +1,4 @@
-use linkerd2_metrics as metrics;
+use metrics as metrics;
 
 mod errno;
 pub mod http;

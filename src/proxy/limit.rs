@@ -1,33 +1,29 @@
-extern crate tower_buffer;
+extern crate tower_in_flight_limit;
 
 use std::fmt;
 use std::marker::PhantomData;
 
-pub use self::tower_buffer::{Buffer, SpawnError};
+pub use self::tower_in_flight_limit::InFlightLimit;
 
-use logging;
 use svc;
 
 #[derive(Debug)]
 pub struct Layer<T> {
+    max_in_flight: usize,
     _p: PhantomData<fn() -> T>
 }
 
 #[derive(Debug)]
 pub struct Make<T, M> {
+    max_in_flight: usize,
     inner: M,
     _p: PhantomData<fn() -> T>
 }
 
-#[derive(Debug)]
-pub enum Error<M, S> {
-    Make(M),
-    Spawn(SpawnError<S>),
-}
-
 impl<T> Layer<T> {
-    pub fn new() -> Self {
+    pub fn new(max_in_flight: usize) -> Self {
         Layer {
+            max_in_flight,
             _p: PhantomData
         }
     }
@@ -35,7 +31,7 @@ impl<T> Layer<T> {
 
 impl<T> Clone for Layer<T> {
     fn clone(&self) -> Self {
-        Self::new()
+        Self::new(self.max_in_flight)
     }
 }
 
@@ -54,6 +50,7 @@ where
     fn bind(&self, inner: M) -> Self::Make {
         Make {
             inner,
+            max_in_flight: self.max_in_flight,
             _p: PhantomData
         }
     }
@@ -62,6 +59,7 @@ where
 impl<T, M: Clone> Clone for Make<T, M> {
     fn clone(&self) -> Self {
         Self {
+            max_in_flight: self.max_in_flight,
             inner: self.inner.clone(),
             _p: PhantomData,
         }
@@ -76,12 +74,11 @@ where
     <M::Value as svc::Service>::Request: Send,
     <M::Value as svc::Service>::Future: Send,
 {
-    type Value = Buffer<M::Value>;
-    type Error = Error<M::Error, M::Value>;
+    type Value = InFlightLimit<M::Value>;
+    type Error = M::Error;
 
     fn make(&self, target: &T) -> Result<Self::Value, Self::Error> {
-        let inner = self.inner.make(&target).map_err(Error::Make)?;
-        let executor = logging::context_executor(target.clone());
-        Buffer::new(inner, &executor).map_err(Error::Spawn)
+        let inner = self.inner.make(&target)?;
+        Ok(InFlightLimit::new(inner, self.max_in_flight))
     }
 }

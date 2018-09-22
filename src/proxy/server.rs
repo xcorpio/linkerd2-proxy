@@ -16,15 +16,6 @@ use proxy::protocol::Protocol;
 use proxy::tcp;
 use super::Accept;
 
-#[derive(Clone, Debug)]
-pub struct Source {
-    pub remote: SocketAddr,
-    pub local: SocketAddr,
-    pub orig_dst: Option<SocketAddr>,
-    pub tls_status: tls::Status,
-    _p: (),
-}
-
 /// A protocol-transparent Server!
 ///
 /// This type can `serve` new connections, determine what protocol
@@ -58,6 +49,16 @@ where
     connect: C,
     route: R,
     log: ::logging::Server,
+}
+
+/// Describes an accepted connection.
+#[derive(Clone, Debug)]
+pub struct Source {
+    pub remote: SocketAddr,
+    pub local: SocketAddr,
+    pub orig_dst: Option<SocketAddr>,
+    pub tls_status: tls::Status,
+    _p: (),
 }
 
 impl Source {
@@ -106,8 +107,8 @@ impl<A, C, R, B, G> Server<A, C, R, B, G>
 where
     A: Make<Source, Error = ()> + Clone,
     A::Value: Accept<Connection>,
-    C: Make<Source, Error = ()> + Clone,
     <A::Value as Accept<Connection>>::Io: Send + Peek + 'static,
+    C: Make<Source, Error = ()> + Clone,
     C::Value: Connect,
     <C::Value as Connect>::Connected: Send + 'static,
     <C::Value as Connect>::Future: Send + 'static,
