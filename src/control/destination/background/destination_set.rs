@@ -147,7 +147,7 @@ where
                         ips.iter().map(|ip| {
                             (
                                 SocketAddr::from((ip, authority.port)),
-                                Metadata::no_metadata(),
+                                Metadata::none(tls::ReasonForNoIdentity::NotProvidedByServiceDiscovery),
                             )
                         }),
                     );

@@ -42,11 +42,9 @@ use proxy::resolve::{self, Resolve, Update};
 use transport::{DnsNameAndPort, HostAndPort};
 
 pub mod background;
-mod endpoint;
 
 use app::config::Namespaces;
 use Conditional;
-pub use self::endpoint::Endpoint;
 
 /// A handle to request resolutions from the background discovery task.
 #[derive(Clone, Debug)]
@@ -187,14 +185,11 @@ impl Responder {
 // ===== impl Metadata =====
 
 impl Metadata {
-    /// Construct a Metadata struct representing an endpoint with no metadata.
-    pub fn no_metadata() -> Self {
+    pub fn none(tls: tls::ReasonForNoIdentity) -> Self {
         Self {
             labels: IndexMap::default(),
             protocol_hint: ProtocolHint::Unknown,
-            // If we have no metadata on an endpoint, assume it does not support TLS.
-            tls_identity:
-                Conditional::None(tls::ReasonForNoIdentity::NotProvidedByServiceDiscovery),
+            tls_identity: Conditional::None(tls),
         }
     }
 

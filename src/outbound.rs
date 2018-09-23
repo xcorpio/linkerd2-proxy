@@ -1,11 +1,15 @@
-use std::fmt;
-use std::net::SocketAddr;
-
+use bytes;
 use http;
 use futures::{Async, Poll};
+use std::{error, fmt};
+use std::net::SocketAddr;
+use tower_h2::Body;
 
-use proxy::{self, http::{h1, router, Settings}, resolve};
-use transport::{connect, DnsNameAndPort, Host, HostAndPort};
+use Conditional;
+use control::destination::{Metadata, ProtocolHint};
+use proxy::{self, http::{client, h1, router, Settings}, resolve};
+use svc;
+use transport::{connect, tls, DnsNameAndPort, Host, HostAndPort};
 
 #[derive(Clone, Debug, Default)]
 pub struct Recognize {}
@@ -17,9 +21,11 @@ pub struct Destination {
     _p: (),
 }
 
+#[derive(Clone, Debug)]
 pub struct Endpoint {
     pub connect: connect::Target,
     pub settings: Settings,
+    pub metadata: Metadata,
     _p: (),
 }
 
@@ -38,8 +44,8 @@ pub struct Resolve<R: resolve::Resolve<DnsNameAndPort>>(R);
 
 #[derive(Debug)]
 pub enum Resolution<R: resolve::Resolution> {
-    Name(R),
-    Addr(Option<SocketAddr>),
+    Name(R, Settings),
+    Addr(Option<SocketAddr>, Settings),
 }
 
 
@@ -121,8 +127,7 @@ impl Recognize {
 
 impl<R> Resolve<R>
 where
-    R: resolve::Resolve<DnsNameAndPort>,
-    R::Endpoint: From<SocketAddr>,
+    R: resolve::Resolve<DnsNameAndPort, Endpoint = Metadata>,
 {
     pub fn new(resolve: R) -> Self {
         Resolve(resolve)
@@ -132,34 +137,59 @@ where
 
 impl<R> resolve::Resolve<Destination> for Resolve<R>
 where
-    R: resolve::Resolve<DnsNameAndPort>,
-    R::Endpoint: From<SocketAddr>,
+    R: resolve::Resolve<DnsNameAndPort, Endpoint = Metadata>,
 {
-    type Endpoint = R::Endpoint;
+    type Endpoint = Endpoint;
     type Resolution = Resolution<R::Resolution>;
 
     fn resolve(&self, t: &Destination) -> Self::Resolution {
         match t.name_or_addr {
-            NameOrAddr::Name(ref name) => Resolution::Name(self.0.resolve(&name)),
-            NameOrAddr::Addr(ref addr) => Resolution::Addr(Some(*addr)),
+            NameOrAddr::Name(ref name) => Resolution::Name(self.0.resolve(&name), t.settings),
+            NameOrAddr::Addr(ref addr) => Resolution::Addr(Some(*addr), t.settings),
         }
     }
 }
 
 impl<R> resolve::Resolution for Resolution<R>
 where
-    R: resolve::Resolution,
-    R::Endpoint: From<SocketAddr>,
+    R: resolve::Resolution<Endpoint = Metadata>,
 {
-    type Endpoint = R::Endpoint;
+    type Endpoint = Endpoint;
     type Error = R::Error;
 
     fn poll(&mut self) -> Poll<resolve::Update<Self::Endpoint>, Self::Error> {
         match self {
-            Resolution::Name(ref mut res ) => res.poll(),
-            Resolution::Addr(ref mut addr) => match addr.take() {
+            Resolution::Name(ref mut res, ref settings) => {
+                match try_ready!(res.poll()) {
+                    resolve::Update::Make(addr, metadata) => {
+                        // If the endpoint does not have TLS, notethe reason.                        
+                        // Otherwise, indicate that we don't (yet have a TLS                        
+                        // config). This value may be changed by a stack layer
+                        // that provides TLS configuration.
+                        let tls = match metadata.tls_identity() {
+                            Conditional::None(reason) => reason.into(),
+                            Conditional::Some(_) => tls::ReasonForNoTls::NoConfig,
+                        };
+                        let ep = Endpoint {
+                            connect: connect::Target::new(addr, Conditional::None(tls)),
+                            settings: settings.clone(),
+                            metadata,
+                            _p: (),
+                        };
+                        Ok(Async::Ready(resolve::Update::Make(addr, ep)))
+                    }
+                }
+            }
+            Resolution::Addr(ref addr, ref settings) => match addr.take() {
                 Some(addr) => {
-                    let up = resolve::Update::Make(addr, addr.into());
+                    let tls = tls::ReasonForNoIdentity::NoAuthorityInHttpRequest;
+                    let ep = Endpoint {
+                        connect: connect::Target::new(addr, Conditional::None(tls.into())),
+                        settings: settings.clone(),
+                        metadata: Metadata::none(tls),
+                        _p: (),
+                    };
+                    let up = resolve::Update::Make(addr, ep);
                     Ok(Async::Ready(up))
                 }
                 None => Ok(Async::NotReady),
@@ -178,3 +208,78 @@ impl fmt::Display for Destination {
         }
     }
 }
+
+#[derive(Debug)]
+pub struct Client<C, B>
+where
+    C: svc::Make<connect::Target>,
+    C::Value: connect::Connect + Clone + Send + Sync + 'static,
+    B: Body + 'static,
+{
+    inner: client::Make<C, B>,
+}
+
+impl<C, B> Client<C, B>
+where
+    C: svc::Make<connect::Target>,
+    C::Value: connect::Connect + Clone + Send + Sync + 'static,
+    <C::Value as connect::Connect>::Connected: Send,
+    <C::Value as connect::Connect>::Future: Send + 'static,
+    <C::Value as connect::Connect>::Error: error::Error + Send + Sync,
+    B: Body + Send + 'static,
+    <B::Data as bytes::IntoBuf>::Buf: Send + 'static,
+{
+    pub fn new(connect: C) -> Client<C, B> {
+        Self { inner: client::Make::new("in", connect) }
+    }
+}
+
+impl<C, B> Clone for Client<C, B>
+where
+    C: svc::Make<connect::Target> + Clone,
+    C::Value: connect::Connect + Clone + Send + Sync + 'static,
+    <C::Value as connect::Connect>::Connected: Send,
+    <C::Value as connect::Connect>::Future: Send + 'static,
+    <C::Value as connect::Connect>::Error: error::Error + Send + Sync,
+    B: Body + Send + 'static,
+    <B::Data as bytes::IntoBuf>::Buf: Send + 'static,
+{
+    fn clone(&self) -> Self {
+        Self { inner: self.inner.clone() }
+    }
+}
+
+impl<C, B> svc::Make<Endpoint> for Client<C, B>
+where
+    C: svc::Make<connect::Target>,
+    C::Value: connect::Connect + Clone + Send + Sync + 'static,
+    <C::Value as connect::Connect>::Connected: Send,
+    <C::Value as connect::Connect>::Future: Send + 'static,
+    <C::Value as connect::Connect>::Error: error::Error + Send + Sync,
+    B: Body + Send + 'static,
+    <B::Data as bytes::IntoBuf>::Buf: Send + 'static,
+{
+    type Value = <client::Make<C, B> as svc::Make<client::Config>>::Value;
+    type Error = <client::Make<C, B> as svc::Make<client::Config>>::Error;
+
+    fn make(&self, ep: &Endpoint) -> Result<Self::Value, Self::Error> {
+        let config = client::Config::new(ep.target.clone(), ep.settings.clone());
+        self.inner.make(&config)
+    }
+}
+
+impl Endpoint {
+    pub fn can_use_orig_proto(&self) -> bool {
+        match self.metadata.protocol_hint() {
+            ProtocolHint::Unknown => false,
+            ProtocolHint::Http2 => true,
+        }
+    }
+}
+
+impl fmt::Display for Endpoint {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.target.addr.fmt(f)
+    }
+}
+

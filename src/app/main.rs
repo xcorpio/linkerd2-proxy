@@ -16,14 +16,12 @@ use control;
 use drain;
 use dns;
 use futures;
-use inbound;
-//use outbound;
 use logging;
 use metrics;
 use proxy::{
     self,
     buffer, limit,
-    http::{insert_target, normalize_uri, orig_proto, router},
+    http::{balance, insert_target, normalize_uri, orig_proto, router},
 };
 use svc;
 use task;
@@ -209,7 +207,7 @@ where
                 panic!("invalid DNS configuration: {:?}", e);
             });
 
-        let (_resolver, resolver_bg) = control::destination::new(
+        let (resolver, resolver_bg) = control::destination::new(
             dns_resolver.clone(),
             config.namespaces.clone(),
             control_host_and_port,
@@ -222,78 +220,82 @@ where
 
         let (drain_tx, drain_rx) = drain::channel();
 
-        // let outbound = {
-        //     // As the outbound proxy accepts connections, we don't do any
-        //     // special transport-level handling.
-        //     //
-        //     // TODO metrics
-        //     let accept = ();
+        let outbound = {
+            use outbound;
 
-        //     // As HTTP requests are accepted, we add some request extensions
-        //     // including metadata about the request's origin.
-        //     //
-        //     // Furthermore, HTTP/2 requests may be downgraded to HTTP/1.1 per
-        //     // `orig-proto` headers.
-        //     let source_stack = timestamp_request_open::Layer::new()
-        //         .and_then(insert_target::Layer::new());
+            // As the outbound proxy accepts connections, we don't do any
+            // special transport-level handling.
+            //
+            // TODO metrics
+            let accept = ();
 
-        //     // The router stack is shared across all source stacks, hence being
-        //     // buffered and
-        //     let router_stack = router::Layer::new(outbound::Recognize::new());
+            // As HTTP requests are accepted, we add some request extensions
+            // including metadata about the request's origin.
+            //
+            // Furthermore, HTTP/2 requests may be downgraded to HTTP/1.1 per
+            // `orig-proto` headers.
+            let source_stack = timestamp_request_open::Layer::new()
+                .and_then(insert_target::Layer::new());
 
-        //     let dst_stack =
-        //         limit::Layer::new(MAX_IN_FLIGHT)
-        //         .and_then(buffer::Layer::new())
-        //         .and_then(balance::Layer::new(outbound::Resolver::new(resolver)));
+            // The router stack is shared across all source stacks, hence being
+            // buffered and
+            let router_stack = router::Layer::new(outbound::Recognize::new());
 
-        //     // For each endpoint,
-        //     //
-        //     // TODO sensors
-        //     let endpoint_h1_stack =
-        //         svc::When::new(
-        //             |ep: &outbound::Endpoint| {
-        //                 ep.can_use_orig_proto() &&
-        //                 !ep.settings.is_http2() &&
-        //                 !ep.settings.is_h1_upgrade()
-        //             },
-        //             orig_proto::upgrade())
-        //         .and_then(svc::When::new(
-        //             |ep: &outbound::Endpoint| !ep.settings.was_absolute_form(),
-        //             normalize_uri::Layer::new()))
-        //         .and_then(svc::When::new(
-        //             |ep: &outbound::Endpoint| !ep.settings.can_reuse_clients(),
-        //             svc::make_per_request::Layer::new()));
+            let dst_stack =
+                limit::Layer::new(MAX_IN_FLIGHT)
+                .and_then(buffer::Layer::new())
+                .and_then(balance::Layer::new(outbound::Resolve::new(resolver)));
 
-        //     // Establishes connections to remote peers.
-        //     //
-        //     //
-        //     let connect = connect::Make::new();
+            // For each endpoint,
+            //
+            // TODO sensors
+            let endpoint_h1_stack =
+                svc::When::new(
+                    |ep: &outbound::Endpoint| {
+                        ep.can_use_orig_proto() &&
+                        !ep.settings.is_http2() &&
+                        !ep.settings.is_h1_upgrade()
+                    },
+                    orig_proto::upgrade())
+                .and_then(svc::When::new(
+                    |ep: &outbound::Endpoint| !ep.settings.was_absolute_form(),
+                    normalize_uri::Layer::new()))
+                .and_then(svc::When::new(
+                    |ep: &outbound::Endpoint| !ep.settings.can_reuse_clients(),
+                    svc::make_per_request::Layer::new()));
 
-        //     // Build a router using the above policy
-        //     let capacity = config.outbound_router_capacity;
-        //     let max_idle_age = config.outbound_router_max_idle_age;
-        //     let router = router_stack
-        //         .and_then(dst_stack)
-        //         .and_then(endpoint_h1_stack)
-        //         .bind(outbound::Client::new(connect.clone()))
-        //         .make(&router::Config::new("out", capacity, max_idle_age))
-        //         .expect("inbound router");
+            // Establishes connections to remote peers.
+            //
+            //
+            let connect = connect::Make::new();
 
-        //     let source_router = source_stack.bind(svc::Shared::new(router));
+            // Build a router using the above policy
+            let capacity = config.outbound_router_capacity;
+            let max_idle_age = config.outbound_router_max_idle_age;
+            let router = router_stack
+                .and_then(dst_stack)
+                .and_then(endpoint_h1_stack)
+                .bind(outbound::Client::new(connect.clone()))
+                .make(&router::Config::new("out", capacity, max_idle_age))
+                .expect("outbound router");
 
-        //     serve(
-        //         "out",
-        //         outbound_listener,
-        //         accept,
-        //         connect,
-        //         source_router,
-        //         config.outbound_ports_disable_protocol_detection,
-        //         get_original_dst.clone(),
-        //         drain_rx.clone(),
-        //     )
-        // };
+            let source_router = source_stack.bind(svc::Shared::new(router));
+
+            serve(
+                "out",
+                outbound_listener,
+                accept,
+                connect,
+                source_router,
+                config.outbound_ports_disable_protocol_detection,
+                get_original_dst.clone(),
+                drain_rx.clone(),
+            )
+        };
 
         let inbound = {
+            use inbound;
+
             // As the inbound proxy accepts connections, we don't do any
             // special transport-level handling.
             //
