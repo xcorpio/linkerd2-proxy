@@ -113,8 +113,8 @@ impl Recognize {
 
             None => {
                 req.extensions()
-                    .get::<Arc<ctx::transport::Server>>()
-                    .and_then(|ctx| ctx.orig_name_or_addr_if_not_local())
+                    .get::<proxy::server::Source>()
+                    .and_then(|src| src.orig_name_or_addr_if_not_local())
                     .map(NameOrAddr::Addr)
             }
         }
