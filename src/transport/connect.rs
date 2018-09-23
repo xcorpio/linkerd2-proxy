@@ -4,7 +4,7 @@ pub use self::tokio_connect::Connect;
 
 use futures::Future;
 
-use std::{fmt, io};
+use std::{error, fmt, io};
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 
@@ -20,9 +20,14 @@ pub struct Make {}
 
 #[derive(Debug, Clone)]
 pub struct Target {
-    addr: SocketAddr,
-    tls: tls::ConditionalConnectionConfig<tls::ClientConfig>,
+    pub addr: SocketAddr,
+    pub tls: tls::ConditionalConnectionConfig<tls::ClientConfig>,
+    _p: (),
 }
+
+/// Note: this isn't actually used, but is needed to satisfy Error.
+#[derive(Debug)]
+pub struct InvalidTarget;
 
 #[derive(Clone, Debug)]
 pub struct HostAndPort {
@@ -118,7 +123,7 @@ impl Target {
         addr: SocketAddr,
         tls: tls::ConditionalConnectionConfig<tls::ClientConfig>
     ) -> Self {
-        Self { addr, tls }
+        Self { addr, tls, _p: () }
     }
 }
 
@@ -146,12 +151,20 @@ where
     Target: From<T>,
 {
     type Value = Target;
-    type Error = ();
+    type Error = InvalidTarget;
 
-    fn make(&self, t: &T) -> Result<Target, ()> {
+    fn make(&self, t: &T) -> Result<Self::Value, Self::Error> {
         Ok(t.clone().into())
     }
 }
+
+impl fmt::Display for InvalidTarget {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Invalid target")
+    }
+}
+
+impl error::Error for InvalidTarget {}
 
 // ===== impl LookupAddressAndConnect =====
 

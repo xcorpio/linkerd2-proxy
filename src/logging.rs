@@ -276,8 +276,8 @@ pub type ServerExecutor = ContextualExecutor<Server>;
 pub type ServerFuture<F> = ContextualFuture<Server, F>;
 
 impl Server {
-    pub fn proxy(ctx: ::ctx::Proxy, listen: SocketAddr) -> Self {
-        Section::Proxy.server(ctx.as_str(), listen)
+    pub fn proxy(name: &'static str, listen: SocketAddr) -> Self {
+        Section::Proxy.server(name, listen)
     }
 
     pub fn with_remote(self, remote: SocketAddr) -> Self {

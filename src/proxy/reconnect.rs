@@ -31,6 +31,7 @@ pub struct ResponseFuture<N: svc::NewService> {
 
 // ===== impl Reconnect =====
 
+
 impl<T, N> Reconnect<T, N>
 where
     T: fmt::Debug,
@@ -106,6 +107,14 @@ where
         ResponseFuture {
             inner: self.inner.call(request),
         }
+    }
+}
+
+impl<T: fmt::Debug, N: svc::NewService> fmt::Debug for Reconnect<T, N> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt.debug_struct("Reconnect")
+            .field("target", &self.target)
+            .finish()
     }
 }
 

@@ -19,7 +19,6 @@ pub struct Make<T, M> {
     _p: PhantomData<fn() -> T>
 }
 
-#[derive(Debug)]
 pub enum Error<M, S> {
     Make(M),
     Spawn(SpawnError<S>),
@@ -85,3 +84,13 @@ where
         Buffer::new(inner, &executor).map_err(Error::Spawn)
     }
 }
+
+impl<M: fmt::Debug, S> fmt::Debug for Error<M, S> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Error::Make(e) => fmt.debug_tuple("buffer::Error::Make").field(e).finish(),
+            Error::Spawn(_) => fmt.debug_tuple("buffer::Error::Spawn").finish(),
+        }
+    }
+}
+

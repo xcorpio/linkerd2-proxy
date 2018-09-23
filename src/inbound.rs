@@ -1,6 +1,6 @@
 use bytes;
 use http;
-use std::error;
+use std::{error, fmt};
 use std::net::SocketAddr;
 use tower_h2::Body;
 
@@ -44,7 +44,13 @@ impl<A> router::Recognize<http::Request<A>> for Recognize {
     }
 }
 
-#[derive(Clone, Debug)]
+impl fmt::Display for Recognize {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "in")
+    }
+}
+
+#[derive(Debug)]
 pub struct Client<C, B>
 where
     C: svc::Make<connect::Target>,
@@ -65,7 +71,22 @@ where
     <B::Data as bytes::IntoBuf>::Buf: Send + 'static,
 {
     pub fn new(connect: C) -> Client<C, B> {
-        Self { inner client::Make::new("in", connect) }
+        Self { inner: client::Make::new("in", connect) }
+    }
+}
+
+impl<C, B> Clone for Client<C, B>
+where
+    C: svc::Make<connect::Target> + Clone,
+    C::Value: connect::Connect + Clone + Send + Sync + 'static,
+    <C::Value as connect::Connect>::Connected: Send,
+    <C::Value as connect::Connect>::Future: Send + 'static,
+    <C::Value as connect::Connect>::Error: error::Error + Send + Sync,
+    B: Body + Send + 'static,
+    <B::Data as bytes::IntoBuf>::Buf: Send + 'static,
+{
+    fn clone(&self) -> Self {
+        Self { inner: self.inner.clone() }
     }
 }
 
@@ -87,6 +108,12 @@ where
         let target = connect::Target::new(ep.addr, tls);
         let config = client::Config::new(target, ep.settings.clone());
         self.inner.make(&config)
+    }
+}
+
+impl fmt::Display for Endpoint {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        unimplemented!();
     }
 }
 

@@ -11,9 +11,10 @@ use tower_h2;
 use super::{h1, Settings};
 use super::glue::{BodyPayload, HttpBody, HyperConnect};
 use super::upgrade::{HttpConnect, Http11Upgrade};
+use super::super::Reconnect;
 use svc;
 use task::BoxExecutor;
-use transport::{connect, tls};
+use transport::connect;
 
 type HyperClient<C, B> =
     hyper::Client<HyperConnect<C>, BodyPayload<B>>;
@@ -24,6 +25,7 @@ pub struct Config {
     settings: Settings,
 }
 
+#[derive(Debug)]
 pub struct Make<C, B>
 where
     C: svc::Make<connect::Target>,
@@ -139,6 +141,17 @@ where
     }
 }
 
+impl<C, B> Clone for Make<C, B>
+where
+    C: svc::Make<connect::Target> + Clone,
+    C::Value: connect::Connect + Clone + Send + Sync + 'static,
+    B: tower_h2::Body + 'static,
+{
+    fn clone(&self) -> Self {
+        Self::new(self.proxy_name, self.connect.clone())
+    }
+}
+
 impl<C, B> svc::Make<Config> for Make<C, B>
 where
     C: svc::Make<connect::Target>,
@@ -149,15 +162,19 @@ where
     B: tower_h2::Body + Send + 'static,
     <B::Data as IntoBuf>::Buf: Send + 'static,
 {
-    type Value = Client<C::Value, ::logging::ClientExecutor<&'static str, net::SocketAddr>, B>;
+    type Value = Reconnect<
+        Config,
+        Client<C::Value, ::logging::ClientExecutor<&'static str, net::SocketAddr>, B>,
+    >;
     type Error = C::Error;
 
     fn make(&self, config: &Config) -> Result<Self::Value, Self::Error> {
         let connect = self.connect.make(&config.target)?;
-        let executor = ::logging::Client::proxy(self.proxy_name, config.addr)
+        let executor = ::logging::Client::proxy(self.proxy_name, config.target.addr)
             .with_settings(config.settings.clone())
             .executor();
-        Ok(Client::new(&config.settings, connect, executor))
+        let client = Client::new(&config.settings, connect, executor);
+        Ok(Reconnect::new(config.clone(), client))
     }
 }
 

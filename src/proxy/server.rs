@@ -5,7 +5,6 @@ use hyper;
 use indexmap::IndexSet;
 use std::{error, fmt};
 use std::net::SocketAddr;
-use tokio_connect::Connect;
 use tower_h2;
 
 use Conditional;
@@ -27,9 +26,10 @@ where
     // Prepares a server transport, e.g. with telemetry.
     A: Make<Source, Error = ()> + Clone,
     A::Value: Accept<Connection>,
-    // Prepares a client connecter (e.g. with telemetry, timeouts).
-    C: Make<connect::Target, Error = ()> + Clone,
-    C::Value: Connect,
+    // Used when forwarding a TCP stream (e.g. with telemetry, timeouts).
+    C: Make<connect::Target> + Clone,
+    C::Error: error::Error,
+    C::Value: connect::Connect,
     // Prepares a route for each accepted HTTP connection.
     R: Make<Source, Error = ()> + Clone,
     R::Value: Service<
@@ -113,9 +113,17 @@ impl Source {
    }
 }
 
+// for logging context
+impl fmt::Display for Source {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        unimplemented!()
+    }
+}
+
 impl<C> Make<Source> for ForwardConnect<C>
 where
-    C: Make<connect::Target, Error = ()>
+    C: Make<connect::Target>,
+    C::Error: error::Error,
 {
     type Value = C::Value;
     type Error = NoOriginalDst;
@@ -128,7 +136,7 @@ where
 
         let tls = Conditional::None(tls::ReasonForNoIdentity::NotHttp.into());
         let c = self.0.make(&connect::Target::new(addr, tls))
-            .expect("Forward connector must build");
+            .expect("target must be valid");
 
         Ok(c)
     }
@@ -156,11 +164,12 @@ where
     A: Make<Source, Error = ()> + Clone,
     A::Value: Accept<Connection>,
     <A::Value as Accept<Connection>>::Io: Send + Peek + 'static,
-    C: Make<connect::Target, Error = ()> + Clone,
-    C::Value: Connect,
-    <C::Value as Connect>::Connected: Send + 'static,
-    <C::Value as Connect>::Future: Send + 'static,
-    <C::Value as Connect>::Error: fmt::Debug + 'static,
+    C: Make<connect::Target> + Clone,
+    C::Error: error::Error,
+    C::Value: connect::Connect,
+    <C::Value as connect::Connect>::Connected: Send + 'static,
+    <C::Value as connect::Connect>::Future: Send + 'static,
+    <C::Value as connect::Connect>::Error: fmt::Debug + 'static,
     R: Make<Source, Error = ()> + Clone,
     R::Value: Service<
         Request = http::Request<HttpBody>,
@@ -177,7 +186,7 @@ where
 
     /// Creates a new `Server`.
     pub fn new(
-        proxy_ctx: ::ctx::Proxy,
+        proxy_name: &'static str,
         listen_addr: SocketAddr,
         get_orig_dst: G,
         accept: A,
@@ -187,7 +196,7 @@ where
         drain_signal: drain::Watch,
         h2_settings: h2::server::Builder,
     ) -> Self {
-        let log = ::logging::Server::proxy(proxy_ctx, listen_addr);
+        let log = ::logging::Server::proxy(proxy_name, listen_addr);
         Server {
             disable_protocol_detection_ports,
             drain_signal,

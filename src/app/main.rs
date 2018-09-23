@@ -13,7 +13,6 @@ use tower_h2;
 
 use Conditional;
 use control;
-use ctx;
 use drain;
 use dns;
 use futures;
@@ -24,7 +23,7 @@ use metrics;
 use proxy;
 use svc;
 use task;
-use svc::Layer as _Layer;
+use svc::{Layer as _Layer, Make as _Make};
 use telemetry::{self, http::timestamp_request_open};
 use transport::{self, connect, tls, AddrInfo, Connection, GetOriginalDst, MakePort};
 
@@ -235,34 +234,38 @@ where
 
             let connect = connect::Make::new();
 
-            let route = timestamp_request_open::Layer::new()
-                .and_then(proxy::limit::Layer::new(MAX_IN_FLIGHT))
+            let router = proxy::limit::Layer::new(MAX_IN_FLIGHT)
                 .and_then(proxy::buffer::Layer::new())
+                .and_then(proxy::http::router::Layer::new())
                 .and_then(proxy::http::orig_proto::downgrade())
-                .and_then(proxy::http::router::Layer::new(
+                .bind(inbound::Client::new(connect.clone()))
+                .make(&proxy::http::router::Config::new(
                     inbound::Recognize::new(config.private_forward.map(|a| a.into())),
                     config.inbound_router_capacity,
                     config.inbound_router_max_idle_age,
                 ))
-                .bind(inbound::client(connect.clone()));
+                .expect("inbound router");
+
+            let source_stack = timestamp_request_open::Layer::new()
+                .bind(svc::Shared::new(router));
 
             serve(
+                "in",
                 inbound_listener,
                 accept,
                 connect,
-                route,
+                source_stack,
                 config.inbound_ports_disable_protocol_detection,
-                ctx::Proxy::Inbound,
                 get_original_dst.clone(),
                 drain_rx.clone(),
             )
         };
 
         // let serve_outbound = serve(
+        //     "out",
         //     outbound_listener,
         //     outbound,
         //     config.outbound_ports_disable_protocol_detection,
-        //     ctx::Proxy::Outbound,
         //     get_original_dst,
         //     drain_rx,
         // );
@@ -322,12 +325,12 @@ where
 }
 
 fn serve<A, C, R, B, G>(
+    proxy_name: &'static str,
     bound_port: MakePort,
     accept: A,
     connect: C,
     router: R,
     disable_protocol_detection_ports: IndexSet<u16>,
-    proxy_ctx: ctx::Proxy,
     get_orig_dst: G,
     drain_rx: drain::Watch,
 ) -> impl Future<Item = (), Error = io::Error> + Send + 'static
@@ -335,7 +338,8 @@ where
     A: svc::Make<proxy::server::Source, Error = ()> + Send + Clone + 'static,
     A::Value: proxy::Accept<Connection>,
     <A::Value as proxy::Accept<Connection>>::Io: Send + transport::Peek + 'static,
-    C: svc::Make<connect::Target, Error = ()> + Send + Clone + 'static,
+    C: svc::Make<connect::Target> + Send + Clone + 'static,
+    C::Error: error::Error + Send + 'static,
     C::Value: connect::Connect + Send,
     <C::Value as connect::Connect>::Connected: Send + 'static,
     <C::Value as connect::Connect>::Future: Send + 'static,
@@ -362,7 +366,7 @@ where
 
     let listen_addr = bound_port.local_addr();
     let server = proxy::Server::new(
-        proxy_ctx,
+        proxy_name,
         listen_addr,
         get_orig_dst,
         accept,
