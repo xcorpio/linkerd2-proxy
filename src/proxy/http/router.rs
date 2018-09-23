@@ -21,9 +21,9 @@ pub struct Config {
 }
 
 #[derive(Debug)]
-pub struct Layer<Req, Rec> {
+pub struct Layer<Req, Rec, Mk> {
     recognize: Rec,
-    _p: PhantomData<fn() -> Req>,
+    _p: PhantomData<fn() -> (Req, Mk)>,
 }
 
 pub struct Make<Req, Rec, Mk>
@@ -71,7 +71,7 @@ impl fmt::Display for Config {
 
 // === impl Layer ===
 
-impl<Req, Rec> Layer<Req, Rec>
+impl<Req, Rec, Mk> Layer<Req, Rec, Mk>
 where
     Rec: Recognize<Req> + Clone,
 {
@@ -80,7 +80,7 @@ where
     }
 }
 
-impl<T, Req, Rec, Mk, B> svc::Layer<T, Rec::Target, Mk> for Layer<Req, Rec>
+impl<T, Req, Rec, Mk, B> svc::Layer<T, Rec::Target, Mk> for Layer<Req, Rec, Mk>
 where
     Rec: Recognize<Req> + Clone,
     Mk: svc::Make<Rec::Target> + Clone + Send + Sync + 'static,

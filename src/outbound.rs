@@ -1,14 +1,11 @@
 use std::fmt;
 use std::net::SocketAddr;
-use std::sync::Arc;
 
 use http;
 use futures::{Async, Poll};
 
-use ctx;
-use proxy::resolve;
-use proxy::http::{balance, h1, router, Settings};
-use transport::{DnsNameAndPort, Host, HostAndPort};
+use proxy::{self, http::{h1, router, Settings}, resolve};
+use transport::{connect, DnsNameAndPort, Host, HostAndPort};
 
 #[derive(Clone, Debug, Default)]
 pub struct Recognize {}
@@ -21,6 +18,7 @@ pub struct Destination {
 }
 
 pub struct Endpoint {
+    pub connect: connect::Target,
     pub settings: Settings,
     _p: (),
 }
@@ -53,7 +51,7 @@ impl<B> router::Recognize<http::Request<B>> for Recognize {
     fn recognize(&self, req: &http::Request<B>) -> Option<Self::Target> {
         let name_or_addr = Self::name_or_addr(req)?;
         let settings = Settings::detect(req);
-        Some(Destination { name_or_addr, settings, _p: PhantomData })
+        Some(Destination { name_or_addr, settings, _p: () })
     }
 }
 
@@ -114,7 +112,7 @@ impl Recognize {
             None => {
                 req.extensions()
                     .get::<proxy::server::Source>()
-                    .and_then(|src| src.orig_name_or_addr_if_not_local())
+                    .and_then(|src| src.orig_dst_if_not_local())
                     .map(NameOrAddr::Addr)
             }
         }

@@ -209,7 +209,7 @@ where
                 panic!("invalid DNS configuration: {:?}", e);
             });
 
-        let (resolver, resolver_bg) = control::destination::new(
+        let (_resolver, resolver_bg) = control::destination::new(
             dns_resolver.clone(),
             config.namespaces.clone(),
             control_host_and_port,
@@ -310,7 +310,9 @@ where
                 .and_then(insert_target::Layer::new());
 
             let default_fwd_addr = config.private_forward.map(|a| a.into());
-            let router_stack = router::Layer::new(inbound::Recognize::new(default_fwd_addr));
+            let router_stack = router::Layer::new(inbound::Recognize::new(default_fwd_addr))
+                .and_then(limit::Layer::new(MAX_IN_FLIGHT))
+                .and_then(buffer::Layer::new());
 
             // TODO sensors
             let endpoint_h1_stack =
@@ -328,8 +330,6 @@ where
             let capacity = config.inbound_router_capacity;
             let max_idle_age = config.inbound_router_max_idle_age;
             let router = router_stack
-                .and_then(limit::Layer::new(MAX_IN_FLIGHT))
-                .and_then(buffer::Layer::new())
                 .and_then(endpoint_h1_stack)
                 .bind(inbound::Client::new(connect.clone()))
                 .make(&router::Config::new("in", capacity, max_idle_age))
