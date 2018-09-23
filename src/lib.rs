@@ -1,6 +1,7 @@
 #![cfg_attr(feature = "cargo-clippy", allow(clone_on_ref_ptr))]
 #![cfg_attr(feature = "cargo-clippy", allow(new_without_default_derive))]
 #![deny(warnings)]
+#![allow(dead_code)] // FIXME
 
 extern crate bytes;
 extern crate env_logger;
@@ -67,3 +68,4 @@ pub mod telemetry;
 pub mod transport;
 
 use self::conditional::Conditional;
+pub use self::transport::SoOriginalDst;

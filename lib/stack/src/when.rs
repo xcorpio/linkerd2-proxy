@@ -27,6 +27,34 @@ where
     _p: PhantomData<T>,
 }
 
+impl<T, P, N, L> Layer<T, P, N, L>
+where
+    P: Predicate<T> + Clone,
+    N: super::Make<T> + Clone,
+    L: super::Layer<T, T, N> + Clone,
+    L::Make: super::Make<T>,
+{
+    pub fn new(predicate: P, inner: L) -> Self {
+        Self  {
+            predicate,
+            inner,
+            _p: PhantomData,
+        }
+    }
+}
+
+impl<T, P, N, L> Clone for Layer<T, P, N, L>
+where
+    P: Predicate<T> + Clone,
+    N: super::Make<T> + Clone,
+    L: super::Layer<T, T, N> + Clone,
+    L::Make: super::Make<T>,
+{
+    fn clone(&self) -> Self {
+        Self::new(self.predicate.clone(), self.inner.clone())
+    }
+}
+
 impl<T, P, N, L> super::Layer<T, T, N> for Layer<T, P, N, L>
 where
     P: Predicate<T> + Clone,
@@ -43,6 +71,23 @@ where
             predicate: self.predicate.clone(),
             next,
             layer: self.inner.clone(),
+            _p: PhantomData,
+        }
+    }
+}
+
+impl<T, P, N, L> Clone for Make<T, P, N, L>
+where
+    P: Predicate<T> + Clone,
+    N: super::Make<T> + Clone,
+    L: super::Layer<T, T, N> + Clone,
+    L::Make: super::Make<T>,
+{
+    fn clone(&self) -> Self {
+        Self {
+            predicate: self.predicate.clone(),
+            next: self.next.clone(),
+            layer: self.layer.clone(),
             _p: PhantomData,
         }
     }
@@ -71,5 +116,11 @@ where
                 .map(super::Either::B)
                 .map_err(super::Either::B)
         }
+    }
+}
+
+impl<T, F: Fn(&T) -> bool> Predicate<T> for F {
+    fn apply(&self, t: &T) -> bool {
+        (self)(t)
     }
 }

@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 use svc;
 
 #[derive(Debug)]
-pub struct Layer<T>(PhantomData<fn() -> T>);
+pub struct Layer<T, M>(PhantomData<fn() -> (T, M)>);
 
 #[derive(Clone, Debug)]
 pub struct Make<M>(M);
@@ -16,19 +16,19 @@ pub struct Service<T, S> {
     inner: S,
 }
 
-impl<T> Layer<T> {
+impl<T, M> Layer<T, M> {
     pub fn new() -> Self {
         Layer(PhantomData)
     }
 }
 
-impl<T> Clone for Layer<T> {
+impl<T, M> Clone for Layer<T, M> {
     fn clone(&self) -> Self {
         Self::new()
     }
 }
 
-impl<T, M, B> svc::Layer<T, T, M> for Layer<T>
+impl<T, M, B> svc::Layer<T, T, M> for Layer<T, M>
 where
     T: Clone + Send + Sync + 'static,
     M: svc::Make<T>,

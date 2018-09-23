@@ -41,10 +41,10 @@ pub fn detect<B>(req: &http::Request<B>) -> Settings {
 }
 
 #[derive(Debug)]
-pub struct LayerUpgrade<T>(PhantomData<fn() -> T>);
+pub struct LayerUpgrade<T, M>(PhantomData<fn() -> (T, M)>);
 
 #[derive(Debug)]
-pub struct LayerDowngrade<T>(PhantomData<fn() -> T>);
+pub struct LayerDowngrade<T, M>(PhantomData<fn() -> (T, M)>);
 
 pub struct MakeUpgrade<T, M>
 where
@@ -64,17 +64,17 @@ where
 
 // ==== impl Upgrade =====
 
-pub fn upgrade<T>() -> LayerUpgrade<T> {
+pub fn upgrade<T, M>() -> LayerUpgrade<T, M> {
     LayerUpgrade(PhantomData)
 }
 
-impl<T> Clone for LayerUpgrade<T> {
+impl<T, M> Clone for LayerUpgrade<T, M> {
     fn clone(&self) -> Self {
         LayerUpgrade(PhantomData)
     }
 }
 
-impl<T, M, A, B> svc::Layer<T, T, M> for LayerUpgrade<T>
+impl<T, M, A, B> svc::Layer<T, T, M> for LayerUpgrade<T, M>
 where
     M: svc::Make<T>,
     M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
@@ -197,17 +197,17 @@ where
 
 // ===== impl Downgrade =====
 
-pub fn downgrade<T>() -> LayerDowngrade<T> {
+pub fn downgrade<T, M>() -> LayerDowngrade<T, M> {
     LayerDowngrade(PhantomData)
 }
 
-impl<T> Clone for LayerDowngrade<T> {
+impl<T, M> Clone for LayerDowngrade<T, M> {
     fn clone(&self) -> Self {
         LayerDowngrade(PhantomData)
     }
 }
 
-impl<T, M, A, B> svc::Layer<T, T, M> for LayerDowngrade<T>
+impl<T, M, A, B> svc::Layer<T, T, M> for LayerDowngrade<T, M>
 where
     M: svc::Make<T>,
     M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,

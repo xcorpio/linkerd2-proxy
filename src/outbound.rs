@@ -10,27 +10,24 @@ use proxy::resolve;
 use proxy::http::{balance, h1, router, Settings};
 use transport::{DnsNameAndPort, Host, HostAndPort};
 
-pub fn balance<R>(resolve: R)
-    -> balance::Layer<Target, Resolve<R>>
-where
-    R: resolve::Resolve<DnsNameAndPort> + Clone,
-    R::Endpoint: From<SocketAddr> + fmt::Debug,
-{
-    balance::Layer::new(Resolve(resolve))
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct Recognize {}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Target  {
-    destination: Destination,
-    settings: Settings,
+pub struct Destination {
+    pub name_or_addr: NameOrAddr,
+    pub settings: Settings,
+    _p: (),
+}
+
+pub struct Endpoint {
+    pub settings: Settings,
+    _p: (),
 }
 
 /// Describes a destination for HTTP requests.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum Destination {
+pub enum NameOrAddr {
     /// A logical, lazily-bound endpoint.
     Name(DnsNameAndPort),
 
@@ -49,14 +46,14 @@ pub enum Resolution<R: resolve::Resolution> {
 
 
 impl<B> router::Recognize<http::Request<B>> for Recognize {
-    type Target = Target;
+    type Target = Destination;
 
     // Route the request by its destination AND PROTOCOL. This prevents HTTP/1
     // requests from being routed to HTTP/2 servers, and vice versa.
     fn recognize(&self, req: &http::Request<B>) -> Option<Self::Target> {
-        let destination = Self::destination(req)?;
+        let name_or_addr = Self::name_or_addr(req)?;
         let settings = Settings::detect(req);
-        Some(Target { destination, settings })
+        Some(Destination { name_or_addr, settings, _p: PhantomData })
     }
 }
 
@@ -91,34 +88,34 @@ impl Recognize {
 
     /// Determines the destination for a request.
     ///
-    /// Typically, a request's authority is used to produce a `Destination`. If the
-    /// authority addresses a DNS name, a `Destination::Name` is returned; and, otherwise,
-    /// it addresses a fixed IP address and a `Destination::Addr` is returned. The port is
+    /// Typically, a request's authority is used to produce a `NameOrAddr`. If the
+    /// authority addresses a DNS name, a `NameOrAddr::Name` is returned; and, otherwise,
+    /// it addresses a fixed IP address and a `NameOrAddr::Addr` is returned. The port is
     /// inferred if not specified in the authority.
     ///
     /// If no authority is available, the `SO_ORIGINAL_DST` socket option is checked. If
-    /// it's available, it is used to return a `Destination::Addr`. This socket option is
+    /// it's available, it is used to return a `NameOrAddr::Addr`. This socket option is
     /// typically set by `iptables(8)` in containerized environments like Kubernetes (as
     /// configured by the `proxy-init` program).
     ///
-    /// If none of this information is available, no `Destination` is returned.
-    fn destination<B>(req: &http::Request<B>) -> Option<Destination> {
+    /// If none of this information is available, no `NameOrAddr` is returned.
+    fn name_or_addr<B>(req: &http::Request<B>) -> Option<NameOrAddr> {
         match Self::host_port(req) {
             Some(HostAndPort { host: Host::DnsName(host), port }) => {
-                let dst = DnsNameAndPort { host, port };
-                Some(Destination::Name(dst))
+                let name_or_addr = DnsNameAndPort { host, port };
+                Some(NameOrAddr::Name(name_or_addr))
             }
 
             Some(HostAndPort { host: Host::Ip(ip), port }) => {
-                let dst = SocketAddr::from((ip, port));
-                Some(Destination::Addr(dst))
+                let name_or_addr = SocketAddr::from((ip, port));
+                Some(NameOrAddr::Addr(name_or_addr))
             }
 
             None => {
                 req.extensions()
                     .get::<Arc<ctx::transport::Server>>()
-                    .and_then(|ctx| ctx.orig_dst_if_not_local())
-                    .map(Destination::Addr)
+                    .and_then(|ctx| ctx.orig_name_or_addr_if_not_local())
+                    .map(NameOrAddr::Addr)
             }
         }
     }
@@ -135,7 +132,7 @@ where
 }
 
 
-impl<R> resolve::Resolve<Target> for Resolve<R>
+impl<R> resolve::Resolve<Destination> for Resolve<R>
 where
     R: resolve::Resolve<DnsNameAndPort>,
     R::Endpoint: From<SocketAddr>,
@@ -143,10 +140,10 @@ where
     type Endpoint = R::Endpoint;
     type Resolution = Resolution<R::Resolution>;
 
-    fn resolve(&self, t: &Target) -> Self::Resolution {
-        match t.destination {
-            Destination::Name(ref name) => Resolution::Name(self.0.resolve(&name)),
-            Destination::Addr(ref addr) => Resolution::Addr(Some(*addr)),
+    fn resolve(&self, t: &Destination) -> Self::Resolution {
+        match t.name_or_addr {
+            NameOrAddr::Name(ref name) => Resolution::Name(self.0.resolve(&name)),
+            NameOrAddr::Addr(ref addr) => Resolution::Addr(Some(*addr)),
         }
     }
 }
@@ -173,15 +170,13 @@ where
     }
 }
 
-struct Dst(Destination);
-
-impl fmt::Display for Dst {
+impl fmt::Display for Destination {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self.0 {
-            Destination::Name(ref name) => {
+        match self.name_or_addr {
+            NameOrAddr::Name(ref name) => {
                 write!(f, "{}:{}", name.host, name.port)
             }
-            Destination::Addr(ref addr) => addr.fmt(f),
+            NameOrAddr::Addr(ref addr) => addr.fmt(f),
         }
     }
 }

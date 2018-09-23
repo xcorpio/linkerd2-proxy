@@ -8,9 +8,9 @@ pub use self::tower_in_flight_limit::InFlightLimit;
 use svc;
 
 #[derive(Debug)]
-pub struct Layer<T> {
+pub struct Layer<T, M> {
     max_in_flight: usize,
-    _p: PhantomData<fn() -> T>
+    _p: PhantomData<fn() -> (T, M)>
 }
 
 #[derive(Debug)]
@@ -20,7 +20,7 @@ pub struct Make<T, M> {
     _p: PhantomData<fn() -> T>
 }
 
-impl<T> Layer<T> {
+impl<T, M> Layer<T, M> {
     pub fn new(max_in_flight: usize) -> Self {
         Layer {
             max_in_flight,
@@ -29,13 +29,13 @@ impl<T> Layer<T> {
     }
 }
 
-impl<T> Clone for Layer<T> {
+impl<T, M> Clone for Layer<T, M> {
     fn clone(&self) -> Self {
         Self::new(self.max_in_flight)
     }
 }
 
-impl<T, M> svc::Layer<T, T, M> for Layer<T>
+impl<T, M> svc::Layer<T, T, M> for Layer<T, M>
 where
     T: fmt::Display + Clone + Send + Sync + 'static,
     M: svc::Make<T>,

@@ -25,7 +25,7 @@ pub struct TimestampRequestOpen<S> {
 
 /// Layers a `TimestampRequestOpen` middleware on an HTTP client.
 #[derive(Debug)]
-pub struct Layer<T>(::std::marker::PhantomData<fn() -> T>);
+pub struct Layer<T, M>(::std::marker::PhantomData<fn() -> (T, M)>);
 
 /// Uses an `M`-typed `Make` to build a `TimestampRequestOpen` service.
 #[derive(Clone, Debug)]
@@ -54,41 +54,41 @@ where
 
 // === impl Layer ===
 
-impl<T> Layer<T> {
+impl<T, M> Layer<T, M> {
     pub fn new() -> Self {
         Layer(::std::marker::PhantomData)
     }
 }
 
-impl<T> Clone for Layer<T> {
+impl<T, M> Clone for Layer<T, M> {
     fn clone(&self) -> Self {
         Self::new()
     }
 }
 
-impl<N, T, B> svc::Layer<T, T, N> for Layer<T>
+impl<T, B, M> svc::Layer<T, T, M> for Layer<T, M>
 where
-    N: svc::Make<T>,
-    N::Value: svc::Service<Request = http::Request<B>>,
+    M: svc::Make<T>,
+    M::Value: svc::Service<Request = http::Request<B>>,
 {
-    type Value = <Make<N> as svc::Make<T>>::Value;
-    type Error = <Make<N> as svc::Make<T>>::Error;
-    type Make = Make<N>;
+    type Value = <Make<M> as svc::Make<T>>::Value;
+    type Error = <Make<M> as svc::Make<T>>::Error;
+    type Make = Make<M>;
 
-    fn bind(&self, next: N) -> Make<N> {
+    fn bind(&self, next: M) -> Self::Make {
         Make(next)
     }
 }
 
 // === impl Make ===
 
-impl<N, T, B> svc::Make<T> for Make<N>
+impl<T, B, M> svc::Make<T> for Make<M>
 where
-    N: svc::Make<T>,
-    N::Value: svc::Service<Request = http::Request<B>>,
+    M: svc::Make<T>,
+    M::Value: svc::Service<Request = http::Request<B>>,
 {
-    type Value = TimestampRequestOpen<N::Value>;
-    type Error = N::Error;
+    type Value = TimestampRequestOpen<M::Value>;
+    type Error = M::Error;
 
     fn make(&self, target: &T) -> Result<Self::Value, Self::Error> {
         let inner = self.0.make(target)?;

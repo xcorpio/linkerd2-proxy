@@ -41,7 +41,7 @@ pub use self::optional::Optional;
 pub use self::layer::Layer;
 pub use self::make_new_service::MakeNewService;
 //pub use self::watch::Watch;
-//pub use self::when::When;
+pub use self::when::Layer as When;
 
 pub trait Make<Target> {
     type Value;

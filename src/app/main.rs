@@ -17,17 +17,17 @@ use drain;
 use dns;
 use futures;
 use inbound;
-//use outbound;
+use outbound;
 use logging;
 use metrics;
 use proxy::{
     self,
     buffer, limit,
-    http::{insert_target, orig_proto, router},
+    http::{insert_target, normalize_uri, orig_proto, router},
 };
 use svc;
 use task;
-use svc::Make as _Make;
+use svc::{Layer as _Layer, Make as _Make};
 use telemetry::{self, http::timestamp_request_open};
 use transport::{self, connect, tls, Connection, GetOriginalDst, MakePort};
 
@@ -209,7 +209,7 @@ where
                 panic!("invalid DNS configuration: {:?}", e);
             });
 
-        let (_resolver, resolver_bg) = control::destination::new(
+        let (resolver, resolver_bg) = control::destination::new(
             dns_resolver.clone(),
             config.namespaces.clone(),
             control_host_and_port,
@@ -220,63 +220,127 @@ where
 
         const MAX_IN_FLIGHT: usize = 10_000;
 
-        // let outbound = timestamp_request_open::Layer::new()
-        //     .and_then(limit::Layer::new(MAX_IN_FLIGHT))
-        //     .and_then(buffer::Layer::new())
-        //     .and_then(router::Layer::new(
-        //         outbound::Recognize::new(),
-        //         config.outbound_router_capacity,
-        //         config.outbound_router_max_idle_age,
-        //     ))
-        //     .and_then(balance::Layer::new(outbound::Resolve::new(resolver)))
-        //     .and_then(orig_proto::upgrade());
-
         let (drain_tx, drain_rx) = drain::channel();
+//
+//         let outbound = {
+//             // As the outbound proxy accepts connections, we don't do any
+//             // special transport-level handling.
+//             //
+//             // TODO metrics
+//             let accept = ();
 
-        let serve_inbound = {
+//             // As HTTP requests are accepted, we add some request extensions
+//             // including metadata about the request's origin.
+//             //
+//             // Furthermore, HTTP/2 requests may be downgraded to HTTP/1.1 per
+//             // `orig-proto` headers.
+//             let source_stack = timestamp_request_open::Layer::new()
+//                 .and_then(insert_target::Layer::new());
+
+//             // The router stack is shared across all source stacks, hence being
+//             // buffered and
+//             let router_stack = router::Layer::new(outbound::Recognize::new());
+
+//             let dst_stack =
+//                 limit::Layer::new(MAX_IN_FLIGHT)
+//                 .and_then(buffer::Layer::new())
+//                 .and_then(balance::Layer::new(outbound::Resolver::new(resolver)));
+
+//             // For each endpoint,
+//             //
+//             // TODO sensors
+//             let endpoint_h1_stack =
+//                 svc::When::new(
+//                     |ep: &outbound::Endpoint| {
+//                         ep.can_use_orig_proto() &&
+//                         !ep.settings.is_http2() &&
+//                         !ep.settings.is_h1_upgrade()
+//                     },
+//                     orig_proto::upgrade())
+//                 .and_then(svc::When::new(
+//                     |ep: &outbound::Endpoint| !ep.settings.was_absolute_form(),
+//                     normalize_uri::Layer::new()))
+//                 .and_then(svc::When::new(
+//                     |ep: &outbound::Endpoint| !ep.settings.can_reuse_clients(),
+//                     svc::make_per_request::Layer::new()));
+
+//             // Establishes connections to remote peers.
+//             //
+//             //
+//             let connect = connect::Make::new();
+
+//             // Build a router using the above policy
+//             let capacity = config.outbound_router_capacity;
+//             let max_idle_age = config.outbound_router_max_idle_age;
+//             let router = router_stack
+//                 .and_then(dst_stack)
+//                 .and_then(endpoint_h1_stack)
+//                 .bind(outbound::Client::new(connect.clone()))
+//                 .make(&router::Config::new("out", capacity, max_idle_age))
+//                 .expect("inbound router");
+
+//             let source_router = source_stack.bind(svc::Shared::new(router));
+
+//             serve(
+//                 "out",
+//                 outbound_listener,
+//                 accept,
+//                 connect,
+//                 source_router,
+//                 config.outbound_ports_disable_protocol_detection,
+//                 get_original_dst.clone(),
+//                 drain_rx.clone(),
+//             )
+//         };
+
+        let inbound = {
+            // As the inbound proxy accepts connections, we don't do any
+            // special transport-level handling.
+            //
+            // TODO metrics
             let accept = ();
 
-            let connect = connect::Make::new();
-
-            let endpoint = inbound::Client::new(connect.clone());
+            // As HTTP requests are accepted, we add some request extensions
+            // including metadata about the request's origin.
+            //
+            // Furthermore, HTTP/2 requests may be downgraded to HTTP/1.1 per
+            // `orig-proto` headers.
+            let source_stack = timestamp_request_open::Layer::new()
+                .and_then(orig_proto::downgrade())
+                .and_then(insert_target::Layer::new());
 
             let default_fwd_addr = config.private_forward.map(|a| a.into());
-            let router_stack = endpoint
-                .push(router::Layer::new(inbound::Recognize::new(default_fwd_addr)))
-                .push(orig_proto::downgrade())
-                .push(buffer::Layer::new())
-                .push(limit::Layer::new(MAX_IN_FLIGHT));
+            let router_stack = router::Layer::new(inbound::Recognize::new(default_fwd_addr));
 
+            // Establishes connections to the local application.
+            //
+            //
+            let connect = connect::Make::new();
+
+            // Build a router using the above policy
             let capacity = config.inbound_router_capacity;
             let max_idle_age = config.inbound_router_max_idle_age;
             let router = router_stack
+                .and_then(limit::Layer::new(MAX_IN_FLIGHT))
+                .and_then(buffer::Layer::new())
+                .and_then(endpoint_h1_stack)
+                .bind(inbound::Client::new(connect.clone()))
                 .make(&router::Config::new("in", capacity, max_idle_age))
                 .expect("inbound router");
 
-            let source_stack = svc::Shared::new(router)
-                .push(insert_target::Layer::new())
-                .push(timestamp_request_open::Layer::new());
+            let source_router = source_stack.bind(svc::Shared::new(router));
 
             serve(
                 "in",
                 inbound_listener,
                 accept,
                 connect,
-                source_stack,
+                source_router,
                 config.inbound_ports_disable_protocol_detection,
                 get_original_dst.clone(),
                 drain_rx.clone(),
             )
         };
-
-        // let serve_outbound = serve(
-        //     "out",
-        //     outbound_listener,
-        //     outbound,
-        //     config.outbound_ports_disable_protocol_detection,
-        //     get_original_dst,
-        //     drain_rx,
-        // );
 
         trace!("running");
 
@@ -315,8 +379,8 @@ where
             trace!("controller client thread spawned");
         }
 
-        let fut = serve_inbound
-            //.join(serve_outbound)
+        let fut = inbound
+            //.join(outbound)
             .map(|_| ())
             .map_err(|err| error!("main error: {:?}", err));
 

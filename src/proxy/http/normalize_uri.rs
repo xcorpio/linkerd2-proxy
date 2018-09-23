@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 use super::h1::normalize_our_view_of_uri;
 use svc;
 
-pub struct Layer<T>(PhantomData<T>);
+pub struct Layer<T, M>(PhantomData<fn() -> (T, M)>);
 
 pub struct Make<T, N: svc::Make<T>> {
     inner: N,
@@ -19,33 +19,49 @@ pub struct Service<S> {
 
 // === impl Layer ===
 
-pub fn layer<T>() -> Layer<T> {
-    Layer(PhantomData)
+impl<T, B, M> Layer<T, M>
+where
+    M: svc::Make<T>,
+    M::Value: svc::Service<Request = http::Request<B>>,
+{
+    pub fn new() -> Self {
+        Layer(PhantomData)
+    }
 }
 
-impl<T, N, B> svc::Layer<T, T, N> for Layer<T>
+impl<T, B, M> Clone for Layer<T, M>
 where
-    N: svc::Make<T>,
-    N::Value: svc::Service<Request = http::Request<B>>,
+    M: svc::Make<T>,
+    M::Value: svc::Service<Request = http::Request<B>>,
 {
-    type Value = <Make<T, N> as svc::Make<T>>::Value;
-    type Error = <Make<T, N> as svc::Make<T>>::Error;
-    type Make = Make<T, N>;
+    fn clone(&self) -> Self {
+        Self::new()
+    }
+}
 
-    fn bind(&self, inner: N) -> Self::Make {
+impl<T, B, M> svc::Layer<T, T, M> for Layer<T, M>
+where
+    M: svc::Make<T>,
+    M::Value: svc::Service<Request = http::Request<B>>,
+{
+    type Value = <Make<T, M> as svc::Make<T>>::Value;
+    type Error = <Make<T, M> as svc::Make<T>>::Error;
+    type Make = Make<T, M>;
+
+    fn bind(&self, inner: M) -> Self::Make {
         Make { inner, _p: PhantomData }
     }
 }
 
 // === impl Make ===
 
-impl<T, N, B> svc::Make<T> for Make<T, N>
+impl<T, B, M> svc::Make<T> for Make<T, M>
 where
-    N: svc::Make<T>,
-    N::Value: svc::Service<Request = http::Request<B>>,
+    M: svc::Make<T>,
+    M::Value: svc::Service<Request = http::Request<B>>,
 {
-    type Value = Service<N::Value>;
-    type Error = N::Error;
+    type Value = Service<M::Value>;
+    type Error = M::Error;
 
     fn make(&self, target: &T) -> Result<Self::Value, Self::Error> {
         let inner = self.inner.make(&target)?;

@@ -12,8 +12,8 @@ use transport::{connect, tls};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Endpoint {
-    addr: SocketAddr,
-    settings: Settings,
+    pub addr: SocketAddr,
+    pub settings: Settings,
 }
 
 // === Recognize ===
@@ -185,12 +185,8 @@ mod tests {
         }
 
         fn recognize_default_no_ctx(default: Option<net::SocketAddr>) -> bool {
-            let ctx = ctx::Proxy::Inbound;
-
             let inbound = Recognize::new(default);
-
             let req = http::Request::new(());
-
             inbound.recognize(&req) == default.map(make_target_http1)
         }
 

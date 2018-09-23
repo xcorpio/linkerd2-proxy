@@ -4,7 +4,9 @@ extern crate tower_service;
 pub use self::tower_service::{NewService, Service};
 
 pub use self::stack::{
+    make_per_request,
     Layer,
     Make,
     Shared,
+    When,
 };

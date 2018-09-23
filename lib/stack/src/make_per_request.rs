@@ -6,10 +6,11 @@ use std::marker::PhantomData;
 
 use svc;
 
-pub struct Layer;
+#[derive(Debug)]
+pub struct Layer<T, M>(PhantomData<fn() -> (T, M)>);
 
 /// A `Make` that builds a single-serving client for each request.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Make<T, M: super::Make<T>> {
     inner: M,
     _p: PhantomData<fn() -> T>,
@@ -34,7 +35,29 @@ struct MakeValid<T, M: super::Make<T>> {
 
 // === Layer ===
 
-impl<T, N> super::Layer<T, T, N> for Layer
+impl<T, N> Layer<T, N>
+where
+    T: Clone,
+    N: super::Make<T> + Clone,
+    N::Error: fmt::Debug,
+{
+    pub fn new() -> Self {
+        Layer(PhantomData)
+    }
+}
+
+impl<T, N> Clone for Layer<T, N>
+where
+    T: Clone,
+    N: super::Make<T> + Clone,
+    N::Error: fmt::Debug,
+{
+    fn clone(&self) -> Self {
+        Self::new()
+    }
+}
+
+impl<T, N> super::Layer<T, T, N> for Layer<T, N>
 where
     T: Clone,
     N: super::Make<T> + Clone,
@@ -53,6 +76,18 @@ where
 }
 
 // === Make ===
+
+impl<T, N> Clone for Make<T, N>
+where
+    T: Clone,
+    N: super::Make<T> + Clone,
+    N::Error: fmt::Debug,
+{
+    fn clone(&self) -> Self {
+        let inner = self.inner.clone();
+        Make { inner, _p: PhantomData }
+    }
+}
 
 impl<T, N> super::Make<T> for Make<T, N>
 where

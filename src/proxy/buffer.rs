@@ -9,7 +9,7 @@ use logging;
 use svc;
 
 #[derive(Debug)]
-pub struct Layer<T>(PhantomData<fn() -> T>);
+pub struct Layer<T, M>(PhantomData<fn() -> (T, M)>);
 
 #[derive(Debug)]
 pub struct Make<T, M> {
@@ -22,19 +22,19 @@ pub enum Error<M, S> {
     Spawn(SpawnError<S>),
 }
 
-impl<T> Layer<T> {
+impl<T, M> Layer<T, M> {
     pub fn new() -> Self {
         Layer(PhantomData)
     }
 }
 
-impl<T> Clone for Layer<T> {
+impl<T, M> Clone for Layer<T, M> {
     fn clone(&self) -> Self {
         Self::new()
     }
 }
 
-impl<T, M> svc::Layer<T, T, M> for Layer<T>
+impl<T, M> svc::Layer<T, T, M> for Layer<T, M>
 where
     T: fmt::Display + Clone + Send + Sync + 'static,
     M: svc::Make<T>,

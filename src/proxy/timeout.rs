@@ -4,9 +4,9 @@ use std::time::Duration;
 use svc;
 pub use timeout::Timeout;
 
-pub struct Layer<T> {
+pub struct Layer<T, M> {
     timeout: Duration,
-    _p: PhantomData<fn() -> T>
+    _p: PhantomData<fn() -> (T, M)>
 }
 
 pub struct Make<T, M> {
@@ -15,7 +15,7 @@ pub struct Make<T, M> {
     _p: PhantomData<fn() -> T>
 }
 
-impl<T> Layer<T> {
+impl<T, M> Layer<T, M> {
     pub fn new(timeout: Duration) -> Self {
         Self {
             timeout,
@@ -24,7 +24,7 @@ impl<T> Layer<T> {
     }
 }
 
-impl<T, M> svc::Layer<T, T, M> for Layer<T>
+impl<T, M> svc::Layer<T, T, M> for Layer<T, M>
 where
     M: svc::Make<T>,
 {
