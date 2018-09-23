@@ -1,15 +1,19 @@
 use bytes;
-use http;
 use futures::{Async, Poll};
-use std::{error, fmt};
+use http;
 use std::net::SocketAddr;
+use std::{error, fmt};
 use tower_h2::Body;
 
-use Conditional;
 use control::destination::{Metadata, ProtocolHint};
-use proxy::{self, http::{client, h1, router, Settings}, resolve};
+use proxy::{
+    self,
+    http::{client, h1, router, Settings},
+    resolve,
+};
 use svc;
 use transport::{connect, tls, DnsNameAndPort, Host, HostAndPort};
+use Conditional;
 
 #[derive(Clone, Debug, Default)]
 pub struct Recognize {}
@@ -48,7 +52,6 @@ pub enum Resolution<R: resolve::Resolution> {
     Addr(Option<SocketAddr>, Settings),
 }
 
-
 impl<B> router::Recognize<http::Request<B>> for Recognize {
     type Target = Destination;
 
@@ -57,7 +60,11 @@ impl<B> router::Recognize<http::Request<B>> for Recognize {
     fn recognize(&self, req: &http::Request<B>) -> Option<Self::Target> {
         let name_or_addr = Self::name_or_addr(req)?;
         let settings = Settings::detect(req);
-        Some(Destination { name_or_addr, settings, _p: () })
+        Some(Destination {
+            name_or_addr,
+            settings,
+            _p: (),
+        })
     }
 }
 
@@ -84,10 +91,7 @@ impl Recognize {
         req.uri()
             .authority_part()
             .and_then(Self::normalize)
-            .or_else(|| {
-                h1::authority_from_host(req)
-                    .and_then(|h| Self::normalize(&h))
-            })
+            .or_else(|| h1::authority_from_host(req).and_then(|h| Self::normalize(&h)))
     }
 
     /// Determines the destination for a request.
@@ -105,22 +109,27 @@ impl Recognize {
     /// If none of this information is available, no `NameOrAddr` is returned.
     fn name_or_addr<B>(req: &http::Request<B>) -> Option<NameOrAddr> {
         match Self::host_port(req) {
-            Some(HostAndPort { host: Host::DnsName(host), port }) => {
+            Some(HostAndPort {
+                host: Host::DnsName(host),
+                port,
+            }) => {
                 let name_or_addr = DnsNameAndPort { host, port };
                 Some(NameOrAddr::Name(name_or_addr))
             }
 
-            Some(HostAndPort { host: Host::Ip(ip), port }) => {
+            Some(HostAndPort {
+                host: Host::Ip(ip),
+                port,
+            }) => {
                 let name_or_addr = SocketAddr::from((ip, port));
                 Some(NameOrAddr::Addr(name_or_addr))
             }
 
-            None => {
-                req.extensions()
-                    .get::<proxy::server::Source>()
-                    .and_then(|src| src.orig_dst_if_not_local())
-                    .map(NameOrAddr::Addr)
-            }
+            None => req
+                .extensions()
+                .get::<proxy::server::Source>()
+                .and_then(|src| src.orig_dst_if_not_local())
+                .map(NameOrAddr::Addr),
         }
     }
 }
@@ -133,7 +142,6 @@ where
         Resolve(resolve)
     }
 }
-
 
 impl<R> resolve::Resolve<Destination> for Resolve<R>
 where
@@ -162,8 +170,8 @@ where
             Resolution::Name(ref mut res, ref settings) => {
                 match try_ready!(res.poll()) {
                     resolve::Update::Make(addr, metadata) => {
-                        // If the endpoint does not have TLS, notethe reason.                        
-                        // Otherwise, indicate that we don't (yet have a TLS                        
+                        // If the endpoint does not have TLS, notethe reason.
+                        // Otherwise, indicate that we don't (yet have a TLS
                         // config). This value may be changed by a stack layer
                         // that provides TLS configuration.
                         let tls = match metadata.tls_identity() {
@@ -193,7 +201,7 @@ where
                     Ok(Async::Ready(up))
                 }
                 None => Ok(Async::NotReady),
-            }
+            },
         }
     }
 }
@@ -201,9 +209,7 @@ where
 impl fmt::Display for Destination {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self.name_or_addr {
-            NameOrAddr::Name(ref name) => {
-                write!(f, "{}:{}", name.host, name.port)
-            }
+            NameOrAddr::Name(ref name) => write!(f, "{}:{}", name.host, name.port),
             NameOrAddr::Addr(ref addr) => addr.fmt(f),
         }
     }
@@ -230,7 +236,9 @@ where
     <B::Data as bytes::IntoBuf>::Buf: Send + 'static,
 {
     pub fn new(connect: C) -> Client<C, B> {
-        Self { inner: client::Make::new("in", connect) }
+        Self {
+            inner: client::Make::new("in", connect),
+        }
     }
 }
 
@@ -245,7 +253,9 @@ where
     <B::Data as bytes::IntoBuf>::Buf: Send + 'static,
 {
     fn clone(&self) -> Self {
-        Self { inner: self.inner.clone() }
+        Self {
+            inner: self.inner.clone(),
+        }
     }
 }
 
@@ -282,4 +292,3 @@ impl fmt::Display for Endpoint {
         self.target.addr.fmt(f)
     }
 }
-

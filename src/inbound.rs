@@ -1,14 +1,14 @@
 use bytes;
 use http;
-use std::{error, fmt};
 use std::net::SocketAddr;
+use std::{error, fmt};
 use tower_h2::Body;
 
-use Conditional;
-use proxy::http::{client, router, orig_proto, Settings};
+use proxy::http::{client, orig_proto, router, Settings};
 use proxy::server::Source;
 use svc;
 use transport::{connect, tls};
+use Conditional;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Endpoint {
@@ -25,9 +25,7 @@ pub struct Recognize {
 
 impl Recognize {
     pub fn new(default_addr: Option<SocketAddr>) -> Self {
-        Self {
-            default_addr,
-        }
+        Self { default_addr }
     }
 }
 
@@ -36,7 +34,11 @@ impl<A> router::Recognize<http::Request<A>> for Recognize {
 
     fn recognize(&self, req: &http::Request<A>) -> Option<Self::Target> {
         let source = req.extensions().get::<Source>()?;
-        trace!("recognize local={} orig={:?}", source.local, source.orig_dst);
+        trace!(
+            "recognize local={} orig={:?}",
+            source.local,
+            source.orig_dst
+        );
 
         let addr = source.orig_dst_if_not_local().or(self.default_addr)?;
         let settings = orig_proto::detect(req);
@@ -71,7 +73,9 @@ where
     <B::Data as bytes::IntoBuf>::Buf: Send + 'static,
 {
     pub fn new(connect: C) -> Client<C, B> {
-        Self { inner: client::Make::new("in", connect) }
+        Self {
+            inner: client::Make::new("in", connect),
+        }
     }
 }
 
@@ -86,7 +90,9 @@ where
     <B::Data as bytes::IntoBuf>::Buf: Send + 'static,
 {
     fn clone(&self) -> Self {
-        Self { inner: self.inner.clone() }
+        Self {
+            inner: self.inner.clone(),
+        }
     }
 }
 
@@ -125,10 +131,10 @@ mod tests {
     use proxy::http::router::Recognize as _Recognize;
     use proxy::http::settings::{Host, Settings};
 
-    use super::{Recognize, Endpoint};
+    use super::{Endpoint, Recognize};
     use ctx;
-    use Conditional;
     use transport::tls;
+    use Conditional;
 
     fn make_target_http1(addr: net::SocketAddr) -> Endpoint {
         let settings = Settings::Http1 {
