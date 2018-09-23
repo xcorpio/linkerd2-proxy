@@ -236,8 +236,8 @@ where
 
             let router = proxy::limit::Layer::new(MAX_IN_FLIGHT)
                 .and_then(proxy::buffer::Layer::new())
-                .and_then(proxy::http::router::Layer::new())
                 .and_then(proxy::http::orig_proto::downgrade())
+                .and_then(proxy::http::router::Layer::new())
                 .bind(inbound::Client::new(connect.clone()))
                 .make(&proxy::http::router::Config::new(
                     inbound::Recognize::new(config.private_forward.map(|a| a.into())),

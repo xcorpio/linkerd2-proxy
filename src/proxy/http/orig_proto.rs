@@ -9,14 +9,14 @@ use svc;
 const L5D_ORIG_PROTO: &str = "l5d-orig-proto";
 
 /// Upgrades HTTP requests from their original protocol to HTTP2.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Upgrade<S> {
     inner: S,
 }
 
 /// Downgrades HTTP2 requests that were previousl upgraded to their original
 /// protocol.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Downgrade<S> {
     inner: S,
 }
