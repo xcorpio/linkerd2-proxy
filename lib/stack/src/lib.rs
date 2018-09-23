@@ -46,4 +46,12 @@ pub trait Make<Target> {
     type Error;
 
     fn make(&self, t: &Target) -> Result<Self::Value, Self::Error>;
+
+    fn push<U, L>(self, layer: L) -> L::Make
+    where
+        L: Layer<U, Target, Self>,
+        Self: Sized,
+    {
+        layer.bind(self)
+    }
 }

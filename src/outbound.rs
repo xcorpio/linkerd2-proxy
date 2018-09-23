@@ -3,12 +3,11 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use http;
-use futures::{Async, Poll, Stream};
+use futures::{Async, Poll};
 
 use ctx;
-use proxy::{resolve::{self, Resolve as _Resolve}};
+use proxy::resolve;
 use proxy::http::{balance, h1, router, Settings};
-use svc::{Layer as _Layer};
 use transport::{DnsNameAndPort, Host, HostAndPort};
 
 pub fn balance<R>(resolve: R)

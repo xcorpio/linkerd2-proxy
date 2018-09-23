@@ -8,10 +8,8 @@ pub use self::tower_buffer::{Buffer, SpawnError};
 use logging;
 use svc;
 
-#[derive(Debug)]
-pub struct Layer<T> {
-    _p: PhantomData<fn() -> T>
-}
+#[derive(Clone, Debug)]
+pub struct Layer;
 
 #[derive(Debug)]
 pub struct Make<T, M> {
@@ -24,21 +22,7 @@ pub enum Error<M, S> {
     Spawn(SpawnError<S>),
 }
 
-impl<T> Layer<T> {
-    pub fn new() -> Self {
-        Layer {
-            _p: PhantomData
-        }
-    }
-}
-
-impl<T> Clone for Layer<T> {
-    fn clone(&self) -> Self {
-        Self::new()
-    }
-}
-
-impl<T, M> svc::Layer<T, T, M> for Layer<T>
+impl<T, M> svc::Layer<T, T, M> for Layer
 where
     T: fmt::Display + Clone + Send + Sync + 'static,
     M: svc::Make<T>,

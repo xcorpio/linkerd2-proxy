@@ -13,26 +13,27 @@ extern crate linkerd2_router;
 use self::linkerd2_router::Error;
 pub use self::linkerd2_router::{Recognize, Router};
 
-#[derive(Debug)]
-pub struct Config<Req, Rec>
-where
-    Rec: Recognize<Req>,
-{
-    recognize: Rec,
+#[derive(Clone, Debug)]
+pub struct Config {
     capacity: usize,
     max_idle_age: Duration,
-    _p: PhantomData<fn() -> Req>,
+    proxy_name: &'static str,
 }
 
 #[derive(Debug)]
-pub struct Layer();
+pub struct Layer<Req, Rec> {
+    recognize: Rec,
+    _p: PhantomData<fn() -> Req>,
+}
 
-pub struct Make<T, Mk>
+pub struct Make<Req, Rec, Mk>
 where
-    Mk: svc::Make<T> + Clone,
+    Rec: Recognize<Req>,
+    Mk: svc::Make<Rec::Target> + Clone,
 {
+    recognize: Rec,
     inner: Mk,
-    _p: PhantomData<fn() -> T>,
+    _p: PhantomData<fn() -> Req>,
 }
 
 pub struct Service<Req, Rec, Mk>
@@ -51,80 +52,74 @@ pub struct ResponseFuture<F> {
 
 // === impl Config ===
 
-impl<Req, Rec> Config<Req, Rec>
-where
-    Rec: Recognize<Req>,
-{
-    pub fn new(recognize: Rec, capacity: usize, max_idle_age: Duration) -> Self {
+impl Config {
+    pub fn new(proxy_name: &'static str, capacity: usize, max_idle_age: Duration) -> Self {
         Self {
-            recognize,
+            proxy_name,
             capacity,
             max_idle_age,
-            _p: PhantomData,
         }
     }
 }
 
-impl<Req, Rec> Clone for Config<Req, Rec>
-where
-    Rec: Recognize<Req> + Clone,
-{
-    fn clone(&self) -> Self {
-        Self::new(self.recognize.clone(), self.capacity, self.max_idle_age)
-    }
-}
-
-impl<Req, Rec> fmt::Display for Config<Req, Rec>
-where
-    Rec: Recognize<Req> + Clone + fmt::Display,
-{
+impl fmt::Display for Config {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.recognize.fmt(f)
+        self.proxy_name.fmt(f)
     }
 }
 
 
 // === impl Layer ===
 
-impl Layer {
-    pub fn new() -> Self {
-        Layer()
+impl<Req, Rec> Layer<Req, Rec>
+where
+    Rec: Recognize<Req> + Clone,
+{
+    pub fn new(recognize: Rec) -> Self {
+        Layer { recognize, _p: PhantomData }
     }
 }
 
-impl<T, U, Mk, B> svc::Layer<T, U, Mk> for Layer
+impl<T, Req, Rec, Mk, B> svc::Layer<T, Rec::Target, Mk> for Layer<Req, Rec>
 where
-    Mk: svc::Make<U> + Clone + Send + Sync + 'static,
+    Rec: Recognize<Req> + Clone,
+    Mk: svc::Make<Rec::Target> + Clone + Send + Sync + 'static,
     Mk::Value: svc::Service<Response = http::Response<B>>,
     <Mk::Value as svc::Service>::Error: error::Error,
     Mk::Error: fmt::Debug,
     B: Default + Send + 'static,
-    Make<U, Mk>: svc::Make<T>,
+    Make<Req, Rec, Mk>: svc::Make<T>,
 {
-    type Value = <Make<U, Mk> as svc::Make<T>>::Value;
-    type Error = <Make<U, Mk> as svc::Make<T>>::Error;
-    type Make = Make<U, Mk>;
+    type Value = <Make<Req, Rec, Mk> as svc::Make<T>>::Value;
+    type Error = <Make<Req, Rec, Mk> as svc::Make<T>>::Error;
+    type Make = Make<Req, Rec, Mk>;
 
     fn bind(&self, inner: Mk) -> Self::Make {
-        Make { inner, _p: PhantomData }
+        Make {
+            inner,
+            recognize: self.recognize.clone(),
+            _p: PhantomData,
+        }
     }
 }
 
 // === impl Make ===
 
-impl<T, Mk> Clone for Make<T, Mk>
+impl<Req, Rec, Mk> Clone for Make<Req, Rec, Mk>
 where
-    Mk: svc::Make<T> + Clone,
+    Rec: Recognize<Req> + Clone,
+    Mk: svc::Make<Rec::Target> + Clone,
 {
     fn clone(&self) -> Self {
         Self {
+            recognize: self.recognize.clone(),
             inner: self.inner.clone(),
             _p: PhantomData
         }
     }
 }
 
-impl<Req, Rec, Mk, B> svc::Make<Config<Req, Rec>> for Make<Rec::Target, Mk>
+impl<Req, Rec, Mk, B> svc::Make<Config> for Make<Req, Rec, Mk>
 where
     Rec: Recognize<Req> + Clone + Send + Sync + 'static,
     Mk: svc::Make<Rec::Target> + Clone + Send + Sync + 'static,
@@ -136,9 +131,9 @@ where
     type Value = Service<Req, Rec, Mk>;
     type Error = ();
 
-    fn make(&self, config: &Config<Req, Rec>) -> Result<Self::Value, Self::Error> {
+    fn make(&self, config: &Config) -> Result<Self::Value, Self::Error> {
         let inner = Router::new(
-            config.recognize.clone(),
+            self.recognize.clone(),
             self.inner.clone(),
             config.capacity,
             config.max_idle_age,

@@ -116,7 +116,7 @@ impl Source {
 // for logging context
 impl fmt::Display for Source {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        unimplemented!()
+        self.remote.fmt(f)
     }
 }
 
@@ -253,7 +253,7 @@ where
         if disable_protocol_detection {
             trace!("protocol detection disabled for {:?}", orig_dst);
             let fwd = tcp::forward(io, &self.connect, &source);
-            let fut = self.drain_signal.watch(fwd, |_| {});
+            let fut = self.drain_signal.clone().watch(fwd, |_| {});
             return log.future(Either::B(fut));
         }
 

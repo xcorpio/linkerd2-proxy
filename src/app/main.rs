@@ -20,12 +20,16 @@ use inbound;
 //use outbound;
 use logging;
 use metrics;
-use proxy;
+use proxy::{
+    self,
+    buffer, limit,
+    http::{insert_target, orig_proto, router},
+};
 use svc;
 use task;
-use svc::{Layer as _Layer, Make as _Make};
+use svc::{Make as _Make};
 use telemetry::{self, http::timestamp_request_open};
-use transport::{self, connect, tls, AddrInfo, Connection, GetOriginalDst, MakePort};
+use transport::{self, connect, tls, Connection, GetOriginalDst, MakePort};
 
 use super::config::Config;
 
@@ -174,9 +178,9 @@ where
         );
 
         let (taps, observe) = control::Observe::new(100);
-        let (http_sensors, http_report) = telemetry::http::new(config.metrics_retain_idle, &taps);
+        let (_http_sensors, http_report) = telemetry::http::new(config.metrics_retain_idle, &taps);
 
-        let (transport_registry, transport_report) = transport::metrics::new();
+        let (_transport_registry, transport_report) = transport::metrics::new();
 
         let (tls_config_sensor, tls_config_report) = telemetry::tls_config_reload::new();
 
@@ -205,7 +209,7 @@ where
                 panic!("invalid DNS configuration: {:?}", e);
             });
 
-        let (resolver, resolver_bg) = control::destination::new(
+        let (_resolver, resolver_bg) = control::destination::new(
             dns_resolver.clone(),
             config.namespaces.clone(),
             control_host_and_port,
@@ -217,15 +221,15 @@ where
         const MAX_IN_FLIGHT: usize = 10_000;
 
         // let outbound = timestamp_request_open::Layer::new()
-        //     .and_then(proxy::limit::Layer::new(MAX_IN_FLIGHT))
-        //     .and_then(proxy::buffer::Layer::new())
-        //     .and_then(proxy::http::router::Layer::new(
+        //     .and_then(limit::Layer::new(MAX_IN_FLIGHT))
+        //     .and_then(buffer::Layer::new())
+        //     .and_then(router::Layer::new(
         //         outbound::Recognize::new(),
         //         config.outbound_router_capacity,
         //         config.outbound_router_max_idle_age,
         //     ))
-        //     .and_then(proxy::http::balance::Layer::new(outbound::Resolve::new(resolver)))
-        //     .and_then(proxy::http::orig_proto::upgrade());
+        //     .and_then(balance::Layer::new(outbound::Resolve::new(resolver)))
+        //     .and_then(orig_proto::upgrade());
 
         let (drain_tx, drain_rx) = drain::channel();
 
@@ -234,20 +238,24 @@ where
 
             let connect = connect::Make::new();
 
-            let router = proxy::limit::Layer::new(MAX_IN_FLIGHT)
-                .and_then(proxy::buffer::Layer::new())
-                .and_then(proxy::http::orig_proto::downgrade())
-                .and_then(proxy::http::router::Layer::new())
-                .bind(inbound::Client::new(connect.clone()))
-                .make(&proxy::http::router::Config::new(
-                    inbound::Recognize::new(config.private_forward.map(|a| a.into())),
-                    config.inbound_router_capacity,
-                    config.inbound_router_max_idle_age,
-                ))
+            let endpoint = inbound::Client::new(connect.clone());
+
+            let default_fwd_addr = config.private_forward.map(|a| a.into());
+            let router_stack = endpoint
+                .push(router::Layer::new(inbound::Recognize::new(default_fwd_addr)))
+                .push(orig_proto::downgrade())
+                .push(buffer::Layer)
+                .push(limit::Layer::new(MAX_IN_FLIGHT));
+
+            let capacity = config.inbound_router_capacity;
+            let max_idle_age = config.inbound_router_max_idle_age;
+            let router = router_stack
+                .make(&router::Config::new("in", capacity, max_idle_age))
                 .expect("inbound router");
 
-            let source_stack = timestamp_request_open::Layer::new()
-                .bind(svc::Shared::new(router));
+            let source_stack = svc::Shared::new(router)
+                .push(insert_target::Layer::<proxy::server::Source>::new())
+                .push(timestamp_request_open::Layer::<proxy::server::Source>::new());
 
             serve(
                 "in",
@@ -291,9 +299,9 @@ where
                     );
 
                     rt.spawn(::logging::admin().bg("resolver").future(resolver_bg));
-                    // tap is already wrapped in a logging Future.
+                    // tap is already pushped in a logging Future.
                     rt.spawn(tap);
-                    // metrics_server is already wrapped in a logging Future.
+                    // metrics_server is already pushped in a logging Future.
                     rt.spawn(metrics);
                     rt.spawn(::logging::admin().bg("dns-resolver").future(dns_bg));
 

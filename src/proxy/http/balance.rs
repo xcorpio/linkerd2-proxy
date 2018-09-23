@@ -2,7 +2,7 @@ extern crate tower_balance;
 extern crate tower_discover;
 extern crate tower_h2_balance;
 
-use futures::{Async, Poll, Stream};
+use futures::{Async, Poll};
 use http;
 use std::{error, fmt};
 use std::marker::PhantomData;
@@ -32,7 +32,7 @@ pub struct Make<T, R, M> {
     _p: PhantomData<fn() -> T>,
 }
 
-struct Discover<R: Resolution, M: svc::Make<R::Endpoint>> {
+pub struct Discover<R: Resolution, M: svc::Make<R::Endpoint>> {
     resolution: R,
     make: M,
 }

@@ -113,7 +113,7 @@ where
 
 impl fmt::Display for Endpoint {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        unimplemented!();
+        self.addr.fmt(f)
     }
 }
 

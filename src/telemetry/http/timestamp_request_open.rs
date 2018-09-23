@@ -1,6 +1,5 @@
 use futures::Poll;
 use http;
-use std::marker::PhantomData;
 use std::time::Instant;
 
 use svc;
@@ -25,8 +24,8 @@ pub struct TimestampRequestOpen<S> {
 }
 
 /// Layers a `TimestampRequestOpen` middleware on an HTTP client.
-#[derive(Clone, Debug)]
-pub struct Layer<T, B>(PhantomData<fn() -> (T, B)>);
+#[derive(Debug)]
+pub struct Layer<T>(::std::marker::PhantomData<fn() -> T>);
 
 /// Uses an `M`-typed `Make` to build a `TimestampRequestOpen` service.
 #[derive(Clone, Debug)]
@@ -55,13 +54,19 @@ where
 
 // === impl Layer ===
 
-impl<T, B> Layer<T, B> {
+impl<T> Layer<T> {
     pub fn new() -> Self {
-        Layer(PhantomData)
+        Layer(::std::marker::PhantomData)
     }
 }
 
-impl<N, T, B> svc::Layer<T, T, N> for Layer<T, B>
+impl<T> Clone for Layer<T> {
+    fn clone(&self) -> Self {
+        Self::new()
+    }
+}
+
+impl<N, T, B> svc::Layer<T, T, N> for Layer<T>
 where
     N: svc::Make<T>,
     N::Value: svc::Service<Request = http::Request<B>>,
