@@ -1,33 +1,33 @@
 use bytes;
+use futures::*;
 use h2;
 use http;
-use futures::*;
 use indexmap::IndexSet;
-use std::{error, fmt, io};
 use std::net::SocketAddr;
 use std::thread;
 use std::time::SystemTime;
+use std::{error, fmt, io};
 use tokio::executor::{self, DefaultExecutor, Executor};
 use tokio::runtime::current_thread;
 use tower_h2;
 
-use Conditional;
 use control;
-use drain;
 use dns;
+use drain;
 use futures;
 use logging;
 use metrics;
 use proxy::{
-    self,
-    buffer, limit,
+    self, buffer,
     http::{balance, insert_target, normalize_uri, orig_proto, router},
+    limit,
 };
 use svc;
-use task;
 use svc::{Layer as _Layer, Make as _Make};
+use task;
 use telemetry::{self, http::timestamp_request_open};
 use transport::{self, connect, tls, Connection, GetOriginalDst, MakePort};
+use Conditional;
 
 use super::config::Config;
 
@@ -63,11 +63,7 @@ impl<G> Main<G>
 where
     G: GetOriginalDst + Clone + Send + 'static,
 {
-    pub fn new<R>(
-        config: Config,
-        get_original_dst: G,
-        runtime: R
-    ) -> Self
+    pub fn new<R>(config: Config, get_original_dst: G, runtime: R) -> Self
     where
         R: Into<task::MainRuntime>,
     {
@@ -78,34 +74,34 @@ where
         // TODO: Serve over TLS.
         let control_listener = MakePort::new(
             config.control_listener.addr,
-            Conditional::None(tls::ReasonForNoIdentity::NotImplementedForTap.into()))
-            .expect("controller listener bind");
+            Conditional::None(tls::ReasonForNoIdentity::NotImplementedForTap.into()),
+        ).expect("controller listener bind");
 
         let inbound_listener = {
             let tls = config.tls_settings.as_ref().and_then(|settings| {
-                tls_config_watch.server.as_ref().map(|tls_server_config| {
-                    tls::ConnectionConfig {
+                tls_config_watch
+                    .server
+                    .as_ref()
+                    .map(|tls_server_config| tls::ConnectionConfig {
                         server_identity: settings.pod_identity.clone(),
                         config: tls_server_config.clone(),
-                    }
-                })
+                    })
             });
-            MakePort::new(config.public_listener.addr, tls)
-                .expect("public listener bind")
+            MakePort::new(config.public_listener.addr, tls).expect("public listener bind")
         };
 
         let outbound_listener = MakePort::new(
             config.private_listener.addr,
-            Conditional::None(tls::ReasonForNoTls::InternalTraffic))
-            .expect("private listener bind");
+            Conditional::None(tls::ReasonForNoTls::InternalTraffic),
+        ).expect("private listener bind");
 
         let runtime = runtime.into();
 
         // TODO: Serve over TLS.
         let metrics_listener = MakePort::new(
             config.metrics_listener.addr,
-            Conditional::None(tls::ReasonForNoIdentity::NotImplementedForMetrics.into()))
-            .expect("metrics listener bind");
+            Conditional::None(tls::ReasonForNoIdentity::NotImplementedForMetrics.into()),
+        ).expect("metrics listener bind");
 
         Main {
             config,
@@ -119,7 +115,6 @@ where
             runtime,
         }
     }
-
 
     pub fn control_addr(&self) -> SocketAddr {
         self.control_listener.local_addr()
@@ -187,18 +182,19 @@ where
             transport_report,
             tls_config_report,
             telemetry::process::Report::new(start_time),
-       );
+        );
 
         let tls_client_config = tls_config_watch.client.clone();
         let tls_cfg_bg = tls_config_watch.start(tls_config_sensor);
 
         let controller_tls = config.tls_settings.as_ref().and_then(|settings| {
-            settings.controller_identity.as_ref().map(|controller_identity| {
-                tls::ConnectionConfig {
+            settings
+                .controller_identity
+                .as_ref()
+                .map(|controller_identity| tls::ConnectionConfig {
                     server_identity: controller_identity.clone(),
                     config: tls_client_config.clone(),
-                }
-            })
+                })
         });
 
         let (dns_resolver, dns_bg) = dns::Resolver::from_system_config_and_env(&config)
@@ -234,35 +230,39 @@ where
             //
             // Furthermore, HTTP/2 requests may be downgraded to HTTP/1.1 per
             // `orig-proto` headers.
-            let source_stack = timestamp_request_open::Layer::new()
-                .and_then(insert_target::Layer::new());
+            let source_stack =
+                timestamp_request_open::Layer::new().and_then(insert_target::Layer::new());
 
             // The router stack is shared across all source stacks, hence being
             // buffered and
             let router_stack = router::Layer::new(outbound::Recognize::new());
 
-            let dst_stack =
-                limit::Layer::new(MAX_IN_FLIGHT)
+            let dst_stack = limit::Layer::new(MAX_IN_FLIGHT)
                 .and_then(buffer::Layer::new())
                 .and_then(balance::Layer::new(outbound::Resolve::new(resolver)));
+
+            let upgrade_to_h2 = svc::When::new(
+                |ep: &outbound::Endpoint| {
+                    ep.can_use_orig_proto()
+                        && !ep.settings.is_http2()
+                        && !ep.settings.is_h1_upgrade()
+                },
+                // TODO this layer should change the ep.settings
+                orig_proto::upgrade(),
+            );
 
             // For each endpoint,
             //
             // TODO sensors
-            let endpoint_h1_stack =
-                svc::When::new(
-                    |ep: &outbound::Endpoint| {
-                        ep.can_use_orig_proto() &&
-                        !ep.settings.is_http2() &&
-                        !ep.settings.is_h1_upgrade()
-                    },
-                    orig_proto::upgrade())
+            let endpoint_h1_stack = upgrade_to_h2
                 .and_then(svc::When::new(
                     |ep: &outbound::Endpoint| !ep.settings.was_absolute_form(),
-                    normalize_uri::Layer::new()))
+                    normalize_uri::Layer::new(),
+                ))
                 .and_then(svc::When::new(
                     |ep: &outbound::Endpoint| !ep.settings.can_reuse_clients(),
-                    svc::make_per_request::Layer::new()));
+                    svc::make_per_request::Layer::new(),
+                ));
 
             // Establishes connections to remote peers.
             //
@@ -317,13 +317,13 @@ where
                 .and_then(buffer::Layer::new());
 
             // TODO sensors
-            let endpoint_h1_stack =
-                svc::When::new(
-                    |ep: &inbound::Endpoint| !ep.settings.was_absolute_form(),
-                    normalize_uri::Layer::new())
-                .and_then(svc::When::new(
-                    |ep: &inbound::Endpoint| !ep.settings.can_reuse_clients(),
-                    svc::make_per_request::Layer::new()));
+            let endpoint_h1_stack = svc::When::new(
+                |ep: &inbound::Endpoint| !ep.settings.was_absolute_form(),
+                normalize_uri::Layer::new(),
+            ).and_then(svc::When::new(
+                |ep: &inbound::Endpoint| !ep.settings.can_reuse_clients(),
+                svc::make_per_request::Layer::new(),
+            ));
 
             // Establishes connections to the local application.
             let connect = connect::Make::new();
@@ -360,8 +360,8 @@ where
                 .spawn(move || {
                     use api::tap::server::TapServer;
 
-                    let mut rt = current_thread::Runtime::new()
-                        .expect("initialize admin thread runtime");
+                    let mut rt =
+                        current_thread::Runtime::new().expect("initialize admin thread runtime");
 
                     let tap = serve_tap(control_listener, TapServer::new(observe));
 
@@ -426,10 +426,8 @@ where
     <C::Value as connect::Connect>::Future: Send + 'static,
     <C::Value as connect::Connect>::Error: fmt::Debug + 'static,
     R: svc::Make<proxy::server::Source, Error = ()> + Send + Clone + 'static,
-    R::Value: svc::Service<
-        Request = http::Request<proxy::http::Body>,
-        Response = http::Response<B>,
-    >,
+    R::Value:
+        svc::Service<Request = http::Request<proxy::http::Body>, Response = http::Response<B>>,
     R::Value: Send + 'static,
     <R::Value as svc::Service>::Error: error::Error + Send + Sync + 'static,
     <R::Value as svc::Service>::Future: Send + 'static,
@@ -460,17 +458,14 @@ where
     let log = server.log().clone();
 
     let accept = {
-        let fut = bound_port.listen_and_fold(
-            (),
-            move |(), (connection, remote_addr)| {
-                let s = server.serve(connection, remote_addr);
-                // Logging context is configured by the server.
-                let r = DefaultExecutor::current()
-                    .spawn(Box::new(s))
-                    .map_err(task::Error::into_io);
-                future::result(r)
-            },
-        );
+        let fut = bound_port.listen_and_fold((), move |(), (connection, remote_addr)| {
+            let s = server.serve(connection, remote_addr);
+            // Logging context is configured by the server.
+            let r = DefaultExecutor::current()
+                .spawn(Box::new(s))
+                .map_err(task::Error::into_io);
+            future::result(r)
+        });
         log.future(fut)
     };
 
@@ -497,7 +492,7 @@ struct Cancelable<F> {
 
 impl<F> Future for Cancelable<F>
 where
-    F: Future<Item=()>,
+    F: Future<Item = ()>,
 {
     type Item = ();
     type Error = F::Error;
@@ -518,33 +513,21 @@ fn serve_tap<N, B>(
 where
     B: tower_h2::Body + Send + 'static,
     <B::Data as bytes::IntoBuf>::Buf: Send,
-    N: svc::NewService<
-        Request = http::Request<tower_h2::RecvBody>,
-        Response = http::Response<B>
-    >
-        + Send + 'static,
-    tower_h2::server::Connection<
-        Connection,
-        N,
-        ::logging::ServerExecutor,
-        B,
-        ()
-    >: Future<Item = ()>,
+    N: svc::NewService<Request = http::Request<tower_h2::RecvBody>, Response = http::Response<B>>
+        + Send
+        + 'static,
+    tower_h2::server::Connection<Connection, N, ::logging::ServerExecutor, B, ()>:
+        Future<Item = ()>,
 {
     let log = logging::admin().server("tap", bound_port.local_addr());
 
     let h2_builder = h2::server::Builder::default();
-    let server = tower_h2::Server::new(
-        new_service,
-        h2_builder,
-        log.clone().executor(),
-    );
+    let server = tower_h2::Server::new(new_service, h2_builder, log.clone().executor());
     let fut = {
         let log = log.clone();
         // TODO: serve over TLS.
-        bound_port.listen_and_fold(
-            server,
-            move |server, (session, remote)| {
+        bound_port
+            .listen_and_fold(server, move |server, (session, remote)| {
                 let log = log.clone().with_remote(remote);
                 let serve = server.serve(session).map_err(|_| ());
 
@@ -553,8 +536,7 @@ where
                     .map(move |_| server)
                     .map_err(task::Error::into_io);
                 future::result(r)
-            },
-        )
+            })
             .map_err(|err| error!("tap listen error: {}", err))
     };
 
