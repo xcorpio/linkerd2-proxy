@@ -27,7 +27,7 @@ use proxy::{
 };
 use svc;
 use task;
-use svc::{Make as _Make};
+use svc::Make as _Make;
 use telemetry::{self, http::timestamp_request_open};
 use transport::{self, connect, tls, Connection, GetOriginalDst, MakePort};
 
@@ -244,7 +244,7 @@ where
             let router_stack = endpoint
                 .push(router::Layer::new(inbound::Recognize::new(default_fwd_addr)))
                 .push(orig_proto::downgrade())
-                .push(buffer::Layer)
+                .push(buffer::Layer::new())
                 .push(limit::Layer::new(MAX_IN_FLIGHT));
 
             let capacity = config.inbound_router_capacity;
@@ -254,8 +254,8 @@ where
                 .expect("inbound router");
 
             let source_stack = svc::Shared::new(router)
-                .push(insert_target::Layer::<proxy::server::Source>::new())
-                .push(timestamp_request_open::Layer::<proxy::server::Source>::new());
+                .push(insert_target::Layer::new())
+                .push(timestamp_request_open::Layer::new());
 
             serve(
                 "in",

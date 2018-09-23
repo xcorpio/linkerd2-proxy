@@ -26,6 +26,8 @@ extern crate futures;
 extern crate log;
 extern crate tower_service as svc;
 
+use std::marker::PhantomData;
+
 pub mod either;
 pub mod make_new_service;
 pub mod make_per_request;
@@ -53,5 +55,30 @@ pub trait Make<Target> {
         Self: Sized,
     {
         layer.bind(self)
+    }
+}
+
+
+#[derive(Debug)]
+pub struct Shared<T, V>(V, PhantomData<fn() -> T>);
+
+impl<T, V: Clone> Shared<T,V> {
+    pub fn new(v: V) -> Self {
+        Shared(v, PhantomData)
+    }
+}
+
+impl<T, V: Clone> Clone for Shared<T, V> {
+    fn clone(&self) -> Self {
+        Self::new(self.0.clone())
+    }
+}
+
+impl<T, V: Clone> Make<T> for Shared<T, V> {
+    type Value = V;
+    type Error = ();
+
+    fn make(&self, _: &T) -> Result<V, ()> {
+        Ok(self.0.clone())
     }
 }
