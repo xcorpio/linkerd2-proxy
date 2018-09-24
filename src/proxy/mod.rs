@@ -29,16 +29,6 @@ pub use self::reconnect::Reconnect;
 pub use self::resolve::{Resolve, Resolution};
 pub use self::server::Server;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ProtocolHint {
-    /// We don't what the destination understands, so forward messages in the
-    /// protocol we received them in.
-    Unknown,
-    /// The destination can receive HTTP2 messages.
-    Http2,
-}
-
-
 pub trait Accept<T: AsyncRead + AsyncWrite> {
     type Io: AsyncRead + AsyncWrite;
 

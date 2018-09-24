@@ -52,12 +52,12 @@ where
         }
     }
 
-    pub fn with_decay(self, decay: Duration) -> Self {
-        Self {
-            decay,
-            .. self
-        }
-    }
+    // pub fn with_decay(self, decay: Duration) -> Self {
+    //     Self {
+    //         decay,
+    //         .. self
+    //     }
+    // }
 }
 
 impl<T, R, M, A, B> svc::Layer<T, R::Endpoint, M> for Layer<T, R>

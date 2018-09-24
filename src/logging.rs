@@ -197,10 +197,6 @@ pub fn admin() -> Section {
     Section::Admin
 }
 
-pub fn proxy() -> Section {
-    Section::Proxy
-}
-
 #[derive(Copy, Clone)]
 pub enum Section {
     Proxy,
