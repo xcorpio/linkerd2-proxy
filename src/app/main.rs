@@ -20,7 +20,7 @@ use metrics;
 use proxy::{
     self, buffer,
     http::{balance, client, insert_target, normalize_uri, router},
-    limit,
+    limit, timeout,
 };
 use svc;
 use svc::{Layer as _Layer, Make as _Make};
@@ -87,11 +87,11 @@ where
                         config: tls_server_config.clone(),
                     })
             });
-            MakePort::new(config.public_listener.addr, tls).expect("public listener bind")
+            MakePort::new(config.inbound_listener.addr, tls).expect("public listener bind")
         };
 
         let outbound_listener = MakePort::new(
-            config.private_listener.addr,
+            config.outbound_listener.addr,
             Conditional::None(tls::ReasonForNoTls::InternalTraffic),
         ).expect("private listener bind");
 
@@ -155,7 +155,7 @@ where
         info!(
             "proxying on {:?} to {:?}",
             inbound_listener.local_addr(),
-            config.private_forward
+            config.inbound_forward
         );
         info!(
             "serving Prometheus metrics on {:?}",
@@ -238,6 +238,7 @@ where
             let router_stack = router::Layer::new(outbound::Recognize::new());
 
             let dst_stack = limit::Layer::new(MAX_IN_FLIGHT)
+                .and_then(timeout::Layer::new(config.bind_timeout))
                 .and_then(buffer::Layer::new())
                 .and_then(balance::Layer::new(outbound::Resolve::new(resolver)));
 
@@ -254,12 +255,12 @@ where
             // selectively. For HTTP/2 stacks, for instance, neither service will be
             // employed.
             let endpoint_h1_stack = svc::When::new(
-                |ep: &outbound::Endpoint| !ep.settings.was_absolute_form(),
-                normalize_uri::Layer::new(),
-            ).and_then(svc::When::new(
-                |ep: &outbound::Endpoint| !ep.settings.can_reuse_clients(),
-                svc::make_per_request::Layer::new(),
-            ));
+                    |ep: &outbound::Endpoint| !ep.settings.was_absolute_form(),
+                    normalize_uri::Layer::new(),
+                ).and_then(svc::When::new(
+                    |ep: &outbound::Endpoint| !ep.settings.can_reuse_clients(),
+                    svc::make_per_request::Layer::new(),
+                ));
 
             // The TLS status of outbound requests depends on the local
             // configuration. As the local configuration changes, the inner
@@ -272,7 +273,8 @@ where
                 // TODO: sensors here
 
             // Establishes connections to remote peers.
-            let connect = connect::Make::new();
+            let connect = proxy::timeout::Layer::new(config.outbound_connect_timeout)
+                .bind(connect::Make::new());
 
             let capacity = config.outbound_router_capacity;
             let max_idle_age = config.outbound_router_max_idle_age;
@@ -321,7 +323,7 @@ where
             //
             // If there is no `SO_ORIGINAL_DST` for an inbound socket,
             // `default_fwd_addr` may be used.
-            let default_fwd_addr = config.private_forward.map(|a| a.into());
+            let default_fwd_addr = config.inbound_forward.map(|a| a.into());
             let router_stack = router::Layer::new(inbound::Recognize::new(default_fwd_addr))
                 .and_then(limit::Layer::new(MAX_IN_FLIGHT))
                 .and_then(buffer::Layer::new());
@@ -338,7 +340,8 @@ where
             ));
 
             // Establishes connections to the local application.
-            let connect = connect::Make::new();
+            let connect = proxy::timeout::Layer::new(config.inbound_connect_timeout)
+                .bind(connect::Make::new());
 
             // Build a router using the above policy
             let capacity = config.inbound_router_capacity;
