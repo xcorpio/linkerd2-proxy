@@ -32,14 +32,11 @@ impl<A> router::Recognize<http::Request<A>> for Recognize {
     type Target = Endpoint;
 
     fn recognize(&self, req: &http::Request<A>) -> Option<Self::Target> {
-        let source = req.extensions().get::<Source>()?;
-        trace!(
-            "recognize local={} orig={:?}",
-            source.local,
-            source.orig_dst
-        );
-
-        let addr = source.orig_dst_if_not_local().or(self.default_addr)?;
+        let src = req.extensions().get::<Source>();
+        trace!("recognize: src={:?}", src);
+        let addr = src
+            .and_then(|s| s.orig_dst_if_not_local())
+            .or(self.default_addr)?;
         let settings = Settings::detect(req);
         Some(Endpoint { addr, settings })
     }
@@ -124,11 +121,11 @@ mod tests {
     use proxy::http::settings::{Host, Settings};
 
     use super::{Endpoint, Recognize};
-    use ctx;
+    use proxy::server::Source;
     use transport::tls;
     use Conditional;
 
-    fn make_target_http1(addr: net::SocketAddr) -> Endpoint {
+    fn make_h1_endpoint(addr: net::SocketAddr) -> Endpoint {
         let settings = Settings::Http1 {
             host: Host::NoAuthority,
             is_h1_upgrade: false,
@@ -146,20 +143,13 @@ mod tests {
             local: net::SocketAddr,
             remote: net::SocketAddr
         ) -> bool {
-            let ctx = ctx::Proxy::Inbound;
-
-            let inbound = Recognize::default();
-
-            let srv_ctx = ctx::transport::Server::new(
-                ctx, &local, &remote, &Some(orig_dst), TLS_DISABLED);
-
-            let rec = srv_ctx.orig_dst_if_not_local().map(make_target_http1);
+            let src = Source::for_test(remote, local, Some(orig_dst), TLS_DISABLED);
+            let rec = src.orig_dst_if_not_local().map(make_h1_endpoint);
 
             let mut req = http::Request::new(());
-            req.extensions_mut()
-                .insert(srv_ctx);
+            req.extensions_mut().insert(src);
 
-            inbound.recognize(&req) == rec
+            Recognize::default().recognize(&req) == rec
         }
 
         fn recognize_default_no_orig_dst(
@@ -167,25 +157,16 @@ mod tests {
             local: net::SocketAddr,
             remote: net::SocketAddr
         ) -> bool {
-            let inbound = Recognize::new(default);
-
             let mut req = http::Request::new(());
             req.extensions_mut()
-                .insert(ctx::transport::Server::new(
-                    ctx::Proxy::Inbound,
-                    &local,
-                    &remote,
-                    &None,
-                    TLS_DISABLED,
-                ));
+                .insert(Source::for_test(remote, local, None, TLS_DISABLED));
 
-            inbound.recognize(&req) == default.map(make_target_http1)
+            Recognize::new(default).recognize(&req) == default.map(make_h1_endpoint)
         }
 
         fn recognize_default_no_ctx(default: Option<net::SocketAddr>) -> bool {
-            let inbound = Recognize::new(default);
             let req = http::Request::new(());
-            inbound.recognize(&req) == default.map(make_target_http1)
+            Recognize::new(default).recognize(&req) == default.map(make_h1_endpoint)
         }
 
         fn recognize_default_no_loop(
@@ -193,19 +174,11 @@ mod tests {
             local: net::SocketAddr,
             remote: net::SocketAddr
         ) -> bool {
-            let inbound = Recognize::new(default);
-
             let mut req = http::Request::new(());
             req.extensions_mut()
-                .insert(ctx::transport::Server::new(
-                    ctx::Proxy::Inbound,
-                    &local,
-                    &remote,
-                    &Some(local),
-                    TLS_DISABLED,
-                ));
+                .insert(Source::for_test(remote, local, Some(local), TLS_DISABLED));
 
-            inbound.recognize(&req) == default.map(make_target_http1)
+            Recognize::new(default).recognize(&req) == default.map(make_h1_endpoint)
         }
     }
 }

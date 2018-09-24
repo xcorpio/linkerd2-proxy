@@ -9,8 +9,8 @@ use std::io;
 use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 
-use api::destination as pb;
-use api::net;
+use linkerd2_proxy_api::destination as pb;
+use linkerd2_proxy_api::net;
 
 pub fn new() -> Controller {
     Controller::new()

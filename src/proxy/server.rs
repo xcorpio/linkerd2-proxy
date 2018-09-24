@@ -78,7 +78,7 @@ impl Source {
             Some(orig_dst) => {
                 // If the original destination is actually the listening socket,
                 // we don't want to create a loop.
-                if Self::same_addr(&orig_dst, &self.local) {
+                if Self::same_addr(orig_dst, self.local) {
                     None
                 } else {
                     Some(orig_dst)
@@ -87,7 +87,7 @@ impl Source {
         }
     }
 
-    fn same_addr(a0: &SocketAddr, a1: &SocketAddr) -> bool {
+    fn same_addr(a0: SocketAddr, a1: SocketAddr) -> bool {
         use std::net::IpAddr::{V4, V6};
         (a0.port() == a1.port()) && match (a0.ip(), a1.ip()) {
             (V6(a0), V4(a1)) => a0.to_ipv4() == Some(a1),
