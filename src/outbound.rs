@@ -302,6 +302,7 @@ impl fmt::Display for Endpoint {
     }
 }
 
+// Makes it possible to build a client::Make<Endpoint>.
 impl From<Endpoint> for client::Config {
     fn from(ep: Endpoint) -> Self {
         client::Config::new(ep.connect, ep.settings)

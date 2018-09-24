@@ -100,6 +100,7 @@ where
     }
 }
 
+// Makes it possible to build a client::Make<Endpoint>.
 impl From<Endpoint> for client::Config {
     fn from(ep: Endpoint) -> Self {
         let tls = Conditional::None(tls::ReasonForNoTls::InternalTraffic);
