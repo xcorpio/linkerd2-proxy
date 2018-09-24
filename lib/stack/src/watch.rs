@@ -1,6 +1,8 @@
 extern crate futures_watch;
 
 use futures::{future::MapErr, Async, Future, Poll, Stream};
+use std::{error, fmt};
+
 use svc;
 
 /// A Service that updates itself as a Watch updates.
@@ -63,6 +65,17 @@ where
         self.inner.call(req).map_err(Error::Inner)
     }
 }
+
+impl<I: fmt::Display, M: fmt::Display> fmt::Display for Error<I, M> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Error::Inner(i) => i.fmt(f),
+            Error::Make(m) => m.fmt(f),
+        }
+    }
+}
+
+impl<I: error::Error, M: error::Error> error::Error for Error<I, M> {}
 
 #[cfg(test)]
 mod tests {

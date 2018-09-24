@@ -1,4 +1,5 @@
 use futures::{Async, Poll};
+use futures_watch::Watch;
 use http;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
@@ -14,9 +15,6 @@ use svc;
 use transport::{connect, tls, DnsNameAndPort, Host, HostAndPort};
 use Conditional;
 
-#[derive(Clone, Debug, Default)]
-pub struct Recognize {}
-
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Destination {
     pub name_or_addr: NameOrAddr,
@@ -31,6 +29,9 @@ pub struct Endpoint {
     pub metadata: Metadata,
     _p: (),
 }
+
+#[derive(Clone, Debug, Default)]
+pub struct Recognize {}
 
 /// Describes a destination for HTTP requests.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -51,11 +52,42 @@ pub enum Resolution<R: resolve::Resolution> {
     Addr(Option<SocketAddr>, Settings),
 }
 
+pub fn orig_proto_upgrade<M>() -> LayerUpgrade<M> {
+    LayerUpgrade(PhantomData)
+}
+
+#[derive(Debug)]
+pub struct LayerUpgrade<M>(PhantomData<fn() -> (M)>);
+
+#[derive(Clone, Debug)]
+pub struct MakeUpgrade<M>
+where
+    M: svc::Make<Endpoint>,
+{
+    inner: M,
+}
+
+#[derive(Debug)]
+pub struct LayerTlsConfig<M: svc::Make<Endpoint>> {
+    watch: Watch<tls::ConditionalClientConfig>,
+    _p: PhantomData<fn() -> (M)>,
+}
+
+#[derive(Clone, Debug)]
+pub struct MakeTlsConfig<M: svc::Make<Endpoint>> {
+    watch: Watch<tls::ConditionalClientConfig>,
+    inner: M,
+}
+
+#[derive(Clone, Debug)]
+pub struct MakeEndpointWithTls<M: svc::Make<Endpoint>> {
+    endpoint: Endpoint,
+    inner: M,
+}
+
 impl<B> router::Recognize<http::Request<B>> for Recognize {
     type Target = Destination;
 
-    // Route the request by its destination AND PROTOCOL. This prevents HTTP/1
-    // requests from being routed to HTTP/2 servers, and vice versa.
     fn recognize(&self, req: &http::Request<B>) -> Option<Self::Target> {
         let name_or_addr = Self::name_or_addr(req)?;
         let settings = Settings::detect(req);
@@ -172,10 +204,10 @@ where
                 resolve::Update::Remove(addr) =>
                     Ok(Async::Ready(resolve::Update::Remove(addr))),
                 resolve::Update::Make(addr, metadata) => {
-                    // If the endpoint does not have TLS, notethe reason.
-                    // Otherwise, indicate that we don't (yet have a TLS
-                    // config). This value may be changed by a stack layer
-                    // that provides TLS configuration.
+                    // If the endpoint does not have TLS, note the reason.
+                    // Otherwise, indicate that we don't (yet) have a TLS
+                    // config. This value may be changed by a stack layer that
+                    // provides TLS configuration.
                     let tls = match metadata.tls_identity() {
                         Conditional::None(reason) => reason.into(),
                         Conditional::Some(_) => tls::ReasonForNoTls::NoConfig,
@@ -214,21 +246,6 @@ impl fmt::Display for Destination {
             NameOrAddr::Addr(ref addr) => addr.fmt(f),
         }
     }
-}
-
-pub fn orig_proto_upgrade<M>() -> LayerUpgrade<M> {
-    LayerUpgrade(PhantomData)
-}
-
-#[derive(Debug)]
-pub struct LayerUpgrade<M>(PhantomData<fn() -> (M)>);
-
-#[derive(Clone, Debug)]
-pub struct MakeUpgrade<M>
-where
-    M: svc::Make<Endpoint>,
-{
-    inner: M,
 }
 
 impl<M> Clone for LayerUpgrade<M> {
@@ -291,3 +308,79 @@ impl From<Endpoint> for client::Config {
     }
 }
 
+impl<M> LayerTlsConfig<M>
+where
+    M: svc::Make<Endpoint> + Clone,
+{
+    pub fn new(watch: Watch<tls::ConditionalClientConfig>) -> Self {
+        LayerTlsConfig {
+            watch,
+            _p: PhantomData,
+        }
+    }
+}
+
+impl<M> Clone for LayerTlsConfig<M>
+where
+    M: svc::Make<Endpoint> + Clone,
+{
+    fn clone(&self) -> Self {
+        Self::new(self.watch.clone())
+    }
+}
+
+impl<M> svc::Layer<Endpoint, Endpoint, M> for LayerTlsConfig<M>
+where
+    M: svc::Make<Endpoint> + Clone,
+{
+    type Value = <MakeTlsConfig<M> as svc::Make<Endpoint>>::Value;
+    type Error = <MakeTlsConfig<M> as svc::Make<Endpoint>>::Error;
+    type Make = MakeTlsConfig<M>;
+
+    fn bind(&self, inner: M) -> Self::Make {
+        MakeTlsConfig {
+            inner,
+            watch: self.watch.clone()
+        }
+    }
+}
+
+impl<M> svc::Make<Endpoint> for MakeTlsConfig<M>
+where
+    M: svc::Make<Endpoint> + Clone,
+{
+    type Value = svc::watch::Service<tls::ConditionalClientConfig, MakeEndpointWithTls<M>>;
+    type Error = M::Error;
+
+    fn make(&self, endpoint: &Endpoint) -> Result<Self::Value, Self::Error> {
+        let inner = MakeEndpointWithTls {
+            endpoint: endpoint.clone(),
+            inner: self.inner.clone(),
+        };
+        svc::watch::Service::try(self.watch.clone(), inner)
+    }
+}
+
+impl<M> svc::Make<tls::ConditionalClientConfig> for MakeEndpointWithTls<M>
+where
+    M: svc::Make<Endpoint>,
+{
+    type Value = M::Value;
+    type Error = M::Error;
+
+    fn make(&self, client_config: &tls::ConditionalClientConfig)
+        -> Result<Self::Value, Self::Error>
+    {
+        let mut endpoint = self.endpoint.clone();
+        endpoint.connect.tls = endpoint.metadata.tls_identity().and_then(|identity| {
+            client_config.as_ref().map(|config| {
+                tls::ConnectionConfig {
+                    server_identity: identity.clone(),
+                    config: config.clone(),
+                }
+            })
+        });
+
+        self.inner.make(&endpoint)
+    }
+}

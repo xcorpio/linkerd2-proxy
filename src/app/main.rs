@@ -261,6 +261,10 @@ where
                 svc::make_per_request::Layer::new(),
             ));
 
+            let endpoint_inner_stack =
+                outbound::LayerTlsConfig::new(tls_client_config);
+                // TODO: metrics
+
             // Establishes connections to remote peers.
             //
             //
@@ -272,8 +276,7 @@ where
                 .and_then(dst_stack)
                 .and_then(upgrade_from_orig_proto)
                 .and_then(endpoint_h1_stack)
-                // TODO: tls config
-                // TODO: metrics
+                .and_then(endpoint_inner_stack)
                 .bind(client::Make::new("out", connect.clone()))
                 .make(&router::Config::new("out", capacity, max_idle_age))
                 .expect("outbound router");
