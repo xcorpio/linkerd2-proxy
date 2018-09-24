@@ -105,10 +105,12 @@ where
 
     fn make(&self, target: &T) -> Result<Self::Value, Self::Error> {
         if !self.predicate.apply(&target) {
+            debug!("predicate does not apply");
             self.next
                 .make(&target)
                 .map(super::Either::A)
         } else {
+            debug!("predicate applies");
             self.layer
                 .bind(self.next.clone())
                 .make(&target)

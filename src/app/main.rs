@@ -251,11 +251,18 @@ where
             // `normalize_uri` and `make_per_request` are applied on the stack
             // selectively. For HTTP/2 stacks, for instance, neither service will be
             // employed.
-            let endpoint_h1_stack = svc::When::new(
-                    |ep: &outbound::Endpoint| !ep.settings.was_absolute_form(),
+            let endpoint_h1_stack =
+                svc::When::new(
+                    |ep: &outbound::Endpoint| {
+                        !ep.settings.is_http2() &&
+                        !ep.settings.was_absolute_form()
+                    },
                     normalize_uri::Layer::new(),
                 ).and_then(svc::When::new(
-                    |ep: &outbound::Endpoint| !ep.settings.can_reuse_clients(),
+                    |ep: &outbound::Endpoint| {
+                        !ep.settings.is_http2() &&
+                        !ep.settings.can_reuse_clients()
+                    },
                     svc::make_per_request::Layer::new(),
                 ));
 
@@ -329,10 +336,16 @@ where
             // selectively. For HTTP/2 stacks, for instance, neither service will be
             // employed.
             let endpoint_h1_stack = svc::When::new(
-                |ep: &inbound::Endpoint| !ep.settings.was_absolute_form(),
+                |ep: &inbound::Endpoint| {
+                    !ep.settings.is_http2() &&
+                    !ep.settings.was_absolute_form()
+                },
                 normalize_uri::Layer::new(),
             ).and_then(svc::When::new(
-                |ep: &inbound::Endpoint| !ep.settings.can_reuse_clients(),
+                |ep: &inbound::Endpoint| {
+                    !ep.settings.is_http2() &&
+                    !ep.settings.can_reuse_clients()
+                },
                 svc::make_per_request::Layer::new(),
             ));
 
