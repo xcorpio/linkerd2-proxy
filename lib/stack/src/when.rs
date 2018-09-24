@@ -7,7 +7,7 @@ pub trait Predicate<T> {
 pub struct Layer<T, P, N, L>
 where
     P: Predicate<T> + Clone,
-    L: super::Layer<T, T, N> + Clone,
+    L: super::Layer<T, T, N, Error = N::Error> + Clone,
     N: super::Make<T>,
 {
     predicate: P,
@@ -31,7 +31,7 @@ impl<T, P, N, L> Layer<T, P, N, L>
 where
     P: Predicate<T> + Clone,
     N: super::Make<T> + Clone,
-    L: super::Layer<T, T, N> + Clone,
+    L: super::Layer<T, T, N, Error = N::Error> + Clone,
     L::Make: super::Make<T>,
 {
     pub fn new(predicate: P, inner: L) -> Self {
@@ -47,7 +47,7 @@ impl<T, P, N, L> Clone for Layer<T, P, N, L>
 where
     P: Predicate<T> + Clone,
     N: super::Make<T> + Clone,
-    L: super::Layer<T, T, N> + Clone,
+    L: super::Layer<T, T, N, Error = N::Error> + Clone,
     L::Make: super::Make<T>,
 {
     fn clone(&self) -> Self {
@@ -59,7 +59,7 @@ impl<T, P, N, L> super::Layer<T, T, N> for Layer<T, P, N, L>
 where
     P: Predicate<T> + Clone,
     N: super::Make<T> + Clone,
-    L: super::Layer<T, T, N> + Clone,
+    L: super::Layer<T, T, N, Error = N::Error> + Clone,
     L::Make: super::Make<T>,
 {
     type Value = <Make<T, P, N, L> as super::Make<T>>::Value;
@@ -80,7 +80,7 @@ impl<T, P, N, L> Clone for Make<T, P, N, L>
 where
     P: Predicate<T> + Clone,
     N: super::Make<T> + Clone,
-    L: super::Layer<T, T, N> + Clone,
+    L: super::Layer<T, T, N, Error = N::Error> + Clone,
     L::Make: super::Make<T>,
 {
     fn clone(&self) -> Self {
@@ -97,24 +97,22 @@ impl<T, P, N, L> super::Make<T> for Make<T, P, N, L>
 where
     P: Predicate<T> + Clone,
     N: super::Make<T> + Clone,
-    L: super::Layer<T, T, N>,
+    L: super::Layer<T, T, N, Error = N::Error>,
     L::Make: super::Make<T>,
 {
     type Value = super::Either<N::Value, L::Value>;
-    type Error = super::Either<N::Error, L::Error>;
+    type Error = N::Error;
 
     fn make(&self, target: &T) -> Result<Self::Value, Self::Error> {
         if !self.predicate.apply(&target) {
             self.next
                 .make(&target)
                 .map(super::Either::A)
-                .map_err(super::Either::A)
         } else {
             self.layer
                 .bind(self.next.clone())
                 .make(&target)
                 .map(super::Either::B)
-                .map_err(super::Either::B)
         }
     }
 }

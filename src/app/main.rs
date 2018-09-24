@@ -19,7 +19,7 @@ use logging;
 use metrics;
 use proxy::{
     self, buffer,
-    http::{balance, insert_target, normalize_uri, router},
+    http::{balance, client, insert_target, normalize_uri, router},
     limit,
 };
 use svc;
@@ -274,7 +274,7 @@ where
                 .and_then(endpoint_h1_stack)
                 // TODO: tls config
                 // TODO: metrics
-                .bind(outbound::Client::new(connect.clone()))
+                .bind(client::Make::new("out", connect.clone()))
                 .make(&router::Config::new("out", capacity, max_idle_age))
                 .expect("outbound router");
 
@@ -332,7 +332,7 @@ where
             let max_idle_age = config.inbound_router_max_idle_age;
             let router = router_stack
                 .and_then(endpoint_h1_stack)
-                .bind(inbound::Client::new(connect.clone()))
+                .bind(client::Make::new("in", connect.clone()))
                 .make(&router::Config::new("in", capacity, max_idle_age))
                 .expect("inbound router");
 
@@ -388,7 +388,7 @@ where
         }
 
         let fut = inbound
-            //.join(outbound)
+            .join(outbound)
             .map(|_| ())
             .map_err(|err| error!("main error: {:?}", err));
 

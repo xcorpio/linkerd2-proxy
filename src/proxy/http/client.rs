@@ -26,15 +26,16 @@ pub struct Config {
 }
 
 #[derive(Debug)]
-pub struct Make<C, B>
+pub struct Make<T, C, B>
 where
+    T: Into<Config>,
     C: svc::Make<connect::Target>,
     C::Value: connect::Connect + Clone + Send + Sync + 'static,
     B: tower_h2::Body + 'static,
 {
     connect: C,
     proxy_name: &'static str,
-    _p: PhantomData<fn() -> B>,
+    _p: PhantomData<fn() -> (T, B)>,
 }
 
 /// A wrapper around the error types produced by the HTTP/1 and HTTP/2 clients.
@@ -126,8 +127,9 @@ impl Config {
     }
 }
 
-impl<C, B> Make<C, B>
+impl<T, C, B> Make<T, C, B>
 where
+    T: Into<Config>,
     C: svc::Make<connect::Target>,
     C::Value: connect::Connect + Clone + Send + Sync + 'static,
     B: tower_h2::Body + 'static,
@@ -141,8 +143,9 @@ where
     }
 }
 
-impl<C, B> Clone for Make<C, B>
+impl<T, C, B> Clone for Make<T, C, B>
 where
+    T: Into<Config>,
     C: svc::Make<connect::Target> + Clone,
     C::Value: connect::Connect + Clone + Send + Sync + 'static,
     B: tower_h2::Body + 'static,
@@ -152,8 +155,9 @@ where
     }
 }
 
-impl<C, B> svc::Make<Config> for Make<C, B>
+impl<T, C, B> svc::Make<T> for Make<T, C, B>
 where
+    T: Into<Config> + Clone,
     C: svc::Make<connect::Target>,
     C::Value: connect::Connect + Clone + Send + Sync + 'static,
     <C::Value as connect::Connect>::Connected: Send,
@@ -168,7 +172,8 @@ where
     >;
     type Error = C::Error;
 
-    fn make(&self, config: &Config) -> Result<Self::Value, Self::Error> {
+    fn make(&self, t: &T) -> Result<Self::Value, Self::Error> {
+        let config = t.clone().into();
         let connect = self.connect.make(&config.target)?;
         let executor = ::logging::Client::proxy(self.proxy_name, config.target.addr)
             .with_settings(config.settings.clone())

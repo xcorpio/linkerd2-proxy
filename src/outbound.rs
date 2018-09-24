@@ -1,10 +1,8 @@
-use bytes;
 use futures::{Async, Poll};
 use http;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
-use std::{error, fmt};
-use tower_h2::Body;
+use std::fmt;
 
 use control::destination::{Metadata, ProtocolHint};
 use proxy::{
@@ -153,8 +151,10 @@ where
 
     fn resolve(&self, t: &Destination) -> Self::Resolution {
         match t.name_or_addr {
-            NameOrAddr::Name(ref name) => Resolution::Name(self.0.resolve(&name), t.settings),
-            NameOrAddr::Addr(ref addr) => Resolution::Addr(Some(*addr), t.settings),
+            NameOrAddr::Name(ref name) =>
+                Resolution::Name(self.0.resolve(&name), t.settings.clone()),
+            NameOrAddr::Addr(ref addr) =>
+                Resolution::Addr(Some(*addr), t.settings.clone()),
         }
     }
 }
@@ -168,28 +168,28 @@ where
 
     fn poll(&mut self) -> Poll<resolve::Update<Self::Endpoint>, Self::Error> {
         match self {
-            Resolution::Name(ref mut res, ref settings) => {
-                match try_ready!(res.poll()) {
-                    resolve::Update::Make(addr, metadata) => {
-                        // If the endpoint does not have TLS, notethe reason.
-                        // Otherwise, indicate that we don't (yet have a TLS
-                        // config). This value may be changed by a stack layer
-                        // that provides TLS configuration.
-                        let tls = match metadata.tls_identity() {
-                            Conditional::None(reason) => reason.into(),
-                            Conditional::Some(_) => tls::ReasonForNoTls::NoConfig,
-                        };
-                        let ep = Endpoint {
-                            connect: connect::Target::new(addr, Conditional::None(tls)),
-                            settings: settings.clone(),
-                            metadata,
-                            _p: (),
-                        };
-                        Ok(Async::Ready(resolve::Update::Make(addr, ep)))
-                    }
+            Resolution::Name(ref mut res, ref settings) => match try_ready!(res.poll()) {
+                resolve::Update::Remove(addr) =>
+                    Ok(Async::Ready(resolve::Update::Remove(addr))),
+                resolve::Update::Make(addr, metadata) => {
+                    // If the endpoint does not have TLS, notethe reason.
+                    // Otherwise, indicate that we don't (yet have a TLS
+                    // config). This value may be changed by a stack layer
+                    // that provides TLS configuration.
+                    let tls = match metadata.tls_identity() {
+                        Conditional::None(reason) => reason.into(),
+                        Conditional::Some(_) => tls::ReasonForNoTls::NoConfig,
+                    };
+                    let ep = Endpoint {
+                        connect: connect::Target::new(addr, Conditional::None(tls)),
+                        settings: settings.clone(),
+                        metadata,
+                        _p: (),
+                    };
+                    Ok(Async::Ready(resolve::Update::Make(addr, ep)))
                 }
             }
-            Resolution::Addr(ref addr, ref settings) => match addr.take() {
+            Resolution::Addr(ref mut addr, ref settings) => match addr.take() {
                 Some(addr) => {
                     let tls = tls::ReasonForNoIdentity::NoAuthorityInHttpRequest;
                     let ep = Endpoint {
@@ -223,6 +223,7 @@ pub fn orig_proto_upgrade<M>() -> LayerUpgrade<M> {
 #[derive(Debug)]
 pub struct LayerUpgrade<M>(PhantomData<fn() -> (M)>);
 
+#[derive(Clone, Debug)]
 pub struct MakeUpgrade<M>
 where
     M: svc::Make<Endpoint>,
@@ -252,18 +253,6 @@ where
     }
 }
 
-impl<M, A, B> Clone for MakeUpgrade<M>
-where
-    M: svc::Make<Endpoint> + Clone,
-    M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
-{
-    fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-        }
-    }
-}
-
 impl<M, A, B> svc::Make<Endpoint> for MakeUpgrade<M>
 where
     M: svc::Make<Endpoint>,
@@ -281,69 +270,6 @@ where
     }
 }
 
-#[derive(Debug)]
-pub struct Client<C, B>
-where
-    C: svc::Make<connect::Target>,
-    C::Value: connect::Connect + Clone + Send + Sync + 'static,
-    B: Body + 'static,
-{
-    inner: client::Make<C, B>,
-}
-
-impl<C, B> Client<C, B>
-where
-    C: svc::Make<connect::Target>,
-    C::Value: connect::Connect + Clone + Send + Sync + 'static,
-    <C::Value as connect::Connect>::Connected: Send,
-    <C::Value as connect::Connect>::Future: Send + 'static,
-    <C::Value as connect::Connect>::Error: error::Error + Send + Sync,
-    B: Body + Send + 'static,
-    <B::Data as bytes::IntoBuf>::Buf: Send + 'static,
-{
-    pub fn new(connect: C) -> Client<C, B> {
-        Self {
-            inner: client::Make::new("in", connect),
-        }
-    }
-}
-
-impl<C, B> Clone for Client<C, B>
-where
-    C: svc::Make<connect::Target> + Clone,
-    C::Value: connect::Connect + Clone + Send + Sync + 'static,
-    <C::Value as connect::Connect>::Connected: Send,
-    <C::Value as connect::Connect>::Future: Send + 'static,
-    <C::Value as connect::Connect>::Error: error::Error + Send + Sync,
-    B: Body + Send + 'static,
-    <B::Data as bytes::IntoBuf>::Buf: Send + 'static,
-{
-    fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-        }
-    }
-}
-
-impl<C, B> svc::Make<Endpoint> for Client<C, B>
-where
-    C: svc::Make<connect::Target>,
-    C::Value: connect::Connect + Clone + Send + Sync + 'static,
-    <C::Value as connect::Connect>::Connected: Send,
-    <C::Value as connect::Connect>::Future: Send + 'static,
-    <C::Value as connect::Connect>::Error: error::Error + Send + Sync,
-    B: Body + Send + 'static,
-    <B::Data as bytes::IntoBuf>::Buf: Send + 'static,
-{
-    type Value = <client::Make<C, B> as svc::Make<client::Config>>::Value;
-    type Error = <client::Make<C, B> as svc::Make<client::Config>>::Error;
-
-    fn make(&self, ep: &Endpoint) -> Result<Self::Value, Self::Error> {
-        let config = client::Config::new(ep.connect.clone(), ep.settings.clone());
-        self.inner.make(&config)
-    }
-}
-
 impl Endpoint {
     pub fn can_use_orig_proto(&self) -> bool {
         match self.metadata.protocol_hint() {
@@ -358,3 +284,10 @@ impl fmt::Display for Endpoint {
         self.connect.addr.fmt(f)
     }
 }
+
+impl From<Endpoint> for client::Config {
+    fn from(ep: Endpoint) -> Self {
+        client::Config::new(ep.connect, ep.settings)
+    }
+}
+

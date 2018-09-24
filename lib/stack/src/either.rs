@@ -13,7 +13,7 @@ pub enum Either<A, B> {
 impl<T, U, A, B, N> super::Layer<T, U, N> for Either<A, B>
 where
     A: super::Layer<T, U, N>,
-    B: super::Layer<T, U, N>,
+    B: super::Layer<T, U, N, Error = A::Error>,
     N: super::Make<U>
 {
     type Value = <Either<A::Make, B::Make> as super::Make<T>>::Value;
@@ -31,15 +31,15 @@ where
 impl<T, N, M> super::Make<T> for Either<N, M>
 where
     N: super::Make<T>,
-    M: super::Make<T>,
+    M: super::Make<T, Error = N::Error>,
 {
     type Value = Either<N::Value, M::Value>;
-    type Error = Either<N::Error, M::Error>;
+    type Error = N::Error;
 
     fn make(&self, target: &T) -> Result<Self::Value, Self::Error> {
         match self {
-            Either::A(ref a) => a.make(target).map(Either::A).map_err(Either::A),
-            Either::B(ref b) => b.make(target).map(Either::B).map_err(Either::B),
+            Either::A(ref a) => a.make(target).map(Either::A),
+            Either::B(ref b) => b.make(target).map(Either::B),
         }
     }
 }

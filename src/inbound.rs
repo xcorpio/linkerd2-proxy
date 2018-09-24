@@ -1,9 +1,7 @@
-use bytes;
 use http;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
-use std::{error, fmt};
-use tower_h2::Body;
+use std::fmt;
 
 use proxy::http::{client, orig_proto, router, Settings};
 use proxy::server::Source;
@@ -102,68 +100,11 @@ where
     }
 }
 
-#[derive(Debug)]
-pub struct Client<C, B>
-where
-    C: svc::Make<connect::Target>,
-    C::Value: connect::Connect + Clone + Send + Sync + 'static,
-    B: Body + 'static,
-{
-    inner: client::Make<C, B>,
-}
-
-impl<C, B> Client<C, B>
-where
-    C: svc::Make<connect::Target>,
-    C::Value: connect::Connect + Clone + Send + Sync + 'static,
-    <C::Value as connect::Connect>::Connected: Send,
-    <C::Value as connect::Connect>::Future: Send + 'static,
-    <C::Value as connect::Connect>::Error: error::Error + Send + Sync,
-    B: Body + Send + 'static,
-    <B::Data as bytes::IntoBuf>::Buf: Send + 'static,
-{
-    pub fn new(connect: C) -> Client<C, B> {
-        Self {
-            inner: client::Make::new("in", connect),
-        }
-    }
-}
-
-impl<C, B> Clone for Client<C, B>
-where
-    C: svc::Make<connect::Target> + Clone,
-    C::Value: connect::Connect + Clone + Send + Sync + 'static,
-    <C::Value as connect::Connect>::Connected: Send,
-    <C::Value as connect::Connect>::Future: Send + 'static,
-    <C::Value as connect::Connect>::Error: error::Error + Send + Sync,
-    B: Body + Send + 'static,
-    <B::Data as bytes::IntoBuf>::Buf: Send + 'static,
-{
-    fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-        }
-    }
-}
-
-impl<C, B> svc::Make<Endpoint> for Client<C, B>
-where
-    C: svc::Make<connect::Target>,
-    C::Value: connect::Connect + Clone + Send + Sync + 'static,
-    <C::Value as connect::Connect>::Connected: Send,
-    <C::Value as connect::Connect>::Future: Send + 'static,
-    <C::Value as connect::Connect>::Error: error::Error + Send + Sync,
-    B: Body + Send + 'static,
-    <B::Data as bytes::IntoBuf>::Buf: Send + 'static,
-{
-    type Value = <client::Make<C, B> as svc::Make<client::Config>>::Value;
-    type Error = <client::Make<C, B> as svc::Make<client::Config>>::Error;
-
-    fn make(&self, ep: &Endpoint) -> Result<Self::Value, Self::Error> {
+impl From<Endpoint> for client::Config {
+    fn from(ep: Endpoint) -> Self {
         let tls = Conditional::None(tls::ReasonForNoTls::InternalTraffic);
-        let target = connect::Target::new(ep.addr, tls);
-        let config = client::Config::new(target, ep.settings.clone());
-        self.inner.make(&config)
+        let connect = connect::Target::new(ep.addr, tls);
+        client::Config::new(connect, ep.settings)
     }
 }
 

@@ -159,22 +159,20 @@ pub enum Error<R, M> {
     Make(M),
 }
 
-impl<R, M> fmt::Display for Error<R, M>
+impl<M> fmt::Display for Error<(), M>
 where
-    R: fmt::Display,
     M: fmt::Display,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Error::Resolve(e) => e.fmt(f),
+            Error::Resolve(()) => unreachable!("resolution must succeed"),
             Error::Make(e) => e.fmt(f),
         }
     }
 }
 
-impl<R, M> error::Error for Error<R, M>
+impl<M> error::Error for Error<(), M>
 where
-    R: error::Error,
     M: error::Error,
 {
 }

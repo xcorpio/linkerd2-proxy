@@ -68,7 +68,6 @@ impl fmt::Display for Config {
     }
 }
 
-
 // === impl Layer ===
 
 impl<Req, Rec, Mk> Layer<Req, Rec, Mk>
