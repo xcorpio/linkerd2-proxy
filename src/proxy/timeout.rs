@@ -1,14 +1,18 @@
+// TODO move to `timeout` crate.
+
 use std::marker::PhantomData;
 use std::time::Duration;
 
 use svc;
 pub use timeout::Timeout;
 
+#[derive(Debug)]
 pub struct Layer<T, M> {
     timeout: Duration,
     _p: PhantomData<fn() -> (T, M)>
 }
 
+#[derive(Debug)]
 pub struct Make<T, M> {
     inner: M,
     timeout: Duration,
@@ -21,6 +25,12 @@ impl<T, M> Layer<T, M> {
             timeout,
             _p: PhantomData
         }
+    }
+}
+
+impl<T, M> Clone for Layer<T, M> {
+    fn clone(&self) -> Self {
+        Self::new(self.timeout)
     }
 }
 
@@ -37,6 +47,16 @@ where
             inner,
             timeout: self.timeout,
             _p: PhantomData
+        }
+    }
+}
+
+impl<T, M: Clone> Clone for Make<T, M> {
+    fn clone(&self) -> Self {
+        Make {
+            inner: self.inner.clone(),
+            timeout: self.timeout,
+            _p: PhantomData,
         }
     }
 }
