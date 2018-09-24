@@ -233,8 +233,8 @@ where
             let source_stack =
                 timestamp_request_open::Layer::new().and_then(insert_target::Layer::new());
 
-            // The router stack is shared across all source stacks, hence being
-            // buffered and
+            // A stack configured by `router::Config`, responsible for building
+            // a router made of route stacks configured by `outbound::Destination`.
             let router_stack = router::Layer::new(outbound::Recognize::new());
 
             let dst_stack = limit::Layer::new(MAX_IN_FLIGHT)
@@ -250,9 +250,9 @@ where
                 outbound::orig_proto_upgrade(),
             );
 
-            // For each endpoint,
-            //
-            // TODO sensors
+            // `normalize_uri` and `make_per_request` are applied on the stack
+            // selectively. For HTTP/2 stacks, for instance, neither service will be
+            // employed.
             let endpoint_h1_stack = svc::When::new(
                 |ep: &outbound::Endpoint| !ep.settings.was_absolute_form(),
                 normalize_uri::Layer::new(),
@@ -261,13 +261,17 @@ where
                 svc::make_per_request::Layer::new(),
             ));
 
+            // The TLS status of outbound requests depends on the local
+            // configuration. As the local configuration changes, the inner
+            // stack (including a Client) is rebuilt with the appropriate
+            // settings. Stack layers above this operate on an `Endpoint` with
+            // the TLS client config is marked as `NoConfig` when the endpoint
+            // has a TLS identity.
             let endpoint_inner_stack =
                 outbound::LayerTlsConfig::new(tls_client_config);
-                // TODO: metrics
+                // TODO: sensors here
 
             // Establishes connections to remote peers.
-            //
-            //
             let connect = connect::Make::new();
 
             let capacity = config.outbound_router_capacity;
@@ -281,14 +285,12 @@ where
                 .make(&router::Config::new("out", capacity, max_idle_age))
                 .expect("outbound router");
 
-            let source_router = source_stack.bind(svc::Shared::new(router));
-
             serve(
                 "out",
                 outbound_listener,
                 accept,
                 connect,
-                source_router,
+                source_stack.bind(svc::Shared::new(router)),
                 config.outbound_ports_disable_protocol_detection,
                 get_original_dst.clone(),
                 drain_rx.clone(),
@@ -308,17 +310,25 @@ where
             // including metadata about the request's origin.
             //
             // Furthermore, HTTP/2 requests may be downgraded to HTTP/1.1 per
-            // `orig-proto` headers.
+            // `orig-proto` headers. This happens in the source stack so that
+            // the router need not detect whether a request _will be_ downgraded.
             let source_stack = timestamp_request_open::Layer::new()
-                .and_then(inbound::orig_proto_downgrade())
-                .and_then(insert_target::Layer::new());
+                .and_then(insert_target::Layer::new())
+                .and_then(inbound::orig_proto_downgrade());
 
+            // A stack configured by `router::Config`, responsible for building
+            // a router made of route stacks configured by `inbound::Endpoint`.
+            //
+            // If there is no `SO_ORIGINAL_DST` for an inbound socket,
+            // `default_fwd_addr` may be used.
             let default_fwd_addr = config.private_forward.map(|a| a.into());
             let router_stack = router::Layer::new(inbound::Recognize::new(default_fwd_addr))
                 .and_then(limit::Layer::new(MAX_IN_FLIGHT))
                 .and_then(buffer::Layer::new());
 
-            // TODO sensors
+            // `normalize_uri` and `make_per_request` are applied on the stack
+            // selectively. For HTTP/2 stacks, for instance, neither service will be
+            // employed.
             let endpoint_h1_stack = svc::When::new(
                 |ep: &inbound::Endpoint| !ep.settings.was_absolute_form(),
                 normalize_uri::Layer::new(),
@@ -339,14 +349,12 @@ where
                 .make(&router::Config::new("in", capacity, max_idle_age))
                 .expect("inbound router");
 
-            let source_router = source_stack.bind(svc::Shared::new(router));
-
             serve(
                 "in",
                 inbound_listener,
                 accept,
                 connect,
-                source_router,
+                source_stack.bind(svc::Shared::new(router)),
                 config.inbound_ports_disable_protocol_detection,
                 get_original_dst.clone(),
                 drain_rx.clone(),
