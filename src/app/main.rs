@@ -227,9 +227,6 @@ where
 
             // As HTTP requests are accepted, we add some request extensions
             // including metadata about the request's origin.
-            //
-            // Furthermore, HTTP/2 requests may be downgraded to HTTP/1.1 per
-            // `orig-proto` headers.
             let source_stack =
                 timestamp_request_open::Layer::new().and_then(insert_target::Layer::new());
 
