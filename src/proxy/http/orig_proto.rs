@@ -1,9 +1,8 @@
 use futures::{future, Future, Poll};
 use http;
 use http::header::{TRANSFER_ENCODING, HeaderValue};
-use std::marker::PhantomData;
 
-use super::{h1, settings::Host, Settings};
+use super::h1;
 use svc;
 
 const L5D_ORIG_PROTO: &str = "l5d-orig-proto";
@@ -21,97 +20,14 @@ pub struct Downgrade<S> {
     inner: S,
 }
 
-pub fn detect<B>(req: &http::Request<B>) -> Settings {
-    if req.version() == http::Version::HTTP_2 {
-        if let Some(orig_proto) = req.headers().get(L5D_ORIG_PROTO) {
-            trace!("detected orig-proto: {:?}", orig_proto);
-            let val = orig_proto.as_bytes();
-            let was_absolute_form = was_absolute_form(val);
-            let host = Host::detect(req);
-
-            return Settings::Http1 {
-                host,
-                is_h1_upgrade: false, // orig-proto is never used with upgrades
-                was_absolute_form,
-            };
-        }
-    }
-
-    Settings::detect(req)
-}
-
-#[derive(Debug)]
-pub struct LayerUpgrade<T, M>(PhantomData<fn() -> (T, M)>);
-
-#[derive(Debug)]
-pub struct LayerDowngrade<T, M>(PhantomData<fn() -> (T, M)>);
-
-pub struct MakeUpgrade<T, M>
-where
-    M: svc::Make<T>,
-{
-    inner: M,
-    _p: PhantomData<fn() -> T>,
-}
-
-pub struct MakeDowngrade<T, M>
-where
-    M: svc::Make<T>,
-{
-    inner: M,
-    _p: PhantomData<fn() -> T>,
-}
-
 // ==== impl Upgrade =====
 
-pub fn upgrade<T, M>() -> LayerUpgrade<T, M> {
-    LayerUpgrade(PhantomData)
-}
-
-impl<T, M> Clone for LayerUpgrade<T, M> {
-    fn clone(&self) -> Self {
-        LayerUpgrade(PhantomData)
-    }
-}
-
-impl<T, M, A, B> svc::Layer<T, T, M> for LayerUpgrade<T, M>
+impl<S, A, B> From<S> for Upgrade<S>
 where
-    M: svc::Make<T>,
-    M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
+    S: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
 {
-    type Value = <MakeUpgrade<T, M> as svc::Make<T>>::Value;
-    type Error = <MakeUpgrade<T, M> as svc::Make<T>>::Error;
-    type Make = MakeUpgrade<T, M>;
-
-    fn bind(&self, inner: M) -> Self::Make {
-        MakeUpgrade { inner, _p: PhantomData }
-    }
-}
-
-impl<T, M, A, B> Clone for MakeUpgrade<T, M>
-where
-    M: svc::Make<T> + Clone,
-    M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
-{
-    fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-            _p: PhantomData,
-        }
-    }
-}
-
-impl<T, M, A, B> svc::Make<T> for MakeUpgrade<T, M>
-where
-    M: svc::Make<T>,
-    M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
-{
-    type Value = Upgrade<M::Value>;
-    type Error = M::Error;
-
-    fn make(&self, target: &T) -> Result<Self::Value, Self::Error> {
-        let inner = self.inner.make(&target)?;
-        Ok(Upgrade { inner })
+    fn from(inner: S) -> Self {
+        Self { inner }
     }
 }
 
@@ -197,56 +113,15 @@ where
 
 // ===== impl Downgrade =====
 
-pub fn downgrade<T, M>() -> LayerDowngrade<T, M> {
-    LayerDowngrade(PhantomData)
-}
-
-impl<T, M> Clone for LayerDowngrade<T, M> {
-    fn clone(&self) -> Self {
-        LayerDowngrade(PhantomData)
-    }
-}
-
-impl<T, M, A, B> svc::Layer<T, T, M> for LayerDowngrade<T, M>
+impl<S, A, B> From<S> for Downgrade<S>
 where
-    M: svc::Make<T>,
-    M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
+    S: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
 {
-    type Value = <MakeDowngrade<T, M> as svc::Make<T>>::Value;
-    type Error = <MakeDowngrade<T, M> as svc::Make<T>>::Error;
-    type Make = MakeDowngrade<T, M>;
-
-    fn bind(&self, inner: M) -> Self::Make {
-        MakeDowngrade { inner, _p: PhantomData }
+    fn from(inner: S) -> Self {
+        Self { inner }
     }
 }
 
-impl<T, M, A, B> Clone for MakeDowngrade<T, M>
-where
-    M: svc::Make<T> + Clone,
-    M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
-{
-    fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-            _p: PhantomData,
-        }
-    }
-}
-
-impl<T, M, A, B> svc::Make<T> for MakeDowngrade<T, M>
-where
-    M: svc::Make<T>,
-    M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
-{
-    type Value = Downgrade<M::Value>;
-    type Error = M::Error;
-
-    fn make(&self, target: &T) -> Result<Self::Value, Self::Error> {
-        let inner = self.inner.make(&target)?;
-        Ok(Downgrade { inner })
-    }
-}
 
 impl<S, A, B> svc::Service for Downgrade<S>
 where

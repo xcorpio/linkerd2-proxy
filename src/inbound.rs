@@ -1,5 +1,6 @@
 use bytes;
 use http;
+use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::{error, fmt};
 use tower_h2::Body;
@@ -41,7 +42,7 @@ impl<A> router::Recognize<http::Request<A>> for Recognize {
         );
 
         let addr = source.orig_dst_if_not_local().or(self.default_addr)?;
-        let settings = orig_proto::detect(req);
+        let settings = Settings::detect(req);
         Some(Endpoint { addr, settings })
     }
 }
@@ -49,6 +50,55 @@ impl<A> router::Recognize<http::Request<A>> for Recognize {
 impl fmt::Display for Recognize {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "in")
+    }
+}
+
+pub fn orig_proto_downgrade<M>() -> LayerDowngrade<M> {
+    LayerDowngrade(PhantomData)
+}
+
+#[derive(Debug)]
+pub struct LayerDowngrade<M>(PhantomData<fn() -> (M)>);
+
+#[derive(Clone, Debug)]
+pub struct MakeDowngrade<M>
+where
+    M: svc::Make<Source>,
+{
+    inner: M,
+}
+
+impl<M> Clone for LayerDowngrade<M> {
+    fn clone(&self) -> Self {
+        LayerDowngrade(PhantomData)
+    }
+}
+
+impl<M, A, B> svc::Layer<Source, Source, M> for LayerDowngrade<M>
+where
+    M: svc::Make<Source>,
+    M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
+{
+    type Value = <MakeDowngrade<M> as svc::Make<Source>>::Value;
+    type Error = <MakeDowngrade<M> as svc::Make<Source>>::Error;
+    type Make = MakeDowngrade<M>;
+
+    fn bind(&self, inner: M) -> Self::Make {
+        MakeDowngrade { inner }
+    }
+}
+
+impl<M, A, B> svc::Make<Source> for MakeDowngrade<M>
+where
+    M: svc::Make<Source>,
+    M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
+{
+    type Value = orig_proto::Downgrade<M::Value>;
+    type Error = M::Error;
+
+    fn make(&self, target: &Source) -> Result<Self::Value, Self::Error> {
+        let inner = self.inner.make(&target)?;
+        Ok(inner.into())
     }
 }
 

@@ -1,6 +1,7 @@
 use bytes;
 use futures::{Async, Poll};
 use http;
+use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::{error, fmt};
 use tower_h2::Body;
@@ -8,7 +9,7 @@ use tower_h2::Body;
 use control::destination::{Metadata, ProtocolHint};
 use proxy::{
     self,
-    http::{client, h1, router, Settings},
+    http::{client, h1, orig_proto, router, Settings},
     resolve,
 };
 use svc;
@@ -215,6 +216,71 @@ impl fmt::Display for Destination {
     }
 }
 
+pub fn orig_proto_upgrade<M>() -> LayerUpgrade<M> {
+    LayerUpgrade(PhantomData)
+}
+
+#[derive(Debug)]
+pub struct LayerUpgrade<M>(PhantomData<fn() -> (M)>);
+
+pub struct MakeUpgrade<M>
+where
+    M: svc::Make<Endpoint>,
+{
+    inner: M,
+}
+
+impl<M> Clone for LayerUpgrade<M> {
+    fn clone(&self) -> Self {
+        LayerUpgrade(PhantomData)
+    }
+}
+
+impl<M, A, B> svc::Layer<Endpoint, Endpoint, M> for LayerUpgrade<M>
+where
+    M: svc::Make<Endpoint>,
+    M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
+{
+    type Value = <MakeUpgrade<M> as svc::Make<Endpoint>>::Value;
+    type Error = <MakeUpgrade<M> as svc::Make<Endpoint>>::Error;
+    type Make = MakeUpgrade<M>;
+
+    fn bind(&self, inner: M) -> Self::Make {
+        MakeUpgrade {
+            inner,
+        }
+    }
+}
+
+impl<M, A, B> Clone for MakeUpgrade<M>
+where
+    M: svc::Make<Endpoint> + Clone,
+    M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
+{
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
+impl<M, A, B> svc::Make<Endpoint> for MakeUpgrade<M>
+where
+    M: svc::Make<Endpoint>,
+    M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
+{
+    type Value = orig_proto::Upgrade<M::Value>;
+    type Error = M::Error;
+
+    fn make(&self, endpoint: &Endpoint) -> Result<Self::Value, Self::Error> {
+        let mut endpoint = endpoint.clone();
+        endpoint.settings = Settings::Http2;
+
+        let inner = self.inner.make(&endpoint)?;
+        Ok(inner.into())
+    }
+}
+
 #[derive(Debug)]
 pub struct Client<C, B>
 where
@@ -273,7 +339,7 @@ where
     type Error = <client::Make<C, B> as svc::Make<client::Config>>::Error;
 
     fn make(&self, ep: &Endpoint) -> Result<Self::Value, Self::Error> {
-        let config = client::Config::new(ep.target.clone(), ep.settings.clone());
+        let config = client::Config::new(ep.connect.clone(), ep.settings.clone());
         self.inner.make(&config)
     }
 }
@@ -289,6 +355,6 @@ impl Endpoint {
 
 impl fmt::Display for Endpoint {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.target.addr.fmt(f)
+        self.connect.addr.fmt(f)
     }
 }

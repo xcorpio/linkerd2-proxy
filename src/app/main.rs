@@ -19,7 +19,7 @@ use logging;
 use metrics;
 use proxy::{
     self, buffer,
-    http::{balance, insert_target, normalize_uri, orig_proto, router},
+    http::{balance, insert_target, normalize_uri, router},
     limit,
 };
 use svc;
@@ -241,40 +241,39 @@ where
                 .and_then(buffer::Layer::new())
                 .and_then(balance::Layer::new(outbound::Resolve::new(resolver)));
 
-            let upgrade_to_h2 = svc::When::new(
+            let upgrade_from_orig_proto = svc::When::new(
                 |ep: &outbound::Endpoint| {
                     ep.can_use_orig_proto()
                         && !ep.settings.is_http2()
                         && !ep.settings.is_h1_upgrade()
                 },
-                // TODO this layer should change the ep.settings
-                orig_proto::upgrade(),
+                outbound::orig_proto_upgrade(),
             );
 
             // For each endpoint,
             //
             // TODO sensors
-            let endpoint_h1_stack = upgrade_to_h2
-                .and_then(svc::When::new(
-                    |ep: &outbound::Endpoint| !ep.settings.was_absolute_form(),
-                    normalize_uri::Layer::new(),
-                ))
-                .and_then(svc::When::new(
-                    |ep: &outbound::Endpoint| !ep.settings.can_reuse_clients(),
-                    svc::make_per_request::Layer::new(),
-                ));
+            let endpoint_h1_stack = svc::When::new(
+                |ep: &outbound::Endpoint| !ep.settings.was_absolute_form(),
+                normalize_uri::Layer::new(),
+            ).and_then(svc::When::new(
+                |ep: &outbound::Endpoint| !ep.settings.can_reuse_clients(),
+                svc::make_per_request::Layer::new(),
+            ));
 
             // Establishes connections to remote peers.
             //
             //
             let connect = connect::Make::new();
 
-            // Build a router using the above policy
             let capacity = config.outbound_router_capacity;
             let max_idle_age = config.outbound_router_max_idle_age;
             let router = router_stack
                 .and_then(dst_stack)
+                .and_then(upgrade_from_orig_proto)
                 .and_then(endpoint_h1_stack)
+                // TODO: tls config
+                // TODO: metrics
                 .bind(outbound::Client::new(connect.clone()))
                 .make(&router::Config::new("out", capacity, max_idle_age))
                 .expect("outbound router");
@@ -308,7 +307,7 @@ where
             // Furthermore, HTTP/2 requests may be downgraded to HTTP/1.1 per
             // `orig-proto` headers.
             let source_stack = timestamp_request_open::Layer::new()
-                .and_then(orig_proto::downgrade())
+                .and_then(inbound::orig_proto_downgrade())
                 .and_then(insert_target::Layer::new());
 
             let default_fwd_addr = config.private_forward.map(|a| a.into());
