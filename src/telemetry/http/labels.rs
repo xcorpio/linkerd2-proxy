@@ -23,7 +23,7 @@ pub struct RequestLabels {
     authority: Authority,
 
     /// Whether or not the request was made over TLS.
-    tls_status: ctx::transport::TlsStatus,
+    tls_status: tls::Status,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
@@ -79,7 +79,7 @@ impl RequestLabels {
     }
 
     #[cfg(test)]
-    pub fn tls_status(&self) -> ctx::transport::TlsStatus {
+    pub fn tls_status(&self) -> tls::Status {
         self.tls_status
     }
 }
@@ -131,7 +131,7 @@ impl ResponseLabels {
     }
 
     #[cfg(test)]
-    pub fn tls_status(&self) -> ctx::transport::TlsStatus {
+    pub fn tls_status(&self) -> tls::Status {
         self.request_labels.tls_status
     }
 }
@@ -237,8 +237,9 @@ impl FmtLabels for DstLabels {
 
 // ===== impl TlsStatus =====
 
-impl FmtLabels for ctx::transport::TlsStatus {
+impl FmtLabels for tls::Status {
     fn fmt_labels(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        println!("tls::Status::fmt_labels: {:?}", self);
         match self {
             Conditional::None(tls::ReasonForNoTls::NoIdentity(why)) =>
                 write!(f, "tls=\"no_identity\",no_tls_reason=\"{}\"", why),

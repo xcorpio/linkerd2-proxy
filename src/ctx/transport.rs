@@ -20,7 +20,7 @@ pub struct Server {
     pub remote: SocketAddr,
     pub local: SocketAddr,
     pub orig_dst: Option<SocketAddr>,
-    pub tls_status: TlsStatus,
+    pub tls_status: tls::Status,
 }
 
 /// Identifies a connection from the proxy to another process.
@@ -29,12 +29,8 @@ pub struct Client {
     pub proxy: ctx::Proxy,
     pub remote: SocketAddr,
     pub metadata: destination::Metadata,
-    pub tls_status: TlsStatus,
+    pub tls_status: tls::Status,
 }
-
-/// Identifies whether or not a connection was secured with TLS,
-/// and, if it was not, the reason why.
-pub type TlsStatus = tls::Status;
 
 impl Ctx {
     pub fn proxy(&self) -> ctx::Proxy {
@@ -44,7 +40,7 @@ impl Ctx {
         }
     }
 
-    pub fn tls_status(&self) -> TlsStatus {
+    pub fn tls_status(&self) -> tls::Status {
         match self {
             Ctx::Client(ctx) => ctx.tls_status,
             Ctx::Server(ctx) => ctx.tls_status,
@@ -58,7 +54,7 @@ impl Server {
         local: &SocketAddr,
         remote: &SocketAddr,
         orig_dst: &Option<SocketAddr>,
-        tls_status: TlsStatus,
+        tls_status: tls::Status,
     ) -> Arc<Server> {
         let s = Server {
             proxy,
@@ -100,7 +96,7 @@ impl Client {
         proxy: ctx::Proxy,
         remote: &SocketAddr,
         metadata: destination::Metadata,
-        tls_status: TlsStatus,
+        tls_status: tls::Status,
     ) -> Arc<Client> {
         let c = Client {
             proxy,

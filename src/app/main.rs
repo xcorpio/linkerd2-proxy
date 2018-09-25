@@ -173,7 +173,7 @@ where
         let (taps, observe) = control::Observe::new(100);
         let (_http_sensors, http_report) = telemetry::http::new(config.metrics_retain_idle, &taps);
 
-        let (_transport_registry, transport_report) = transport::metrics::new();
+        let (transport_metrics, transport_report) = transport::metrics::new();
 
         let (tls_config_sensor, tls_config_report) = telemetry::tls_config_reload::new();
 
@@ -221,9 +221,12 @@ where
 
             // As the outbound proxy accepts connections, we don't do any
             // special transport-level handling.
-            //
-            // TODO metrics
-            let accept = ();
+            let accept = transport_metrics.accept("outbound").bind(());
+
+            // Establishes connections to remote peers.
+            let connect = transport_metrics.connect("outbound")
+                .and_then(proxy::timeout::Layer::new(config.outbound_connect_timeout))
+                .bind(connect::Make::new());
 
             // As HTTP requests are accepted, we add some request extensions
             // including metadata about the request's origin.
@@ -276,10 +279,6 @@ where
                 outbound::LayerTlsConfig::new(tls_client_config);
                 // TODO: sensors here
 
-            // Establishes connections to remote peers.
-            let connect = proxy::timeout::Layer::new(config.outbound_connect_timeout)
-                .bind(connect::Make::new());
-
             let capacity = config.outbound_router_capacity;
             let max_idle_age = config.outbound_router_max_idle_age;
             let router = router_stack
@@ -308,9 +307,12 @@ where
 
             // As the inbound proxy accepts connections, we don't do any
             // special transport-level handling.
-            //
-            // TODO metrics
-            let accept = ();
+            let accept = transport_metrics.accept("inbound").bind(());
+
+            // Establishes connections to the local application.
+            let connect = transport_metrics.connect("inbound")
+                .and_then(proxy::timeout::Layer::new(config.inbound_connect_timeout))
+                .bind(connect::Make::new());
 
             // As HTTP requests are accepted, we add some request extensions
             // including metadata about the request's origin.
@@ -348,10 +350,6 @@ where
                 },
                 svc::make_per_request::Layer::new(),
             ));
-
-            // Establishes connections to the local application.
-            let connect = proxy::timeout::Layer::new(config.inbound_connect_timeout)
-                .bind(connect::Make::new());
 
             // Build a router using the above policy
             let capacity = config.inbound_router_capacity;

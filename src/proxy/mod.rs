@@ -27,7 +27,7 @@ pub mod timeout;
 
 pub use self::reconnect::Reconnect;
 pub use self::resolve::{Resolve, Resolution};
-pub use self::server::Server;
+pub use self::server::{Server, Source};
 
 pub trait Accept<T: AsyncRead + AsyncWrite> {
     type Io: AsyncRead + AsyncWrite;
@@ -41,6 +41,7 @@ where
 {
     type Io = T;
 
+    #[inline]
     fn accept(&self, inner: T) -> T {
         inner
     }

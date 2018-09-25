@@ -58,7 +58,7 @@ mod test {
     use std::time::{Duration, Instant};
 
     use Conditional;
-    use ctx::{self, test_util::*, transport::TlsStatus};
+    use ctx::{self, test_util::*};
     use super::*;
     use super::super::event;
     use super::super::labels::{RequestLabels, ResponseLabels};
@@ -73,7 +73,7 @@ mod test {
         (Record::new(Registry(inner.clone())), inner)
     }
 
-    fn test_record_response_end_outbound(client_tls: TlsStatus, server_tls: TlsStatus) {
+    fn test_record_response_end_outbound(client_tls: tls::Status, server_tls: tls::Status) {
         let proxy = ctx::Proxy::Outbound;
         let server = server(proxy, server_tls);
 
@@ -123,7 +123,7 @@ mod test {
         }
     }
 
-    fn test_record_one_conn_request_outbound(client_tls: TlsStatus, server_tls: TlsStatus) {
+    fn test_record_one_conn_request_outbound(client_tls: tls::Status, server_tls: tls::Status) {
         use self::Event::*;
 
         let proxy = ctx::Proxy::Outbound;
