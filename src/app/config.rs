@@ -170,8 +170,8 @@ pub const ENV_INBOUND_LISTENER: &str = "LINKERD2_PROXY_INBOUND_LISTENER";
 pub const ENV_CONTROL_LISTENER: &str = "LINKERD2_PROXY_CONTROL_LISTENER";
 pub const ENV_METRICS_LISTENER: &str = "LINKERD2_PROXY_METRICS_LISTENER";
 pub const ENV_METRICS_RETAIN_IDLE: &str = "LINKERD2_PROXY_METRICS_RETAIN_IDLE";
-const ENV_OUTBOUND_CONNECT_TIMEOUT: &str = "LINKERD2_PROXY_OUTBOUND_CONNECT_TIMEOUT";
 const ENV_INBOUND_CONNECT_TIMEOUT: &str = "LINKERD2_PROXY_INBOUND_CONNECT_TIMEOUT";
+const ENV_OUTBOUND_CONNECT_TIMEOUT: &str = "LINKERD2_PROXY_OUTBOUND_CONNECT_TIMEOUT";
 pub const ENV_BIND_TIMEOUT: &str = "LINKERD2_PROXY_BIND_TIMEOUT";
 
 // Limits the number of HTTP routes that may be active in the proxy at any time. There is
@@ -226,8 +226,8 @@ const DEFAULT_INBOUND_LISTENER: &str = "tcp://0.0.0.0:4143";
 const DEFAULT_CONTROL_LISTENER: &str = "tcp://0.0.0.0:4190";
 const DEFAULT_METRICS_LISTENER: &str = "tcp://127.0.0.1:4191";
 const DEFAULT_METRICS_RETAIN_IDLE: Duration = Duration::from_secs(10 * 60);
-const DEFAULT_OUTBOUND_CONNECT_TIMEOUT: Duration = Duration::from_millis(20);
-const DEFAULT_INBOUND_CONNECT_TIMEOUT: Duration = Duration::from_millis(300);
+const DEFAULT_INBOUND_CONNECT_TIMEOUT: Duration = Duration::from_millis(20);
+const DEFAULT_OUTBOUND_CONNECT_TIMEOUT: Duration = Duration::from_millis(300);
 const DEFAULT_BIND_TIMEOUT: Duration = Duration::from_secs(10); // same as in Linkerd
 const DEFAULT_CONTROL_BACKOFF_DELAY: Duration = Duration::from_secs(5);
 const DEFAULT_RESOLV_CONF: &str = "/etc/resolv.conf";
