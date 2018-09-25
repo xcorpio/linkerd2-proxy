@@ -3,7 +3,7 @@ use futures::{Async, Future, Poll};
 use std::io;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use transport::{connect, Connection, Peek};
+use transport::{connect, Peek};
 
 use super::{NewSensor, Sensor, Eos};
 
@@ -112,7 +112,7 @@ impl<T: AsyncRead + AsyncWrite + Peek> Peek for Io<T> {
 
 impl<C> Connect<C>
 where
-    C: connect::Connect<Connected = Connection>,
+    C: connect::Connect,
 {
     /// Returns a `Connect` to `addr` and `handle`.
     pub(super) fn new(underlying: C, new_sensor: NewSensor) -> Self {
@@ -122,7 +122,7 @@ where
 
 impl<C> connect::Connect for Connect<C>
 where
-    C: connect::Connect<Connected = Connection>,
+    C: connect::Connect,
 {
     type Connected = Io<C::Connected>;
     type Error = C::Error;
@@ -140,7 +140,7 @@ where
 
 impl<C> Future for Connecting<C>
 where
-    C: connect::Connect<Connected = Connection>,
+    C: connect::Connect,
 {
     type Item = Io<C::Connected>;
     type Error = C::Error;
