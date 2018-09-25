@@ -85,9 +85,11 @@ where
     }
 
     fn call(&mut self, mut request: S::Request) -> Self::Future {
-        debug!("normalizing {}", request.uri());
+        debug_assert!(
+            request.version() != http::Version::HTTP_2,
+            "normalize_uri must only be applied to HTTP/1"
+        );
         h1::normalize_our_view_of_uri(&mut request);
-        debug!("normalized {}", request.uri());
         self.inner.call(request)
     }
 }
