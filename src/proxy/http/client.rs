@@ -178,6 +178,7 @@ where
         let executor = ::logging::Client::proxy(self.proxy_name, config.target.addr)
             .with_settings(config.settings.clone())
             .executor();
+        debug!("building client={:?}", config);
         let client = Client::new(&config.settings, connect, executor);
         Ok(Reconnect::new(config.clone(), client))
     }

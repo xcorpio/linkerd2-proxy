@@ -2,7 +2,7 @@ use http;
 use futures::Poll;
 use std::marker::PhantomData;
 
-use super::h1::normalize_our_view_of_uri;
+use super::h1;
 use svc;
 
 pub struct Layer<T, M>(PhantomData<fn() -> (T, M)>);
@@ -85,7 +85,9 @@ where
     }
 
     fn call(&mut self, mut request: S::Request) -> Self::Future {
-        normalize_our_view_of_uri(&mut request);
+        debug!("normalizing {}", request.uri());
+        h1::normalize_our_view_of_uri(&mut request);
+        debug!("normalized {}", request.uri());
         self.inner.call(request)
     }
 }

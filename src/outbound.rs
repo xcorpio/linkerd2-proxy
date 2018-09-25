@@ -91,11 +91,13 @@ impl<B> router::Recognize<http::Request<B>> for Recognize {
     fn recognize(&self, req: &http::Request<B>) -> Option<Self::Target> {
         let name_or_addr = Self::name_or_addr(req)?;
         let settings = Settings::detect(req);
-        Some(Destination {
+        let dst = Destination {
             name_or_addr,
             settings,
             _p: (),
-        })
+        };
+        debug!("recognize: dst={:?}", dst);
+        Some(dst)
     }
 }
 

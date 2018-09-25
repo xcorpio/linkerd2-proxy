@@ -33,12 +33,13 @@ impl<A> router::Recognize<http::Request<A>> for Recognize {
 
     fn recognize(&self, req: &http::Request<A>) -> Option<Self::Target> {
         let src = req.extensions().get::<Source>();
-        trace!("recognize: src={:?}", src);
         let addr = src
             .and_then(|s| s.orig_dst_if_not_local())
             .or(self.default_addr)?;
         let settings = Settings::detect(req);
-        Some(Endpoint { addr, settings })
+        let ep = Endpoint { addr, settings };
+        debug!("recognize: src={:?} ep={:?}", src, ep);
+        Some(ep)
     }
 }
 
@@ -92,6 +93,7 @@ where
     type Error = M::Error;
 
     fn make(&self, target: &Source) -> Result<Self::Value, Self::Error> {
+        info!("downgrading requests; source={:?}", target);
         let inner = self.inner.make(&target)?;
         Ok(inner.into())
     }
