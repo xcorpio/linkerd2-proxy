@@ -17,34 +17,30 @@ metrics! {
 
 /// Reports HTTP metrics for prometheus.
 #[derive(Clone, Debug)]
-pub struct Report<Base, Target, Class>
+pub struct Report<T, C>
 where
-    Base: FmtLabels + Clone,
-    Target: FmtLabels + Hash + Eq,
-    Class: FmtLabels + Hash + Eq,
+    T: FmtLabels + Hash + Eq,
+    C: FmtLabels + Hash + Eq,
 {
-    base: Base,
-    registry: Arc<Mutex<Registry<Target, Class>>>,
+    registry: Arc<Mutex<Registry<T, C>>>,
 }
 
 // ===== impl Report =====
 
-impl<Base, Target, Class> Report<Base, Target, Class>
+impl<T, C> Report<T, C>
 where
-    Base: FmtLabels + Clone,
-    Target: FmtLabels + Hash + Eq,
-    Class: FmtLabels + Hash + Eq,
+    T: FmtLabels + Hash + Eq,
+    C: FmtLabels + Hash + Eq,
 {
-    pub(super) fn new(base: Base, registry: Arc<Mutex<Registry<Target, Class>>>) -> Self {
-        Self { base, registry }
+    pub(super) fn new(registry: Arc<Mutex<Registry<T, C>>>) -> Self {
+        Self { registry }
     }
 }
 
-impl<Base, Target, Class> FmtMetrics for Report<Base, Target, Class>
+impl<T, C> FmtMetrics for Report<T, C>
 where
-    Base: FmtLabels + Clone,
-    Target: FmtLabels + Hash + Eq,
-    Class: FmtLabels + Hash + Eq,
+    T: FmtLabels + Hash + Eq,
+    C: FmtLabels + Hash + Eq,
 {
     fn fmt_metrics(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let registry = match self.registry.lock() {
@@ -57,15 +53,15 @@ where
         }
 
         request_total.fmt_help(f)?;
-        registry.fmt_by_target(f, &self.base, request_total, |s| &s.total)?;
+        registry.fmt_by_target(f, request_total, |s| &s.total)?;
 
         response_total.fmt_help(f)?;
-        registry.fmt_by_class(f, &self.base, response_total, |s| &s.total)?;
-        registry.fmt_by_target(f, &self.base, response_total, |s| &s.unclassified.total)?;
+        registry.fmt_by_class(f, response_total, |s| &s.total)?;
+        registry.fmt_by_target(f, response_total, |s| &s.unclassified.total)?;
 
         response_latency_ms.fmt_help(f)?;
-        registry.fmt_by_class(f, &self.base, response_latency_ms, |s| &s.latency)?;
-        registry.fmt_by_target(f, &self.base, response_latency_ms, |s| {
+        registry.fmt_by_class(f, response_latency_ms, |s| &s.latency)?;
+        registry.fmt_by_target(f, response_latency_ms, |s| {
             &s.unclassified.latency
         })?;
 
@@ -73,49 +69,44 @@ where
     }
 }
 
-impl<Target, Class> Registry<Target, Class>
+impl<T, C> Registry<T, C>
 where
-    Target: FmtLabels + Hash + Eq,
-    Class: FmtLabels + Hash + Eq,
+    T: FmtLabels + Hash + Eq,
+    C: FmtLabels + Hash + Eq,
 {
-    fn fmt_by_target<B, M, F>(
+    fn fmt_by_target<M, F>(
         &self,
         f: &mut fmt::Formatter,
-        base: B,
         metric: Metric<M>,
         get_metric: F,
     ) -> fmt::Result
     where
-        B: FmtLabels,
         M: FmtMetric,
-        F: Fn(&Metrics<Class>) -> &M,
+        F: Fn(&Metrics<C>) -> &M,
     {
         for (tgt, tm) in &self.by_target {
             if let Ok(m) = tm.lock() {
-                let labels = (&base, tgt);
-                get_metric(&*m).fmt_metric_labeled(f, metric.name, labels)?;
+                get_metric(&*m).fmt_metric_labeled(f, metric.name, tgt)?;
             }
         }
 
         Ok(())
     }
 
-    fn fmt_by_class<B, M, F>(
+    fn fmt_by_class<M, F>(
         &self,
         f: &mut fmt::Formatter,
-        base: B,
         metric: Metric<M>,
         get_metric: F,
     ) -> fmt::Result
     where
-        B: FmtLabels,
         M: FmtMetric,
         F: Fn(&ClassMetrics) -> &M,
     {
         for (tgt, tm) in &self.by_target {
             if let Ok(tm) = tm.lock() {
                 for (cls, m) in &tm.by_class {
-                    let labels = ((&base, tgt), cls);
+                    let labels = (tgt, cls);
                     get_metric(&*m).fmt_metric_labeled(f, metric.name, labels)?;
                 }
             }

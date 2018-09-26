@@ -59,13 +59,12 @@ pub trait ClassifyResponse {
 /// A `Stack` module that adds a `ClassifyResponse` instance to each
 pub struct Layer<C: Classify, T, M: svc::Make<T>> {
     classify: C,
-    inner: N,
     _p: PhantomData<fn() -> (T, M)>,
 }
 
-pub struct Make<C: Classify, T, N: svc::Make<T>> {
+pub struct Make<C: Classify, T, M: svc::Make<T>> {
     classify: C,
-    inner: N,
+    inner: M,
     _p: PhantomData<fn() -> T>,
 }
 
@@ -75,15 +74,16 @@ pub struct ExtendRequest<C: Classify, S: svc::Service> {
     inner: S,
 }
 
-impl<C, T, M> Layer<C, T, M>
+impl<C, T, M, A, B> Layer<C, T, M>
 where
     T: FmtLabels + Clone + Hash + Eq,
     M: svc::Make<T>,
     M::Value:
         svc::Service<Request = http::Request<A>, Response = http::Response<B>, Error = C::Error>,
+    C: Classify + Clone,
 {
-    fn new(c: C) -> Self {
-        Layer(c)
+    fn new(classify: C) -> Self {
+        Layer { classify, _p: PhantomData, }
     }
 }
 
@@ -91,7 +91,7 @@ impl<T, M, A, B, C> svc::Layer<T, T, M> for Layer<C, T, M>
 where
     T: FmtLabels + Clone + Hash + Eq,
     M: svc::Make<T>,
-    N::Value:
+    M::Value:
         svc::Service<Request = http::Request<A>, Response = http::Response<B>, Error = C::Error>,
     C: Classify + Clone,
 {
@@ -101,8 +101,9 @@ where
 
     fn bind(&self, inner: M) -> Self::Make {
         Make {
-            classify: self.0.clone(),
             inner,
+            classify: self.classify.clone(),
+            _p: PhantomData,
         }
     }
 }
@@ -117,11 +118,11 @@ where
         svc::Service<Request = http::Request<A>, Response = http::Response<B>, Error = C::Error>,
     C: Classify + Clone,
 {
-    type Value = ExtendRequest<C, M::Service>;
+    type Value = ExtendRequest<C, M::Value>;
     type Error = M::Error;
 
-    fn make(&self, config: &Self::Config) -> Result<Self::Value, Self::Error> {
-        let inner = self.inner.make_service(config)?;
+    fn make(&self, target: &T) -> Result<Self::Value, Self::Error> {
+        let inner = self.inner.make(target)?;
         let classify = self.classify.clone();
 
         Ok(ExtendRequest { classify, inner })

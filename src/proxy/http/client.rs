@@ -21,8 +21,8 @@ type HyperClient<C, B> =
 
 #[derive(Clone, Debug)]
 pub struct Config {
-    target: connect::Target,
-    settings: Settings,
+    pub target: connect::Target,
+    pub settings: Settings,
 }
 
 #[derive(Debug)]

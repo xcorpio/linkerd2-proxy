@@ -1,19 +1,39 @@
-use std::sync::Arc;
+use h2;
+use http;
+use indexmap::IndexMap;
 use std::time::Instant;
 
-use h2;
+use proxy::{http::client, Source};
 
-use super::ctx;
+#[derive(Clone, Debug)]
+pub struct Endpoint {
+    pub client: client::Config,
+    pub labels: IndexMap<String, String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Request {
+    pub source: Source,
+    pub endpoint: Endpoint,
+    pub method: http::Method,
+    pub uri: http::Uri,
+}
+
+#[derive(Clone, Debug)]
+pub struct Response {
+    pub request: Request,
+    pub status: http::StatusCode,
+}
 
 #[derive(Clone, Debug)]
 pub enum Event {
-    StreamRequestOpen(Arc<ctx::Request>),
-    StreamRequestFail(Arc<ctx::Request>, StreamRequestFail),
-    StreamRequestEnd(Arc<ctx::Request>, StreamRequestEnd),
+    StreamRequestOpen(Request),
+    StreamRequestFail(Request, StreamRequestFail),
+    StreamRequestEnd(Request, StreamRequestEnd),
 
-    StreamResponseOpen(Arc<ctx::Response>, StreamResponseOpen),
-    StreamResponseFail(Arc<ctx::Response>, StreamResponseFail),
-    StreamResponseEnd(Arc<ctx::Response>, StreamResponseEnd),
+    StreamResponseOpen(Response, StreamResponseOpen),
+    StreamResponseFail(Response, StreamResponseFail),
+    StreamResponseEnd(Response, StreamResponseEnd),
 }
 
 #[derive(Clone, Debug)]

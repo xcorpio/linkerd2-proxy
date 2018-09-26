@@ -2,45 +2,48 @@ use bytes::{Buf, IntoBuf};
 use futures::{Async, Future, Poll};
 use h2;
 use http;
+use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio_timer::clock;
 use tower_h2;
 
-use super::{ctx, event, Taps};
-use ctx::transport::{Client as ClientCtx, Server as ServerCtx};
-use svc::{MakeService, Service, Stack};
+use super::{event, Taps};
+use proxy;
+use svc;
 
 /// A stack module that wraps services to record taps.
 #[derive(Clone, Debug)]
-pub struct Mod {
+pub struct Layer<T, M> {
     taps: Arc<Mutex<Taps>>,
+    _p: PhantomData<fn() -> (T, M)>,
 }
 
 /// Wraps services to record taps.
 #[derive(Clone, Debug)]
-pub struct Make<N>
+pub struct Make<T, N>
 where
-    N: MakeService,
+    N: svc::Make<T>,
 {
     taps: Arc<Mutex<Taps>>,
     inner: N,
+    _p: PhantomData<fn() -> (T)>,
 }
 
 /// A middleware that records HTTP taps.
 #[derive(Clone, Debug)]
-pub struct TapService<S>
+pub struct Service<S>
 where
-    S: Service,
+    S: svc::Service,
 {
-    ctx: Arc<ClientCtx>,
+    endpoint: event::Endpoint,
     taps: Arc<Mutex<Taps>>,
     inner: S,
 }
 
 pub struct ResponseFuture<S>
 where
-    S: Service,
+    S: svc::Service,
 {
     state: Option<RequestState>,
     inner: S::Future,
@@ -54,7 +57,7 @@ pub struct RequestBody<B> {
 
 #[derive(Clone, Debug)]
 struct RequestState {
-    ctx: Arc<ctx::Request>,
+    meta: event::Request,
     taps: Option<Arc<Mutex<Taps>>>,
     request_open_at: Instant,
     byte_count: usize,
@@ -69,7 +72,7 @@ pub struct ResponseBody<B> {
 
 #[derive(Debug)]
 struct ResponseState {
-    ctx: Arc<ctx::Response>,
+    meta: event::Response,
     taps: Option<Arc<Mutex<Taps>>>,
     request_open_at: Instant,
     response_open_at: Instant,
@@ -78,76 +81,91 @@ struct ResponseState {
     frame_count: usize,
 }
 
-// ==== impl Mod ====
+// === Layer ===
 
-impl Mod {
-    pub(super) fn new(taps: Arc<Mutex<Taps>>) -> Self {
-        Self { taps }
-    }
-}
-
-impl<N, A, B> Stack<N> for Mod
+impl<T, M, A, B> Layer<T, M>
 where
-    A: tower_h2::Body,
-    B: tower_h2::Body,
-    N: MakeService<Config = Arc<ClientCtx>>,
-    N::Service: Service<
+    T: Clone + Into<event::Endpoint>,
+    M: svc::Make<T>,
+    M::Value: svc::Service<
         Request = http::Request<RequestBody<A>>,
         Response = http::Response<B>,
         Error = h2::Error,
     >,
+    A: tower_h2::Body,
+    B: tower_h2::Body,
 {
-    type Config = Arc<ClientCtx>;
-    type Error = N::Error;
-    type Service = <Make<N> as MakeService>::Service;
-    type MakeService = Make<N>;
-
-    fn build(&self, inner: N) -> Self::MakeService {
-        Make {
-            taps: self.taps.clone(),
-            inner,
+    pub(super) fn new(taps: Arc<Mutex<Taps>>) -> Self {
+        Self {
+            taps,
+            _p: PhantomData,
         }
     }
 }
 
-// ==== impl Make ====
-
-impl<N, A, B> MakeService for Make<N>
+impl<T, M, A, B> svc::Layer<T, T, M> for Layer<T, M>
 where
-    A: tower_h2::Body,
-    B: tower_h2::Body,
-    N: MakeService<Config = Arc<ClientCtx>>,
-    N::Service: Service<
+    T: Clone + Into<event::Endpoint>,
+    M: svc::Make<T>,
+    M::Value: svc::Service<
         Request = http::Request<RequestBody<A>>,
         Response = http::Response<B>,
         Error = h2::Error,
     >,
+    A: tower_h2::Body,
+    B: tower_h2::Body,
 {
-    type Config = Arc<ClientCtx>;
-    type Error = N::Error;
-    type Service = TapService<N::Service>;
+    type Value = <Make<T, M> as svc::Make<T>>::Value;
+    type Error = M::Error;
+    type Make = Make<T, M>;
 
-    fn make_service(&self, ctx: &Self::Config) -> Result<Self::Service, Self::Error> {
-        let inner = self.inner.make_service(&ctx)?;
-        Ok(TapService {
-            ctx: ctx.clone(),
+    fn bind(&self, inner: M) -> Self::Make {
+        Make {
+            taps: self.taps.clone(),
+            inner,
+            _p: PhantomData,
+        }
+    }
+}
+
+// === Make ===
+
+impl<T, M, A, B> svc::Make<T> for Make<T, M>
+where
+    T: Clone + Into<event::Endpoint>,
+    M: svc::Make<T>,
+    M::Value: svc::Service<
+        Request = http::Request<RequestBody<A>>,
+        Response = http::Response<B>,
+        Error = h2::Error,
+    >,
+    A: tower_h2::Body,
+    B: tower_h2::Body,
+{
+    type Value = Service<M::Value>;
+    type Error = M::Error;
+
+    fn make(&self, target: &T) -> Result<Self::Value, Self::Error> {
+        let inner = self.inner.make(&target)?;
+        Ok(Service {
+            endpoint: target.clone().into(),
             taps: self.taps.clone(),
             inner,
         })
     }
 }
 
-// === TapService ===
+// === Service ===
 
-impl<S, A, B> Service for TapService<S>
+impl<S, A, B> svc::Service for Service<S>
 where
-    A: tower_h2::Body,
-    B: tower_h2::Body,
-    S: Service<
+    S: svc::Service<
         Request = http::Request<RequestBody<A>>,
         Response = http::Response<B>,
         Error = h2::Error,
     >,
+    A: tower_h2::Body,
+    B: tower_h2::Body,
 {
     type Request = http::Request<A>;
     type Response = http::Response<ResponseBody<B>>;
@@ -160,19 +178,25 @@ where
 
     fn call(&mut self, req: Self::Request) -> Self::Future {
         let request_open_at = clock::now();
-        let ctx = req
-            .extensions()
-            .get::<Arc<ServerCtx>>()
-            .map(|srv| ctx::Request::new(&req, &srv, &self.ctx));
 
-        if let Some(ctx) = ctx.as_ref() {
+        let meta = req
+            .extensions()
+            .get::<proxy::Source>()
+            .map(|source| event::Request {
+                endpoint: self.endpoint.clone(),
+                source: source.clone(),
+                method: req.method().clone(),
+                uri: req.uri().clone(),
+            });
+
+        if let Some(meta) = meta.as_ref() {
             if let Ok(mut taps) = self.taps.lock() {
-                taps.inspect(&event::Event::StreamRequestOpen(ctx.clone()));
+                taps.inspect(&event::Event::StreamRequestOpen(meta.clone()));
             }
         }
 
-        let mut state = ctx.as_ref().map(|ctx| RequestState {
-            ctx: ctx.clone(),
+        let mut state = meta.as_ref().map(|meta| RequestState {
+            meta: meta.clone(),
             taps: Some(self.taps.clone()),
             request_open_at,
             byte_count: 0,
@@ -201,7 +225,7 @@ where
 impl<S, B> Future for ResponseFuture<S>
 where
     B: tower_h2::Body,
-    S: Service<Response = http::Response<B>, Error = h2::Error>,
+    S: svc::Service<Response = http::Response<B>, Error = h2::Error>,
 {
     type Item = http::Response<ResponseBody<B>>;
     type Error = h2::Error;
@@ -221,11 +245,14 @@ where
 
         let state = if let Some(mut req) = self.state.take() {
             if let Some(taps) = req.taps.take() {
-                let ctx = ctx::Response::new(&rsp, &req.ctx);
+                let meta = event::Response {
+                    request: req.meta.clone(),
+                    status: rsp.status(),
+                };
 
                 if let Ok(mut taps) = taps.lock() {
                     taps.inspect(&event::Event::StreamResponseOpen(
-                        ctx.clone(),
+                        meta.clone(),
                         event::StreamResponseOpen {
                             request_open_at: req.request_open_at,
                             response_open_at,
@@ -234,7 +261,7 @@ where
                 }
 
                 let mut state = ResponseState {
-                    ctx,
+                    meta,
                     taps: Some(taps),
                     request_open_at: req.request_open_at,
                     response_open_at,
@@ -255,7 +282,6 @@ where
             None
         };
 
-
         let rsp = {
             let (head, inner) = rsp.into_parts();
             http::Response::from_parts(head, ResponseBody { state, inner })
@@ -269,7 +295,7 @@ impl RequestState {
         if let Some(t) = self.taps.take() {
             if let Ok(mut taps) = t.lock() {
                 taps.inspect(&event::Event::StreamRequestEnd(
-                    self.ctx.clone(),
+                    self.meta.clone(),
                     event::StreamRequestEnd {
                         request_open_at: self.request_open_at,
                         request_end_at: clock::now(),
@@ -283,7 +309,7 @@ impl RequestState {
         if let Some(t) = self.taps.take() {
             if let Ok(mut taps) = t.lock() {
                 taps.inspect(&event::Event::StreamRequestFail(
-                    self.ctx.clone(),
+                    self.meta.clone(),
                     event::StreamRequestFail {
                         request_open_at: self.request_open_at,
                         request_fail_at: clock::now(),
@@ -361,7 +387,7 @@ impl ResponseState {
             let response_end_at = clock::now();
             if let Ok(mut taps) = t.lock() {
                 taps.inspect(&event::Event::StreamResponseEnd(
-                    self.ctx.clone(),
+                    self.meta.clone(),
                     event::StreamResponseEnd {
                         request_open_at: self.request_open_at,
                         response_open_at: self.response_open_at,
@@ -380,7 +406,7 @@ impl ResponseState {
         if let Some(t) = self.taps.take() {
             if let Ok(mut taps) = t.lock() {
                 taps.inspect(&event::Event::StreamResponseFail(
-                    self.ctx.clone(),
+                    self.meta.clone(),
                     event::StreamResponseFail {
                         request_open_at: self.request_open_at,
                         response_open_at: self.response_open_at,

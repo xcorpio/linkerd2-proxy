@@ -1,22 +1,36 @@
+use h2;
+use http;
 use futures_mpsc_lossy;
 use indexmap::IndexMap;
 use std::sync::{Arc, Mutex};
+use tower_h2;
 
 use api::tap::observe_request;
+use svc;
 
-pub mod ctx;
-pub mod event;
+mod event;
 mod match_;
 mod service;
 
-pub use self::event::Event;
-use self::match_::*;
+pub use self::event::{Endpoint, Event};
 pub use self::match_::InvalidMatch;
-pub use self::service::{Mod, Make, TapService};
+use self::match_::*;
+pub use self::service::{Layer, Make, RequestBody, Service};
 
-pub fn new() -> (Mod, Arc<Mutex<Taps>>) {
+pub fn new<T, M, A, B>() -> (Layer<T, M>, Arc<Mutex<Taps>>)
+where
+    T: Clone + Into<event::Endpoint>,
+    M: svc::Make<T>,
+    M::Value: svc::Service<
+        Request = http::Request<RequestBody<A>>,
+        Response = http::Response<B>,
+        Error = h2::Error,
+    >,
+    A: tower_h2::Body,
+    B: tower_h2::Body,
+{
     let taps = Arc::new(Mutex::new(Taps::default()));
-    (Mod::new(taps.clone()), taps)
+    (Layer::new(taps.clone()), taps)
 }
 
 #[derive(Default, Debug)]
@@ -49,7 +63,11 @@ impl Taps {
         if self.by_id.is_empty() {
             return;
         }
-        debug!("inspect taps={:?} event={:?}", self.by_id.keys().collect::<Vec<_>>(), ev);
+        debug!(
+            "inspect taps={:?} event={:?}",
+            self.by_id.keys().collect::<Vec<_>>(),
+            ev
+        );
 
         // Iterate through taps by index so that items may be removed.
         let mut idx = 0;
@@ -86,16 +104,14 @@ impl Tap {
     ) -> Result<(Tap, futures_mpsc_lossy::Receiver<Event>), InvalidMatch> {
         let (tx, rx) = futures_mpsc_lossy::channel(capacity);
         let match_ = Match::new(match_)?;
-        let tap = Tap {
-            match_,
-            tx,
-        };
+        let tap = Tap { match_, tx };
         Ok((tap, rx))
     }
 
     fn inspect(&self, ev: &Event) -> Result<bool, Ended> {
         if self.match_.matches(ev) {
-            return self.tx
+            return self
+                .tx
                 .lossy_send(ev.clone())
                 .map_err(|_| Ended)
                 .map(|_| true);

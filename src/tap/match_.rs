@@ -1,16 +1,14 @@
 use indexmap::IndexMap;
 use std::boxed::Box;
 use std::net;
-use std::sync::Arc;
 
 use http;
 use ipnet::{Contains, Ipv4Net, Ipv6Net};
 
-use super::Event;
+use super::{event, Event};
 use api::net::ip_address;
 use api::tap::observe_request;
 use convert::TryFrom;
-use super::ctx;
 
 #[derive(Clone, Debug)]
 pub(super) enum Match {
@@ -87,33 +85,34 @@ impl Match {
 
             Match::Source(ref src) => match *ev {
                 Event::StreamRequestOpen(ref req) | Event::StreamRequestFail(ref req, _) => {
-                    src.matches(&req.server.remote)
+                    src.matches(&req.source.remote)
                 }
                 Event::StreamResponseOpen(ref rsp, _) |
                 Event::StreamResponseFail(ref rsp, _) |
-                Event::StreamResponseEnd(ref rsp, _) => src.matches(&rsp.request.server.remote),
+                Event::StreamResponseEnd(ref rsp, _) => src.matches(&rsp.request.source.remote),
                 _ => false,
             },
 
             Match::Destination(ref dst) => match *ev {
                 Event::StreamRequestOpen(ref req) | Event::StreamRequestFail(ref req, _) => {
-                    dst.matches(&req.client.remote)
+                    dst.matches(&req.endpoint.client.target.addr)
                 }
                 Event::StreamResponseOpen(ref rsp, _) |
                 Event::StreamResponseFail(ref rsp, _) |
-                Event::StreamResponseEnd(ref rsp, _) => dst.matches(&rsp.request.client.remote),
+                Event::StreamResponseEnd(ref rsp, _) =>
+                    dst.matches(&rsp.request.endpoint.client.target.addr),
                 _ => false,
             },
 
             Match::DestinationLabel(ref label) => match *ev {
                 Event::StreamRequestOpen(ref req) | Event::StreamRequestFail(ref req, _) => {
-                    label.matches(req.labels())
+                    label.matches(&req.endpoint.labels)
                 }
 
                 Event::StreamResponseOpen(ref rsp, _) |
                 Event::StreamResponseFail(ref rsp, _) |
                 Event::StreamResponseEnd(ref rsp, _) => {
-                    label.matches(rsp.request.labels())
+                    label.matches(&rsp.request.endpoint.labels)
                 }
 
                 _ => false,
@@ -308,7 +307,7 @@ impl<'a> TryFrom<&'a observe_request::match_::tcp::Netmask> for NetMatch {
 // ===== impl HttpMatch ======
 
 impl HttpMatch {
-    fn matches(&self, req: &Arc<ctx::Request>) -> bool {
+    fn matches(&self, req: &event::Request) -> bool {
         match *self {
             HttpMatch::Scheme(ref m) => req.uri
                 .scheme_part()
@@ -538,7 +537,7 @@ mod tests {
         }
 
         // TODO
-        // fn http_matches(m: HttpMatch, ctx: Arc<ctx::Request>) -> bool {
+        // fn http_matches(m: HttpMatch, ctx: event::Request) -> bool {
         //     let matches = false;
         //     m.matches(&addr) == matches
         // }

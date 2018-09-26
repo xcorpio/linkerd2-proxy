@@ -3,36 +3,42 @@ use h2;
 use http;
 use std::fmt::Debug;
 use std::hash::Hash;
+use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio_timer::clock;
 use tower_h2;
 
-use super::{ClassMetrics, Metrics, Registry};
 use super::super::{Classify, ClassifyResponse};
+use super::{ClassMetrics, Metrics, Registry};
+use svc;
 
 /// A stack module that wraps services to record metrics.
-#[derive(Clone, Debug)]
-pub struct Layer<T, C>
+#[derive(Debug)]
+pub struct Layer<T, M, C>
 where
     T: Clone + Hash + Eq,
-    C: Classify,
+    M: svc::Make<T>,
+    M::Value: svc::Service,
+    C: Classify<Error = <M::Value as svc::Service>::Error>,
     C::Class: Hash + Eq,
 {
     registry: Arc<Mutex<Registry<T, C::Class>>>,
+    _p: PhantomData<fn() -> (M)>,
 }
 
 /// Wraps services to record metrics.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Make<T, M, C>
 where
+    T: Clone + Hash + Eq,
     M: svc::Make<T>,
-    N::Config: Clone + Hash + Eq,
-    C: Classify<Error = <N::Service as svc::Service>::Error>,
+    M::Value: svc::Service,
+    C: Classify<Error = <M::Value as svc::Service>::Error>,
     C::Class: Hash + Eq,
 {
-    registry: Arc<Mutex<Registry<N::Config, C::Class>>>,
-    inner: N,
+    registry: Arc<Mutex<Registry<T, C::Class>>>,
+    inner: M,
 }
 
 /// A middleware that records HTTP metrics.
@@ -86,23 +92,34 @@ where
 
 // ===== impl Make =====
 
-impl<T, C> Layer<T, C>
+impl<T, M, C, A, B> Layer<T, M, C>
 where
     T: Clone + Hash + Eq,
-    C: Classify,
+    M: svc::Make<T>,
+    M::Value: svc::Service<
+        Request = http::Request<RequestBody<A, C::Class>>,
+        Response = http::Response<B>,
+        Error = h2::Error,
+    >,
+    A: tower_h2::Body,
+    B: tower_h2::Body,
+    C: Classify<Error = h2::Error>,
     C::Class: Hash + Eq,
     C::ClassifyResponse: Send + Sync + 'static,
 {
     pub(super) fn new(registry: Arc<Mutex<Registry<T, C::Class>>>) -> Self {
-        Self { registry }
+        Self {
+            registry,
+            _p: PhantomData,
+        }
     }
 }
 
-impl<T, M, A, B, C> Stack<N> for Layer<N::Config, C>
+impl<T, M, A, B, C> svc::Layer<T, T, M> for Layer<T, M, C>
 where
+    T: Clone + Hash + Eq,
     M: svc::Make<T>,
-    N::Config: Clone + Hash + Eq,
-    N::Service: svc::Service<
+    M::Value: svc::Service<
         Request = http::Request<RequestBody<A, C::Class>>,
         Response = http::Response<B>,
         Error = h2::Error,
@@ -113,11 +130,11 @@ where
     C::ClassifyResponse: Debug + Send + Sync + 'static,
     C::Class: Hash + Eq,
 {
-    type Value = <Make<N, C> as MakeService>::Service;
-    type Error = N::Error;
-    type MakeService = Make<N, C>;
+    type Value = <Make<T, M, C> as svc::Make<T>>::Value;
+    type Error = M::Error;
+    type Make = Make<T, M, C>;
 
-    fn build(&self, inner: N) -> Self::MakeService {
+    fn bind(&self, inner: M) -> Self::Make {
         Make {
             registry: self.registry.clone(),
             inner,
@@ -127,11 +144,11 @@ where
 
 // ===== impl Make =====
 
-impl<N, A, B, C> MakeService for Make<N, C>
+impl<T, M, A, B, C> svc::Make<T> for Make<T, M, C>
 where
+    T: Clone + Hash + Eq,
     M: svc::Make<T>,
-    N::Config: Clone + Hash + Eq,
-    N::Service: svc::Service<
+    M::Value: svc::Service<
         Request = http::Request<RequestBody<A, C::Class>>,
         Response = http::Response<B>,
         Error = C::Error,
@@ -142,17 +159,16 @@ where
     C::Class: Hash + Eq,
     C::ClassifyResponse: Debug + Send + Sync + 'static,
 {
-    type Config = N::Config;
-    type Error = N::Error;
-    type svc::Service = Measure<N::Service, C>;
+    type Value = Measure<M::Value, C>;
+    type Error = M::Error;
 
-    fn make_service(&self, config: &Self::Config) -> Result<Self::Service, Self::Error> {
-        let inner = self.inner.make_service(config)?;
+    fn make(&self, target: &T) -> Result<Self::Value, Self::Error> {
+        let inner = self.inner.make(target)?;
 
         let metrics = match self.registry.lock() {
             Ok(mut r) => Some(
-                r.by_config
-                    .entry(config.clone())
+                r.by_target
+                    .entry(target.clone())
                     .or_insert_with(|| Arc::new(Mutex::new(Metrics::default())))
                     .clone(),
             ),

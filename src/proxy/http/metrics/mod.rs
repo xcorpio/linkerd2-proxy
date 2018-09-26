@@ -1,36 +1,47 @@
+use h2;
+use http;
 use indexmap::IndexMap;
 use std::hash::Hash;
 use std::sync::{Arc, Mutex};
+use tower_h2;
 
-use linkerd2_metrics::{latency, Counter, FmtLabels, Histogram};
-
+use metrics::{latency, Counter, FmtLabels, Histogram};
 use proxy::http::Classify;
+use svc;
 
 mod class;
 mod report;
 mod service;
 
 pub use self::report::Report;
-pub use self::service::{Make, Measure, Mod};
+pub use self::service::{Layer, Make, Measure, RequestBody};
 
-pub fn new<Base, Config, C>(base: Base) -> (Mod<Config, C>, Report<Base, Config, C::Class>)
+pub fn new<C, T, M, A, B>() -> (Layer<T, M, C>, Report<T, C::Class>)
 where
-    Base: FmtLabels + Clone,
-    Config: FmtLabels + Clone + Hash + Eq,
-    C: Classify,
-    C::Class: FmtLabels + Clone + Hash + Eq,
+    T: FmtLabels + Clone + Hash + Eq,
+    M: svc::Make<T>,
+    M::Value: svc::Service<
+        Request = http::Request<RequestBody<A, C::Class>>,
+        Response = http::Response<B>,
+        Error = h2::Error,
+    >,
+    C: Classify<Error = h2::Error> + Clone,
+    C::Class: FmtLabels + Hash + Eq,
+    C::ClassifyResponse: Send + Sync + 'static,
+    A: tower_h2::Body,
+    B: tower_h2::Body,
 {
     let registry = Arc::new(Mutex::new(Registry::default()));
-    (Mod::new(registry.clone()), Report::new(base, registry))
+    (Layer::new(registry.clone()), Report::new(registry))
 }
 
 #[derive(Debug)]
-struct Registry<Config, Class>
+struct Registry<T, C>
 where
-    Config: Hash + Eq,
-    Class: Hash + Eq,
+    T: Hash + Eq,
+    C: Hash + Eq,
 {
-    by_config: IndexMap<Config, Arc<Mutex<Metrics<Class>>>>,
+    by_target: IndexMap<T, Arc<Mutex<Metrics<C>>>>,
 }
 
 #[derive(Debug)]
@@ -49,14 +60,14 @@ pub struct ClassMetrics {
     latency: Histogram<latency::Ms>,
 }
 
-impl<Config, Class> Default for Registry<Config, Class>
+impl<T, C> Default for Registry<T, C>
 where
-    Config: Hash + Eq,
-    Class: Hash + Eq,
+    T: Hash + Eq,
+    C: Hash + Eq,
 {
     fn default() -> Self {
         Self {
-            by_config: IndexMap::default(),
+            by_target: IndexMap::default(),
         }
     }
 }

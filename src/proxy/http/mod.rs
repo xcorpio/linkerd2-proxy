@@ -11,7 +11,7 @@ pub mod router;
 pub mod settings;
 pub mod upgrade;
 
-pub use self::classify::Classify;
+pub use self::classify::{Classify, ClassifyResponse};
 pub use self::client::{Client, Error as ClientError};
 pub use self::glue::HttpBody as Body;
 pub use self::settings::Settings;
