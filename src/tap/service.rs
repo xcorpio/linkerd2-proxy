@@ -3,7 +3,7 @@ use futures::{Async, Future, Poll};
 use h2;
 use http;
 use std::marker::PhantomData;
-use std::sync::{Arc, Mutex};
+use std::sync::{atomic::{AtomicUsize, Ordering}, Arc, Mutex};
 use std::time::Instant;
 use tokio_timer::clock;
 use tower_h2;
@@ -15,6 +15,7 @@ use svc;
 /// A stack module that wraps services to record taps.
 #[derive(Clone, Debug)]
 pub struct Layer<T, M> {
+    next_id: Arc<AtomicUsize>,
     taps: Arc<Mutex<Taps>>,
     _p: PhantomData<fn() -> (T, M)>,
 }
@@ -25,6 +26,7 @@ pub struct Make<T, N>
 where
     N: svc::Make<T>,
 {
+    next_id: Arc<AtomicUsize>,
     taps: Arc<Mutex<Taps>>,
     inner: N,
     _p: PhantomData<fn() -> (T)>,
@@ -37,6 +39,7 @@ where
     S: svc::Service,
 {
     endpoint: event::Endpoint,
+    next_id: Arc<AtomicUsize>,
     taps: Arc<Mutex<Taps>>,
     inner: S,
 }
@@ -64,7 +67,7 @@ struct RequestState {
     frame_count: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ResponseBody<B> {
     state: Option<ResponseState>,
     inner: B,
@@ -95,8 +98,9 @@ where
     A: tower_h2::Body,
     B: tower_h2::Body,
 {
-    pub(super) fn new(taps: Arc<Mutex<Taps>>) -> Self {
+    pub fn new(taps: Arc<Mutex<Taps>>) -> Self {
         Self {
+            next_id: Arc::new(AtomicUsize::new(0)),
             taps,
             _p: PhantomData,
         }
@@ -121,6 +125,7 @@ where
 
     fn bind(&self, inner: M) -> Self::Make {
         Make {
+            next_id: self.next_id.clone(),
             taps: self.taps.clone(),
             inner,
             _p: PhantomData,
@@ -148,6 +153,7 @@ where
     fn make(&self, target: &T) -> Result<Self::Value, Self::Error> {
         let inner = self.inner.make(&target)?;
         Ok(Service {
+            next_id: self.next_id.clone(),
             endpoint: target.clone().into(),
             taps: self.taps.clone(),
             inner,
@@ -183,6 +189,7 @@ where
             .extensions()
             .get::<proxy::Source>()
             .map(|source| event::Request {
+                id: self.next_id.fetch_add(1, Ordering::Relaxed),
                 endpoint: self.endpoint.clone(),
                 source: source.clone(),
                 method: req.method().clone(),

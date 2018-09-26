@@ -12,6 +12,7 @@ use proxy::{
     resolve,
 };
 use svc;
+use tap;
 use transport::{connect, tls, DnsNameAndPort, Host, HostAndPort};
 use Conditional;
 
@@ -308,6 +309,15 @@ impl fmt::Display for Endpoint {
 impl From<Endpoint> for client::Config {
     fn from(ep: Endpoint) -> Self {
         client::Config::new(ep.connect, ep.settings)
+    }
+}
+
+impl From<Endpoint> for tap::Endpoint {
+    fn from(ep: Endpoint) -> Self {
+        tap::Endpoint {
+            client: ep.into(),
+            labels: ep.metadata.labels().clone(),
+        }
     }
 }
 

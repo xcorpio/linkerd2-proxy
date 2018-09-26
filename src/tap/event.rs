@@ -13,6 +13,7 @@ pub struct Endpoint {
 
 #[derive(Clone, Debug)]
 pub struct Request {
+    pub id: usize,
     pub source: Source,
     pub endpoint: Endpoint,
     pub method: http::Method,

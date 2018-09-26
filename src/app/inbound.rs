@@ -6,6 +6,7 @@ use std::fmt;
 use proxy::http::{client, orig_proto, router, Settings};
 use proxy::server::Source;
 use svc;
+use tap;
 use transport::{connect, tls};
 use Conditional;
 
@@ -105,6 +106,15 @@ impl From<Endpoint> for client::Config {
         let tls = Conditional::None(tls::ReasonForNoTls::InternalTraffic);
         let connect = connect::Target::new(ep.addr, tls);
         client::Config::new(connect, ep.settings)
+    }
+}
+
+impl From<Endpoint> for tap::Endpoint {
+    fn from(ep: Endpoint) -> Self {
+        tap::Endpoint {
+            client: ep.into(),
+            labels: Default::default(),
+        }
     }
 }
 

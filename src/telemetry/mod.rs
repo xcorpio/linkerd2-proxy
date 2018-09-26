@@ -12,4 +12,4 @@ pub use self::http::event::Event;
 pub use self::report::Report;
 pub use self::http::Sensors;
 
-pub type ServeMetrics = metrics::Serve<Report>;
+pub type ServeMetrics<T, C> = metrics::Serve<Report<T, C>>;

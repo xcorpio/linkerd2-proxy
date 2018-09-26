@@ -1,14 +1,9 @@
-use h2;
-use http;
 use futures_mpsc_lossy;
 use indexmap::IndexMap;
-use std::sync::{Arc, Mutex};
-use tower_h2;
 
 use api::tap::observe_request;
-use svc;
 
-mod event;
+pub mod event;
 mod match_;
 mod service;
 
@@ -16,22 +11,6 @@ pub use self::event::{Endpoint, Event};
 pub use self::match_::InvalidMatch;
 use self::match_::*;
 pub use self::service::{Layer, Make, RequestBody, Service};
-
-pub fn new<T, M, A, B>() -> (Layer<T, M>, Arc<Mutex<Taps>>)
-where
-    T: Clone + Into<event::Endpoint>,
-    M: svc::Make<T>,
-    M::Value: svc::Service<
-        Request = http::Request<RequestBody<A>>,
-        Response = http::Response<B>,
-        Error = h2::Error,
-    >,
-    A: tower_h2::Body,
-    B: tower_h2::Body,
-{
-    let taps = Arc::new(Mutex::new(Taps::default()));
-    (Layer::new(taps.clone()), taps)
-}
 
 #[derive(Default, Debug)]
 pub struct Taps {

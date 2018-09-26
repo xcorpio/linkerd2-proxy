@@ -3,12 +3,10 @@
 
 use std::error::Error;
 use std::fmt;
-use std::sync::Arc;
 
 use api::*;
 use convert::*;
-use ctx;
-use telemetry::http::event::{self, Event};
+use tap::event::{self, Event};
 
 #[derive(Debug, Clone)]
 pub struct UnknownEvent;
@@ -27,7 +25,7 @@ impl Error for UnknownEvent {
 }
 
 impl event::StreamResponseEnd {
-    fn to_tap_event(&self, ctx: &Arc<ctx::http::Request>) -> tap::TapEvent {
+    fn to_tap_event(&self, ctx: &event::Request) -> tap::TapEvent {
         let eos = self.grpc_status
             .map(tap::Eos::from_grpc_status)
             ;
@@ -35,7 +33,7 @@ impl event::StreamResponseEnd {
         let end = tap::tap_event::http::ResponseEnd {
             id: Some(tap::tap_event::http::StreamId {
                 base: 0, // TODO FIXME
-                stream: ctx.id.into(),
+                stream: ctx.id as u64,
             }),
             since_request_init: Some(pb_elapsed(self.request_open_at, self.response_end_at)),
             since_response_init: Some(pb_elapsed(self.response_open_at, self.response_end_at)),
@@ -44,11 +42,11 @@ impl event::StreamResponseEnd {
         };
 
         tap::TapEvent {
-            proxy_direction: ctx.server.direction().into(),
-            source: Some((&ctx.server.remote).into()),
-            source_meta: Some(ctx.server.src_meta()),
-            destination: Some((&ctx.client.remote).into()),
-            destination_meta: Some(ctx.client.dst_meta()),
+            proxy_direction: ctx.source.direction().into(),
+            source: Some((&ctx.source.remote).into()),
+            source_meta: Some(ctx.source.src_meta()),
+            destination: Some((&ctx.endpoint.client.target.addr).into()),
+            destination_meta: Some(ctx.endpoint.client.dst_meta()),
             event: Some(tap::tap_event::Event::Http(tap::tap_event::Http {
                 event: Some(tap::tap_event::http::Event::ResponseEnd(end)),
             })),
@@ -57,11 +55,11 @@ impl event::StreamResponseEnd {
 }
 
 impl event::StreamResponseFail {
-    fn to_tap_event(&self, ctx: &Arc<ctx::http::Request>) -> tap::TapEvent {
+    fn to_tap_event(&self, ctx: &event::Request) -> tap::TapEvent {
         let end = tap::tap_event::http::ResponseEnd {
             id: Some(tap::tap_event::http::StreamId {
                 base: 0, // TODO FIXME
-                stream: ctx.id.into(),
+                stream: ctx.id as u64,
             }),
             since_request_init: Some(pb_elapsed(self.request_open_at, self.response_fail_at)),
             since_response_init: Some(pb_elapsed(self.response_open_at, self.response_fail_at)),
@@ -70,11 +68,11 @@ impl event::StreamResponseFail {
         };
 
         tap::TapEvent {
-            proxy_direction: ctx.server.direction().into(),
-            source: Some((&ctx.server.remote).into()),
-            source_meta: Some(ctx.server.src_meta()),
-            destination: Some((&ctx.client.remote).into()),
-            destination_meta: Some(ctx.client.dst_meta()),
+            proxy_direction: ctx.source.direction().into(),
+            source: Some((&ctx.source.remote).into()),
+            source_meta: Some(ctx.source.src_meta()),
+            destination: Some((&ctx.endpoint.client.remote).into()),
+            destination_meta: Some(ctx.endpoint.client.dst_meta()),
             event: Some(tap::tap_event::Event::Http(tap::tap_event::Http {
                 event: Some(tap::tap_event::http::Event::ResponseEnd(end)),
             })),
@@ -83,11 +81,11 @@ impl event::StreamResponseFail {
 }
 
 impl event::StreamRequestFail {
-    fn to_tap_event(&self, ctx: &Arc<ctx::http::Request>) -> tap::TapEvent {
+    fn to_tap_event(&self, ctx: &event::Request) -> tap::TapEvent {
         let end = tap::tap_event::http::ResponseEnd {
             id: Some(tap::tap_event::http::StreamId {
                 base: 0, // TODO FIXME
-                stream: ctx.id.into(),
+                stream: ctx.id as u64,
             }),
             since_request_init: Some(pb_elapsed(self.request_open_at, self.request_fail_at)),
             since_response_init: None,
@@ -96,11 +94,11 @@ impl event::StreamRequestFail {
         };
 
         tap::TapEvent {
-            proxy_direction: ctx.server.direction().into(),
-            source: Some((&ctx.server.remote).into()),
-            source_meta: Some(ctx.server.src_meta()),
-            destination: Some((&ctx.client.remote).into()),
-            destination_meta: Some(ctx.client.dst_meta()),
+            proxy_direction: ctx.source.direction().into(),
+            source: Some((&ctx.source.remote).into()),
+            source_meta: Some(ctx.source.src_meta()),
+            destination: Some((&ctx.endpoint.client.remote).into()),
+            destination_meta: Some(ctx.endpoint.client.dst_meta()),
             event: Some(tap::tap_event::Event::Http(tap::tap_event::Http {
                 event: Some(tap::tap_event::http::Event::ResponseEnd(end)),
             })),
@@ -117,7 +115,7 @@ impl<'a> TryFrom<&'a Event> for tap::TapEvent {
                     id: Some(tap::tap_event::http::StreamId {
                         base: 0,
                         // TODO FIXME
-                        stream: ctx.id.into(),
+                        stream: ctx.id as u64,
                     }),
                     method: Some((&ctx.method).into()),
                     scheme: ctx.uri.scheme_part().map(tap::Scheme::from),
@@ -130,11 +128,11 @@ impl<'a> TryFrom<&'a Event> for tap::TapEvent {
                 };
 
                 tap::TapEvent {
-                    proxy_direction: ctx.server.direction().into(),
-                    source: Some((&ctx.server.remote).into()),
-                    source_meta: Some(ctx.server.src_meta()),
-                    destination: Some((&ctx.client.remote).into()),
-                    destination_meta: Some(ctx.client.dst_meta()),
+                    proxy_direction: ctx.source.direction().into(),
+                    source: Some((&ctx.source.remote).into()),
+                    source_meta: Some(ctx.source.src_meta()),
+                    destination: Some((&ctx.endpoint.client.remote).into()),
+                    destination_meta: Some(ctx.endpoint.client.dst_meta()),
                     event: Some(tap::tap_event::Event::Http(tap::tap_event::Http {
                         event: Some(tap::tap_event::http::Event::RequestInit(init)),
                     })),
@@ -146,18 +144,18 @@ impl<'a> TryFrom<&'a Event> for tap::TapEvent {
                     id: Some(tap::tap_event::http::StreamId {
                         base: 0,
                         // TODO FIXME
-                        stream: ctx.request.id.into(),
+                        stream: ctx.request.id,
                     }),
                     since_request_init: Some(pb_elapsed(rsp.request_open_at, rsp.response_open_at)),
                     http_status: u32::from(ctx.status.as_u16()),
                 };
 
                 tap::TapEvent {
-                    proxy_direction: ctx.request.server.direction().into(),
-                    source: Some((&ctx.request.server.remote).into()),
-                    source_meta: Some(ctx.request.server.src_meta()),
-                    destination: Some((&ctx.request.client.remote).into()),
-                    destination_meta: Some(ctx.request.client.dst_meta()),
+                    proxy_direction: ctx.request.source.direction().into(),
+                    source: Some((&ctx.request.source.remote).into()),
+                    source_meta: Some(ctx.request.source.src_meta()),
+                    destination: Some((&ctx.request.endpoint.client.remote).into()),
+                    destination_meta: Some(ctx.request.endpoint.client.dst_meta()),
                     event: Some(tap::tap_event::Event::Http(tap::tap_event::Http {
                         event: Some(tap::tap_event::http::Event::ResponseInit(init)),
                     })),
@@ -183,7 +181,7 @@ impl<'a> TryFrom<&'a Event> for tap::TapEvent {
     }
 }
 
-impl ctx::transport::Server {
+impl proxy::Source {
     fn src_meta(&self) -> tap::tap_event::EndpointMeta {
         let mut meta = tap::tap_event::EndpointMeta::default();
 
@@ -200,11 +198,11 @@ impl ctx::transport::Server {
     }
 }
 
-impl ctx::transport::Client {
+impl event::Endpoint {
     fn dst_meta(&self) -> tap::tap_event::EndpointMeta {
         let mut meta = tap::tap_event::EndpointMeta::default();
-        meta.labels.extend(self.labels().clone());
-        meta.labels.insert("tls".to_owned(), format!("{}", self.tls_status));
+        meta.labels.extend(self.labels.clone());
+        meta.labels.insert("tls".to_owned(), format!("{}", self.endpoint.client.target.tls));
         meta
     }
 }

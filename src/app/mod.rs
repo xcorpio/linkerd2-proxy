@@ -2,7 +2,10 @@ use convert::TryFrom;
 use logging;
 
 pub mod config;
-pub mod main;
+mod inbound;
+mod main;
+mod metric_labels;
+mod outbound;
 
 use self::config::{Config, Env};
 pub use self::main::Main;

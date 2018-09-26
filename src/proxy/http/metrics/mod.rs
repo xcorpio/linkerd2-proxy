@@ -1,13 +1,10 @@
-use h2;
-use http;
 use indexmap::IndexMap;
 use std::hash::Hash;
 use std::sync::{Arc, Mutex};
-use tower_h2;
+use std::time::{Duration, Instant};
+use tokio_timer::clock;
 
 use metrics::{latency, Counter, FmtLabels, Histogram};
-use proxy::http::Classify;
-use svc;
 
 mod class;
 mod report;
@@ -16,27 +13,17 @@ mod service;
 pub use self::report::Report;
 pub use self::service::{Layer, Make, Measure, RequestBody};
 
-pub fn new<C, T, M, A, B>() -> (Layer<T, M, C>, Report<T, C::Class>)
+pub fn new<T, C>(retain_idle: Duration) -> (Arc<Mutex<Registry<T, C>>>, Report<T, C>)
 where
     T: FmtLabels + Clone + Hash + Eq,
-    M: svc::Make<T>,
-    M::Value: svc::Service<
-        Request = http::Request<RequestBody<A, C::Class>>,
-        Response = http::Response<B>,
-        Error = h2::Error,
-    >,
-    C: Classify<Error = h2::Error> + Clone,
-    C::Class: FmtLabels + Hash + Eq,
-    C::ClassifyResponse: Send + Sync + 'static,
-    A: tower_h2::Body,
-    B: tower_h2::Body,
+    C: FmtLabels + Hash + Eq,
 {
     let registry = Arc::new(Mutex::new(Registry::default()));
-    (Layer::new(registry.clone()), Report::new(registry))
+    (registry.clone(), Report::new(retain_idle, registry))
 }
 
 #[derive(Debug)]
-struct Registry<T, C>
+pub struct Registry<T, C>
 where
     T: Hash + Eq,
     C: Hash + Eq,
@@ -49,6 +36,7 @@ struct Metrics<C>
 where
     C: Hash + Eq,
 {
+    last_update: Instant,
     total: Counter,
     by_class: IndexMap<C, ClassMetrics>,
     unclassified: ClassMetrics,
@@ -72,12 +60,23 @@ where
     }
 }
 
+impl<T, C> Registry<T, C>
+where
+    T: Hash + Eq,
+    C: Hash + Eq,
+{
+    fn retain_since(&mut self, epoch: Instant) {
+        self.by_target.retain(|_, m| m.lock().map(|m| m.last_update >= epoch).unwrap_or(false))
+    }
+}
+
 impl<C> Default for Metrics<C>
 where
     C: Hash + Eq,
 {
     fn default() -> Self {
         Self {
+            last_update: clock::now(),
             total: Counter::default(),
             by_class: IndexMap::default(),
             unclassified: ClassMetrics::default(),

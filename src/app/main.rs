@@ -22,8 +22,8 @@ use proxy::{
     http::{balance, client, insert_target, normalize_uri, router},
     limit, timeout,
 };
-use svc;
-use svc::{Layer as _Layer, Make as _Make};
+use svc::{self, Layer as _Layer, Make as _Make};
+use tap;
 use task;
 use telemetry::{self, http::timestamp_request_open};
 use transport::{self, connect, tls, Connection, GetOriginalDst, MakePort};
@@ -171,8 +171,7 @@ where
         );
 
         let (taps, observe) = control::Observe::new(100);
-        let (_http_sensors, http_report) = telemetry::http::new(config.metrics_retain_idle, &taps);
-
+        let (_http_metrics, http_report) = proxy::http::metrics::new(config.metrics_retain_idle);
         let (transport_metrics, transport_report) = transport::metrics::new();
 
         let (tls_config_sensor, tls_config_report) = telemetry::tls_config_reload::new();
@@ -217,14 +216,15 @@ where
         let (drain_tx, drain_rx) = drain::channel();
 
         let outbound = {
-            use outbound;
+            use super::outbound;
 
             // As the outbound proxy accepts connections, we don't do any
             // special transport-level handling.
             let accept = transport_metrics.accept("outbound").bind(());
 
             // Establishes connections to remote peers.
-            let connect = transport_metrics.connect("outbound")
+            let connect = transport_metrics
+                .connect("outbound")
                 .and_then(proxy::timeout::Layer::new(config.outbound_connect_timeout))
                 .bind(connect::Make::new());
 
@@ -254,20 +254,17 @@ where
             // `normalize_uri` and `make_per_request` are applied on the stack
             // selectively. For HTTP/2 stacks, for instance, neither service will be
             // employed.
-            let endpoint_h1_stack =
-                svc::When::new(
-                    |ep: &outbound::Endpoint| {
-                        !ep.settings.is_http2() &&
-                        !ep.settings.was_absolute_form()
-                    },
-                    normalize_uri::Layer::new(),
-                ).and_then(svc::When::new(
-                    |ep: &outbound::Endpoint| {
-                        !ep.settings.is_http2() &&
-                        !ep.settings.can_reuse_clients()
-                    },
-                    svc::make_per_request::Layer::new(),
-                ));
+            let endpoint_h1_stack = svc::When::new(
+                |ep: &outbound::Endpoint| {
+                    !ep.settings.is_http2() && !ep.settings.was_absolute_form()
+                },
+                normalize_uri::Layer::new(),
+            ).and_then(svc::When::new(
+                |ep: &outbound::Endpoint| {
+                    !ep.settings.is_http2() && !ep.settings.can_reuse_clients()
+                },
+                svc::make_per_request::Layer::new(),
+            ));
 
             // The TLS status of outbound requests depends on the local
             // configuration. As the local configuration changes, the inner
@@ -276,7 +273,8 @@ where
             // the TLS client config is marked as `NoConfig` when the endpoint
             // has a TLS identity.
             let endpoint_inner_stack =
-                outbound::LayerTlsConfig::new(tls_client_config);
+                outbound::LayerTlsConfig::new(tls_client_config)
+                .and_then(tap::Layer::new(taps));
                 // TODO: sensors here
 
             let capacity = config.outbound_router_capacity;
@@ -303,14 +301,15 @@ where
         };
 
         let inbound = {
-            use inbound;
+            use super::inbound;
 
             // As the inbound proxy accepts connections, we don't do any
             // special transport-level handling.
             let accept = transport_metrics.accept("inbound").bind(());
 
             // Establishes connections to the local application.
-            let connect = transport_metrics.connect("inbound")
+            let connect = transport_metrics
+                .connect("inbound")
                 .and_then(proxy::timeout::Layer::new(config.inbound_connect_timeout))
                 .bind(connect::Make::new());
 
@@ -339,14 +338,12 @@ where
             // employed.
             let endpoint_h1_stack = svc::When::new(
                 |ep: &inbound::Endpoint| {
-                    !ep.settings.is_http2() &&
-                    !ep.settings.was_absolute_form()
+                    !ep.settings.is_http2() && !ep.settings.was_absolute_form()
                 },
                 normalize_uri::Layer::new(),
             ).and_then(svc::When::new(
                 |ep: &inbound::Endpoint| {
-                    !ep.settings.is_http2() &&
-                    !ep.settings.can_reuse_clients()
+                    !ep.settings.is_http2() && !ep.settings.can_reuse_clients()
                 },
                 svc::make_per_request::Layer::new(),
             ));
@@ -356,6 +353,7 @@ where
             let max_idle_age = config.inbound_router_max_idle_age;
             let router = router_stack
                 .and_then(endpoint_h1_stack)
+                .and_then(tap::Layer::new(taps))
                 .bind(client::Make::new("in", connect.clone()))
                 .make(&router::Config::new("in", capacity, max_idle_age))
                 .expect("inbound router");

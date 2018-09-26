@@ -1,8 +1,10 @@
 use std::fmt;
 use std::hash::Hash;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use tokio_timer::clock;
 
-use linkerd2_metrics::{latency, Counter, FmtLabels, FmtMetric, FmtMetrics, Histogram, Metric};
+use metrics::{latency, Counter, FmtLabels, FmtMetric, FmtMetrics, Histogram, Metric};
 
 use super::{ClassMetrics, Metrics, Registry};
 
@@ -23,6 +25,7 @@ where
     C: FmtLabels + Hash + Eq,
 {
     registry: Arc<Mutex<Registry<T, C>>>,
+    retain_idle: Duration,
 }
 
 // ===== impl Report =====
@@ -32,8 +35,8 @@ where
     T: FmtLabels + Hash + Eq,
     C: FmtLabels + Hash + Eq,
 {
-    pub(super) fn new(registry: Arc<Mutex<Registry<T, C>>>) -> Self {
-        Self { registry }
+    pub(super) fn new(retain_idle: Duration, registry: Arc<Mutex<Registry<T, C>>>) -> Self {
+        Self { registry, retain_idle, }
     }
 }
 
@@ -51,6 +54,8 @@ where
         if registry.by_target.is_empty() {
             return Ok(());
         }
+
+        registry.retain_since(clock::now() - self.retain_idle);
 
         request_total.fmt_help(f)?;
         registry.fmt_by_target(f, request_total, |s| &s.total)?;
