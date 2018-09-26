@@ -63,6 +63,7 @@ mod logging;
 mod outbound;
 mod proxy;
 mod svc;
+mod tap;
 pub mod telemetry;
 pub mod transport;
 
