@@ -5,28 +5,21 @@ use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::fmt;
 
+use app::{Destination, NameOrAddr};
 use control::destination::{Metadata, ProtocolHint};
 use proxy::{
-    self,
-    http::{client, h1, orig_proto, router, Settings},
+    http::{client, orig_proto, router, Settings},
     resolve,
 };
 use svc;
 use tap;
-use transport::{connect, tls, DnsNameAndPort, Host, HostAndPort};
+use transport::{connect, tls, DnsNameAndPort};
 use Conditional;
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Destination {
-    pub name_or_addr: NameOrAddr,
-    pub settings: Settings,
-    _p: (),
-}
 
 #[derive(Clone, Debug)]
 pub struct Endpoint {
+    pub dst: Destination,
     pub connect: connect::Target,
-    pub settings: Settings,
     pub metadata: Metadata,
     _p: (),
 }
@@ -34,23 +27,13 @@ pub struct Endpoint {
 #[derive(Clone, Debug, Default)]
 pub struct Recognize {}
 
-/// Describes a destination for HTTP requests.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum NameOrAddr {
-    /// A logical, lazily-bound endpoint.
-    Name(DnsNameAndPort),
-
-    /// A single, bound endpoint.
-    Addr(SocketAddr),
-}
-
 #[derive(Clone, Debug)]
 pub struct Resolve<R: resolve::Resolve<DnsNameAndPort>>(R);
 
 #[derive(Debug)]
 pub enum Resolution<R: resolve::Resolution> {
-    Name(R, Settings),
-    Addr(Option<SocketAddr>, Settings),
+    Name(Destination, R),
+    Addr(Destination, Option<SocketAddr>),
 }
 
 pub fn orig_proto_upgrade<M>() -> LayerUpgrade<M> {
@@ -90,15 +73,9 @@ impl<B> router::Recognize<http::Request<B>> for Recognize {
     type Target = Destination;
 
     fn recognize(&self, req: &http::Request<B>) -> Option<Self::Target> {
-        let name_or_addr = Self::name_or_addr(req)?;
-        let settings = Settings::detect(req);
-        let dst = Destination {
-            name_or_addr,
-            settings,
-            _p: (),
-        };
+        let dst = Destination::from_request(req);
         debug!("recognize: dst={:?}", dst);
-        Some(dst)
+        dst
     }
 }
 
@@ -107,65 +84,6 @@ impl Recognize {
         Self {}
     }
 
-    /// TODO: Return error when `HostAndPort::normalize()` fails.
-    /// TODO: Use scheme-appropriate default port.
-    fn normalize(authority: &http::uri::Authority) -> Option<HostAndPort> {
-        const DEFAULT_PORT: Option<u16> = Some(80);
-        HostAndPort::normalize(authority, DEFAULT_PORT).ok()
-    }
-
-    /// Determines the logical host:port of the request.
-    ///
-    /// If the parsed URI includes an authority, use that. Otherwise, try to load the
-    /// authority from the `Host` header.
-    ///
-    /// The port is either parsed from the authority or a default of 80 is used.
-    fn host_port<B>(req: &http::Request<B>) -> Option<HostAndPort> {
-        // Note: Calls to `normalize` cannot be deduped without cloning `authority`.
-        req.uri()
-            .authority_part()
-            .and_then(Self::normalize)
-            .or_else(|| h1::authority_from_host(req).and_then(|h| Self::normalize(&h)))
-    }
-
-    /// Determines the destination for a request.
-    ///
-    /// Typically, a request's authority is used to produce a `NameOrAddr`. If the
-    /// authority addresses a DNS name, a `NameOrAddr::Name` is returned; and, otherwise,
-    /// it addresses a fixed IP address and a `NameOrAddr::Addr` is returned. The port is
-    /// inferred if not specified in the authority.
-    ///
-    /// If no authority is available, the `SO_ORIGINAL_DST` socket option is checked. If
-    /// it's available, it is used to return a `NameOrAddr::Addr`. This socket option is
-    /// typically set by `iptables(8)` in containerized environments like Kubernetes (as
-    /// configured by the `proxy-init` program).
-    ///
-    /// If none of this information is available, no `NameOrAddr` is returned.
-    fn name_or_addr<B>(req: &http::Request<B>) -> Option<NameOrAddr> {
-        match Self::host_port(req) {
-            Some(HostAndPort {
-                host: Host::DnsName(host),
-                port,
-            }) => {
-                let name_or_addr = DnsNameAndPort { host, port };
-                Some(NameOrAddr::Name(name_or_addr))
-            }
-
-            Some(HostAndPort {
-                host: Host::Ip(ip),
-                port,
-            }) => {
-                let name_or_addr = SocketAddr::from((ip, port));
-                Some(NameOrAddr::Addr(name_or_addr))
-            }
-
-            None => req
-                .extensions()
-                .get::<proxy::server::Source>()
-                .and_then(|src| src.orig_dst_if_not_local())
-                .map(NameOrAddr::Addr),
-        }
-    }
 }
 
 impl<R> Resolve<R>
@@ -184,12 +102,10 @@ where
     type Endpoint = Endpoint;
     type Resolution = Resolution<R::Resolution>;
 
-    fn resolve(&self, t: &Destination) -> Self::Resolution {
-        match t.name_or_addr {
-            NameOrAddr::Name(ref name) =>
-                Resolution::Name(self.0.resolve(&name), t.settings.clone()),
-            NameOrAddr::Addr(ref addr) =>
-                Resolution::Addr(Some(*addr), t.settings.clone()),
+    fn resolve(&self, dst: &Destination) -> Self::Resolution {
+        match dst.name_or_addr {
+            NameOrAddr::Name(ref name) => Resolution::Name(dst.clone(), self.0.resolve(&name)),
+            NameOrAddr::Addr(ref addr) => Resolution::Addr(dst.clone(), Some(*addr)),
         }
     }
 }
@@ -203,7 +119,7 @@ where
 
     fn poll(&mut self) -> Poll<resolve::Update<Self::Endpoint>, Self::Error> {
         match self {
-            Resolution::Name(ref mut res, ref settings) => match try_ready!(res.poll()) {
+            Resolution::Name(ref dst, ref mut res) => match try_ready!(res.poll()) {
                 resolve::Update::Remove(addr) =>
                     Ok(Async::Ready(resolve::Update::Remove(addr))),
                 resolve::Update::Make(addr, metadata) => {
@@ -216,20 +132,20 @@ where
                         Conditional::Some(_) => tls::ReasonForNoTls::NoConfig,
                     };
                     let ep = Endpoint {
+                        dst: dst.clone(),
                         connect: connect::Target::new(addr, Conditional::None(tls)),
-                        settings: settings.clone(),
                         metadata,
                         _p: (),
                     };
                     Ok(Async::Ready(resolve::Update::Make(addr, ep)))
                 }
             }
-            Resolution::Addr(ref mut addr, ref settings) => match addr.take() {
+            Resolution::Addr(ref dst, ref mut addr) => match addr.take() {
                 Some(addr) => {
                     let tls = tls::ReasonForNoIdentity::NoAuthorityInHttpRequest;
                     let ep = Endpoint {
+                        dst: dst.clone(),
                         connect: connect::Target::new(addr, Conditional::None(tls.into())),
-                        settings: settings.clone(),
                         metadata: Metadata::none(tls),
                         _p: (),
                     };
@@ -238,15 +154,6 @@ where
                 }
                 None => Ok(Async::NotReady),
             },
-        }
-    }
-}
-
-impl fmt::Display for Destination {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self.name_or_addr {
-            NameOrAddr::Name(ref name) => write!(f, "{}:{}", name.host, name.port),
-            NameOrAddr::Addr(ref addr) => addr.fmt(f),
         }
     }
 }
@@ -283,7 +190,7 @@ where
 
     fn make(&self, endpoint: &Endpoint) -> Result<Self::Value, Self::Error> {
         let mut endpoint = endpoint.clone();
-        endpoint.settings = Settings::Http2;
+        endpoint.dst.settings = Settings::Http2;
 
         let inner = self.inner.make(&endpoint)?;
         Ok(inner.into())
@@ -308,7 +215,7 @@ impl fmt::Display for Endpoint {
 // Makes it possible to build a client::Make<Endpoint>.
 impl From<Endpoint> for client::Config {
     fn from(ep: Endpoint) -> Self {
-        client::Config::new(ep.connect, ep.settings)
+        client::Config::new(ep.connect, ep.dst.settings)
     }
 }
 

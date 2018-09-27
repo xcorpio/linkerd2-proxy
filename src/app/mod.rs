@@ -2,12 +2,14 @@ use convert::TryFrom;
 use logging;
 
 pub mod config;
+mod destination;
 mod inbound;
 mod main;
 mod metric_labels;
 mod outbound;
 
 use self::config::{Config, Env};
+use self::destination::{Destination, NameOrAddr};
 pub use self::main::Main;
 
 pub fn init() -> Result<Config, config::Error> {

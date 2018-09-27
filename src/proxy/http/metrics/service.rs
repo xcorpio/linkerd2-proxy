@@ -15,30 +15,33 @@ use svc;
 
 /// A stack module that wraps services to record metrics.
 #[derive(Debug)]
-pub struct Layer<T, M, C>
+pub struct Layer<T, M, K, C>
 where
-    T: Clone + Hash + Eq,
+    T: Clone,
+    K: Clone + Hash + Eq + From<T>,
     M: svc::Make<T>,
     M::Value: svc::Service,
-    C: Classify<Error = <M::Value as svc::Service>::Error>,
+    C: Classify<Error = h2::Error>,
     C::Class: Hash + Eq,
 {
-    registry: Arc<Mutex<Registry<T, C::Class>>>,
-    _p: PhantomData<fn() -> (M)>,
+    registry: Arc<Mutex<Registry<K, C::Class>>>,
+    _p: PhantomData<fn() -> (T, M)>,
 }
 
 /// Wraps services to record metrics.
 #[derive(Debug)]
-pub struct Make<T, M, C>
+pub struct Make<T, M, K, C>
 where
-    T: Clone + Hash + Eq,
+    T: Clone,
+    K: Clone + Hash + Eq + From<T>,
     M: svc::Make<T>,
     M::Value: svc::Service,
-    C: Classify<Error = <M::Value as svc::Service>::Error>,
+    C: Classify<Error = h2::Error>,
     C::Class: Hash + Eq,
 {
-    registry: Arc<Mutex<Registry<T, C::Class>>>,
+    registry: Arc<Mutex<Registry<K, C::Class>>>,
     inner: M,
+    _p: PhantomData<fn() -> (T)>,
 }
 
 /// A middleware that records HTTP metrics.
@@ -46,7 +49,7 @@ where
 pub struct Measure<S, C>
 where
     S: svc::Service,
-    C: Classify<Error = S::Error>,
+    C: Classify<Error = h2::Error>,
     C::Class: Hash + Eq,
 {
     metrics: Option<Arc<Mutex<Metrics<C::Class>>>>,
@@ -55,8 +58,8 @@ where
 
 pub struct ResponseFuture<S, C>
 where
-    S: svc::Service<Error = C::Error>,
-    C: ClassifyResponse,
+    S: svc::Service,
+    C: ClassifyResponse<Error = h2::Error>,
     C::Class: Hash + Eq,
 {
     classify: Option<C>,
@@ -92,14 +95,14 @@ where
 
 // ===== impl Make =====
 
-impl<T, M, C, A, B> Layer<T, M, C>
+impl<T, M, K, C, A, B> Layer<T, M, K, C>
 where
-    T: Clone + Hash + Eq,
+    T: Clone,
+    K: Clone + Hash + Eq + From<T>,
     M: svc::Make<T>,
     M::Value: svc::Service<
         Request = http::Request<RequestBody<A, C::Class>>,
         Response = http::Response<B>,
-        Error = h2::Error,
     >,
     A: tower_h2::Body,
     B: tower_h2::Body,
@@ -107,7 +110,7 @@ where
     C::Class: Hash + Eq,
     C::ClassifyResponse: Send + Sync + 'static,
 {
-    pub(super) fn new(registry: Arc<Mutex<Registry<T, C::Class>>>) -> Self {
+    pub fn new(registry: Arc<Mutex<Registry<K, C::Class>>>) -> Self {
         Self {
             registry,
             _p: PhantomData,
@@ -115,14 +118,34 @@ where
     }
 }
 
-impl<T, M, A, B, C> svc::Layer<T, T, M> for Layer<T, M, C>
+impl<T, M, K, C, A, B> Clone for Layer<T, M, K, C>
 where
-    T: Clone + Hash + Eq,
+    T: Clone,
+    K: Clone + Hash + Eq + From<T>,
     M: svc::Make<T>,
     M::Value: svc::Service<
         Request = http::Request<RequestBody<A, C::Class>>,
         Response = http::Response<B>,
-        Error = h2::Error,
+    >,
+    A: tower_h2::Body,
+    B: tower_h2::Body,
+    C: Classify<Error = h2::Error>,
+    C::Class: Hash + Eq,
+    C::ClassifyResponse: Send + Sync + 'static,
+{
+    fn clone(&self) -> Self {
+        Self::new(self.registry.clone())
+    }
+}
+
+impl<T, M, K, C, A, B> svc::Layer<T, T, M> for Layer<T, M, K, C>
+where
+    T: Clone,
+    K: Clone + Hash + Eq + From<T>,
+    M: svc::Make<T>,
+    M::Value: svc::Service<
+        Request = http::Request<RequestBody<A, C::Class>>,
+        Response = http::Response<B>,
     >,
     A: tower_h2::Body,
     B: tower_h2::Body,
@@ -130,28 +153,54 @@ where
     C::ClassifyResponse: Debug + Send + Sync + 'static,
     C::Class: Hash + Eq,
 {
-    type Value = <Make<T, M, C> as svc::Make<T>>::Value;
+    type Value = <Make<T, M, K, C> as svc::Make<T>>::Value;
     type Error = M::Error;
-    type Make = Make<T, M, C>;
+    type Make = Make<T, M, K, C>;
 
     fn bind(&self, inner: M) -> Self::Make {
         Make {
             registry: self.registry.clone(),
             inner,
+            _p: PhantomData,
         }
     }
 }
 
 // ===== impl Make =====
 
-impl<T, M, A, B, C> svc::Make<T> for Make<T, M, C>
+impl<T, M, K, C, A, B> Clone for Make<T, M, K, C>
 where
-    T: Clone + Hash + Eq,
+    T: Clone,
+    K: Clone + Hash + Eq + From<T>,
+    M: svc::Make<T> + Clone,
+    M::Value: svc::Service<
+        Request = http::Request<RequestBody<A, C::Class>>,
+        Response = http::Response<B>,
+    >,
+    A: tower_h2::Body,
+    B: tower_h2::Body,
+    C: Classify<Error = h2::Error>,
+    C::Class: Hash + Eq,
+    C::ClassifyResponse: Send + Sync + 'static,
+{
+    fn clone(&self) -> Self {
+        Self {
+            registry: self.registry.clone(),
+            inner: self.inner.clone(),
+            _p: PhantomData,
+        }
+    }
+}
+
+
+impl<T, M, K, C, A, B> svc::Make<T> for Make<T, M, K, C>
+where
+    T: Clone,
+    K: Clone + Hash + Eq + From<T>,
     M: svc::Make<T>,
     M::Value: svc::Service<
         Request = http::Request<RequestBody<A, C::Class>>,
         Response = http::Response<B>,
-        Error = C::Error,
     >,
     A: tower_h2::Body,
     B: tower_h2::Body,
@@ -168,7 +217,7 @@ where
         let metrics = match self.registry.lock() {
             Ok(mut r) => Some(
                 r.by_target
-                    .entry(target.clone())
+                    .entry(target.clone().into())
                     .or_insert_with(|| Arc::new(Mutex::new(Metrics::default())))
                     .clone(),
             ),
@@ -186,7 +235,6 @@ where
     S: svc::Service<
         Request = http::Request<RequestBody<A, C::Class>>,
         Response = http::Response<B>,
-        Error = h2::Error,
     >,
     A: tower_h2::Body,
     B: tower_h2::Body,
@@ -234,7 +282,7 @@ where
 
 impl<C, S, B> Future for ResponseFuture<S, C>
 where
-    S: svc::Service<Response = http::Response<B>, Error = h2::Error>,
+    S: svc::Service<Response = http::Response<B>>,
     B: tower_h2::Body,
     C: ClassifyResponse<Error = h2::Error> + Debug + Send + Sync + 'static,
     C::Class: Hash + Eq,
@@ -290,12 +338,22 @@ where
     }
 }
 
-impl<B, C> Drop for RequestBody<B, C>
+impl<B, C> Default for ResponseBody<B, C>
 where
-    B: tower_h2::Body,
-    C: Hash + Eq,
+    B: tower_h2::Body + Default,
+    C: ClassifyResponse<Error = h2::Error>,
+    C::Class: Hash + Eq,
 {
-    fn drop(&mut self) {}
+    fn default() -> Self {
+        Self {
+            inner: B::default(),
+            stream_open_at: clock::now(),
+            classify: None,
+            class_at_first_byte: None,
+            metrics: None,
+            first_byte_at: None,
+        }
+    }
 }
 
 impl<B, C> ResponseBody<B, C>

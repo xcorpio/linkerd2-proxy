@@ -6,10 +6,10 @@ use std::marker::PhantomData;
 use std::sync::{atomic::{AtomicUsize, Ordering}, Arc, Mutex};
 use std::time::Instant;
 use tokio_timer::clock;
-use tower_h2;
+use tower_h2::Body;
 
 use super::{event, Taps};
-use proxy;
+use proxy::{self, http::client::Error};
 use svc;
 
 /// A stack module that wraps services to record taps.
@@ -93,10 +93,10 @@ where
     M::Value: svc::Service<
         Request = http::Request<RequestBody<A>>,
         Response = http::Response<B>,
-        Error = h2::Error,
+        Error = Error,
     >,
-    A: tower_h2::Body,
-    B: tower_h2::Body,
+    A: Body,
+    B: Body,
 {
     pub fn new(taps: Arc<Mutex<Taps>>) -> Self {
         Self {
@@ -114,10 +114,10 @@ where
     M::Value: svc::Service<
         Request = http::Request<RequestBody<A>>,
         Response = http::Response<B>,
-        Error = h2::Error,
+        Error = Error,
     >,
-    A: tower_h2::Body,
-    B: tower_h2::Body,
+    A: Body,
+    B: Body,
 {
     type Value = <Make<T, M> as svc::Make<T>>::Value;
     type Error = M::Error;
@@ -142,10 +142,10 @@ where
     M::Value: svc::Service<
         Request = http::Request<RequestBody<A>>,
         Response = http::Response<B>,
-        Error = h2::Error,
+        Error = Error,
     >,
-    A: tower_h2::Body,
-    B: tower_h2::Body,
+    A: Body,
+    B: Body,
 {
     type Value = Service<M::Value>;
     type Error = M::Error;
@@ -168,10 +168,10 @@ where
     S: svc::Service<
         Request = http::Request<RequestBody<A>>,
         Response = http::Response<B>,
-        Error = h2::Error,
+        Error = Error,
     >,
-    A: tower_h2::Body,
-    B: tower_h2::Body,
+    A: Body,
+    B: Body,
 {
     type Request = http::Request<A>;
     type Response = http::Response<ResponseBody<B>>;
@@ -231,11 +231,11 @@ where
 
 impl<S, B> Future for ResponseFuture<S>
 where
-    B: tower_h2::Body,
-    S: svc::Service<Response = http::Response<B>, Error = h2::Error>,
+    B: Body,
+    S: svc::Service<Response = http::Response<B>, Error = Error>,
 {
     type Item = http::Response<ResponseBody<B>>;
-    type Error = h2::Error;
+    type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         let rsp = match self.inner.poll() {
@@ -243,7 +243,7 @@ where
             Ok(Async::Ready(rsp)) => rsp,
             Err(e) => {
                 if let Some(mut state) = self.state.take() {
-                    state.tap_err(&e);
+                    state.tap_err(e.reason());
                 }
                 return Err(e);
             }
@@ -312,7 +312,7 @@ impl RequestState {
         }
     }
 
-    fn tap_err(&mut self, err: &h2::Error) {
+    fn tap_err(&mut self, reason: Option<h2::Reason>) {
         if let Some(t) = self.taps.take() {
             if let Ok(mut taps) = t.lock() {
                 taps.inspect(&event::Event::StreamRequestFail(
@@ -320,7 +320,7 @@ impl RequestState {
                     event::StreamRequestFail {
                         request_open_at: self.request_open_at,
                         request_fail_at: clock::now(),
-                        error: err.reason().unwrap_or(h2::Reason::INTERNAL_ERROR),
+                        error: reason.unwrap_or(h2::Reason::INTERNAL_ERROR),
                     },
                 ));
             }
@@ -335,7 +335,7 @@ impl Drop for RequestState {
     }
 }
 
-impl<B: tower_h2::Body> RequestBody<B> {
+impl<B: Body> RequestBody<B> {
     fn tap_eos(&mut self, trailers: Option<&http::HeaderMap>) {
         if let Some(mut state) = self.state.take() {
             state.tap_eos(trailers);
@@ -344,13 +344,13 @@ impl<B: tower_h2::Body> RequestBody<B> {
 
     fn tap_err(&mut self, e: h2::Error) -> h2::Error {
         if let Some(mut state) = self.state.take() {
-            state.tap_err(&e);
+            state.tap_err(e.reason());
         }
         e
     }
 }
 
-impl<B: tower_h2::Body> tower_h2::Body for RequestBody<B> {
+impl<B: Body> Body for RequestBody<B> {
     type Data = <B::Data as IntoBuf>::Buf;
 
     fn is_end_stream(&self) -> bool {
@@ -410,7 +410,7 @@ impl ResponseState {
         }
     }
 
-    fn tap_err(&mut self, err: &h2::Error) {
+    fn tap_err(&mut self, reason: Option<h2::Reason>) {
         if let Some(t) = self.taps.take() {
             if let Ok(mut taps) = t.lock() {
                 taps.inspect(&event::Event::StreamResponseFail(
@@ -420,7 +420,8 @@ impl ResponseState {
                         response_open_at: self.response_open_at,
                         response_first_frame_at: self.response_first_frame_at,
                         response_fail_at: clock::now(),
-                        error: err.reason().unwrap_or(h2::Reason::INTERNAL_ERROR),
+                        error: reason.unwrap_or(h2::Reason::INTERNAL_ERROR),
+                        bytes_sent: self.byte_count as u64,
                     },
                 ));
             }
@@ -435,7 +436,7 @@ impl Drop for ResponseState {
     }
 }
 
-impl<B: tower_h2::Body> ResponseBody<B> {
+impl<B: Body> ResponseBody<B> {
     fn tap_eos(&mut self, trailers: Option<&http::HeaderMap>) {
         if let Some(mut state) = self.state.take() {
             state.tap_eos(trailers);
@@ -444,15 +445,15 @@ impl<B: tower_h2::Body> ResponseBody<B> {
 
     fn tap_err(&mut self, e: h2::Error) -> h2::Error {
         if let Some(mut state) = self.state.take() {
-            state.tap_err(&e);
+            state.tap_err(e.reason());
         }
         e
     }
 }
 
-impl<B> tower_h2::Body for ResponseBody<B>
+impl<B> Body for ResponseBody<B>
 where
-    B: tower_h2::Body,
+    B: Body,
 {
     type Data = <B::Data as IntoBuf>::Buf;
 

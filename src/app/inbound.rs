@@ -3,7 +3,8 @@ use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::fmt;
 
-use proxy::http::{client, orig_proto, router, Settings};
+use app::Destination;
+use proxy::http::{client, orig_proto, router};
 use proxy::server::Source;
 use svc;
 use tap;
@@ -13,7 +14,7 @@ use Conditional;
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Endpoint {
     pub addr: SocketAddr,
-    pub settings: Settings,
+    pub dst: Destination,
 }
 
 // === Recognize ===
@@ -37,8 +38,10 @@ impl<A> router::Recognize<http::Request<A>> for Recognize {
         let addr = src
             .and_then(|s| s.orig_dst_if_not_local())
             .or(self.default_addr)?;
-        let settings = Settings::detect(req);
-        let ep = Endpoint { addr, settings };
+
+        let dst = Destination::from_request(req)?;
+
+        let ep = Endpoint { addr, dst };
         debug!("recognize: src={:?} ep={:?}", src, ep);
         Some(ep)
     }
@@ -105,7 +108,7 @@ impl From<Endpoint> for client::Config {
     fn from(ep: Endpoint) -> Self {
         let tls = Conditional::None(tls::ReasonForNoTls::InternalTraffic);
         let connect = connect::Target::new(ep.addr, tls);
-        client::Config::new(connect, ep.settings)
+        client::Config::new(connect, ep.dst.settings)
     }
 }
 

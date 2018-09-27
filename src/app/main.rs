@@ -11,6 +11,7 @@ use tokio::executor::{self, DefaultExecutor, Executor};
 use tokio::runtime::current_thread;
 use tower_h2;
 
+use app::metric_labels::EndpointLabels;
 use control;
 use dns;
 use drain;
@@ -171,7 +172,8 @@ where
         );
 
         let (taps, observe) = control::Observe::new(100);
-        let (_http_metrics, http_report) = proxy::http::metrics::new(config.metrics_retain_idle);
+        let (http_metrics, http_report) =
+            proxy::http::metrics::new::<EndpointLabels, _>(config.metrics_retain_idle);
         let (transport_metrics, transport_report) = transport::metrics::new();
 
         let (tls_config_sensor, tls_config_report) = telemetry::tls_config_reload::new();
@@ -245,8 +247,8 @@ where
             let upgrade_from_orig_proto = svc::When::new(
                 |ep: &outbound::Endpoint| {
                     ep.can_use_orig_proto()
-                        && !ep.settings.is_http2()
-                        && !ep.settings.is_h1_upgrade()
+                        && !ep.dst.settings.is_http2()
+                        && !ep.dst.settings.is_h1_upgrade()
                 },
                 outbound::orig_proto_upgrade(),
             );
@@ -256,12 +258,12 @@ where
             // employed.
             let endpoint_h1_stack = svc::When::new(
                 |ep: &outbound::Endpoint| {
-                    !ep.settings.is_http2() && !ep.settings.was_absolute_form()
+                    !ep.dst.settings.is_http2() && !ep.dst.settings.was_absolute_form()
                 },
                 normalize_uri::Layer::new(),
             ).and_then(svc::When::new(
                 |ep: &outbound::Endpoint| {
-                    !ep.settings.is_http2() && !ep.settings.can_reuse_clients()
+                    !ep.dst.settings.is_http2() && !ep.dst.settings.can_reuse_clients()
                 },
                 svc::make_per_request::Layer::new(),
             ));
@@ -274,8 +276,9 @@ where
             // has a TLS identity.
             let endpoint_inner_stack =
                 outbound::LayerTlsConfig::new(tls_client_config)
-                .and_then(tap::Layer::new(taps));
-                // TODO: sensors here
+                    .and_then(proxy::http::metrics::Layer::new(http_metrics.clone()))
+                    .and_then(tap::Layer::new(taps.clone()))
+                    ;
 
             let capacity = config.outbound_router_capacity;
             let max_idle_age = config.outbound_router_max_idle_age;
@@ -331,19 +334,22 @@ where
             let default_fwd_addr = config.inbound_forward.map(|a| a.into());
             let router_stack = router::Layer::new(inbound::Recognize::new(default_fwd_addr))
                 .and_then(limit::Layer::new(MAX_IN_FLIGHT))
-                .and_then(buffer::Layer::new());
+                .and_then(buffer::Layer::new())
+                //.and_then(proxy::http::metrics::Layer::new(http_metrics))
+                .and_then(tap::Layer::new(taps))
+                ;
 
             // `normalize_uri` and `make_per_request` are applied on the stack
             // selectively. For HTTP/2 stacks, for instance, neither service will be
             // employed.
             let endpoint_h1_stack = svc::When::new(
                 |ep: &inbound::Endpoint| {
-                    !ep.settings.is_http2() && !ep.settings.was_absolute_form()
+                    !ep.dst.settings.is_http2() && !ep.dst.settings.was_absolute_form()
                 },
                 normalize_uri::Layer::new(),
             ).and_then(svc::When::new(
                 |ep: &inbound::Endpoint| {
-                    !ep.settings.is_http2() && !ep.settings.can_reuse_clients()
+                    !ep.dst.settings.is_http2() && !ep.dst.settings.can_reuse_clients()
                 },
                 svc::make_per_request::Layer::new(),
             ));
@@ -353,7 +359,6 @@ where
             let max_idle_age = config.inbound_router_max_idle_age;
             let router = router_stack
                 .and_then(endpoint_h1_stack)
-                .and_then(tap::Layer::new(taps))
                 .bind(client::Make::new("in", connect.clone()))
                 .make(&router::Config::new("in", capacity, max_idle_age))
                 .expect("inbound router");

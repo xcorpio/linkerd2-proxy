@@ -18,7 +18,7 @@ use transport::{connection, tls};
 #[derive(Debug, Clone)]
 pub struct Make {}
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct Target {
     pub addr: SocketAddr,
     pub tls: tls::ConditionalConnectionConfig<tls::ClientConfig>,
