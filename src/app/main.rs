@@ -338,7 +338,7 @@ where
             let router_stack = router::Layer::new(inbound::Recognize::new(default_fwd_addr))
                 .and_then(limit::Layer::new(MAX_IN_FLIGHT))
                 .and_then(buffer::Layer::new())
-                //.and_then(proxy::http::metrics::Layer::new(http_metrics, classify::Classify))
+                .and_then(proxy::http::metrics::Layer::new(http_metrics, classify::Classify))
                 .and_then(tap::Layer::new(taps))
                 ;
 
