@@ -125,6 +125,10 @@ impl Target {
     ) -> Self {
         Self { addr, tls, _p: () }
     }
+
+    pub fn tls_status(&self) -> tls::Status {
+        self.tls.as_ref().map(|_| {})
+    }
 }
 
 impl Connect for Target {

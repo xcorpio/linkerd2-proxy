@@ -112,6 +112,7 @@ impl From<Endpoint> for client::Config {
 impl From<Endpoint> for tap::Endpoint {
     fn from(ep: Endpoint) -> Self {
         tap::Endpoint {
+            direction: tap::Direction::In,
             client: ep.into(),
             labels: Default::default(),
         }

@@ -5,8 +5,13 @@ use std::time::Instant;
 
 use proxy::{http::client, Source};
 
+// TODO this should be replaced with a string name.
+#[derive(Copy, Clone, Debug)]
+pub enum Direction { In, Out }
+
 #[derive(Clone, Debug)]
 pub struct Endpoint {
+    pub direction: Direction,
     pub client: client::Config,
     pub labels: IndexMap<String, String>,
 }
@@ -63,6 +68,7 @@ pub struct StreamResponseFail {
     pub response_first_frame_at: Option<Instant>,
     pub response_fail_at: Instant,
     pub error: h2::Reason,
+    pub bytes_sent: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -72,4 +78,5 @@ pub struct StreamResponseEnd {
     pub response_first_frame_at: Instant,
     pub response_end_at: Instant,
     pub grpc_status: Option<u32>,
+    pub bytes_sent: u64,
 }

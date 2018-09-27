@@ -403,6 +403,7 @@ impl ResponseState {
                             .unwrap_or(response_end_at),
                         response_end_at,
                         grpc_status: trailers.and_then(Self::grpc_status),
+                        bytes_sent: self.byte_count as u64,
                     },
                 ));
             }

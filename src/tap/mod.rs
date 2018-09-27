@@ -7,7 +7,7 @@ pub mod event;
 mod match_;
 mod service;
 
-pub use self::event::{Endpoint, Event};
+pub use self::event::{Direction, Endpoint, Event};
 pub use self::match_::InvalidMatch;
 use self::match_::*;
 pub use self::service::{Layer, Make, RequestBody, Service};

@@ -315,6 +315,7 @@ impl From<Endpoint> for client::Config {
 impl From<Endpoint> for tap::Endpoint {
     fn from(ep: Endpoint) -> Self {
         tap::Endpoint {
+            direction: tap::Direction::Out,
             client: ep.into(),
             labels: ep.metadata.labels().clone(),
         }
