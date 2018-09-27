@@ -21,9 +21,10 @@ where
     K: Clone + Hash + Eq + From<T>,
     M: svc::Make<T>,
     M::Value: svc::Service,
-    C: Classify<Error = h2::Error>,
+    C: Classify<Error = h2::Error> + Clone,
     C::Class: Hash + Eq,
 {
+    classify: C,
     registry: Arc<Mutex<Registry<K, C::Class>>>,
     _p: PhantomData<fn() -> (T, M)>,
 }
@@ -36,9 +37,10 @@ where
     K: Clone + Hash + Eq + From<T>,
     M: svc::Make<T>,
     M::Value: svc::Service,
-    C: Classify<Error = h2::Error>,
+    C: Classify<Error = h2::Error> + Clone,
     C::Class: Hash + Eq,
 {
+    classify: C,
     registry: Arc<Mutex<Registry<K, C::Class>>>,
     inner: M,
     _p: PhantomData<fn() -> (T)>,
@@ -46,12 +48,13 @@ where
 
 /// A middleware that records HTTP metrics.
 #[derive(Clone, Debug)]
-pub struct Measure<S, C>
+pub struct Service<S, C>
 where
     S: svc::Service,
-    C: Classify<Error = h2::Error>,
+    C: Classify<Error = h2::Error> + Clone,
     C::Class: Hash + Eq,
 {
+    classify: C,
     metrics: Option<Arc<Mutex<Metrics<C::Class>>>>,
     inner: S,
 }
@@ -106,12 +109,13 @@ where
     >,
     A: tower_h2::Body,
     B: tower_h2::Body,
-    C: Classify<Error = h2::Error>,
+    C: Classify<Error = h2::Error> + Clone,
     C::Class: Hash + Eq,
     C::ClassifyResponse: Send + Sync + 'static,
 {
-    pub fn new(registry: Arc<Mutex<Registry<K, C::Class>>>) -> Self {
+    pub fn new(registry: Arc<Mutex<Registry<K, C::Class>>>, classify: C) -> Self {
         Self {
+            classify,
             registry,
             _p: PhantomData,
         }
@@ -129,12 +133,12 @@ where
     >,
     A: tower_h2::Body,
     B: tower_h2::Body,
-    C: Classify<Error = h2::Error>,
+    C: Classify<Error = h2::Error> + Clone,
     C::Class: Hash + Eq,
     C::ClassifyResponse: Send + Sync + 'static,
 {
     fn clone(&self) -> Self {
-        Self::new(self.registry.clone())
+        Self::new(self.registry.clone(), self.classify.clone())
     }
 }
 
@@ -149,7 +153,7 @@ where
     >,
     A: tower_h2::Body,
     B: tower_h2::Body,
-    C: Classify<Error = h2::Error>,
+    C: Classify<Error = h2::Error> + Clone,
     C::ClassifyResponse: Debug + Send + Sync + 'static,
     C::Class: Hash + Eq,
 {
@@ -159,6 +163,7 @@ where
 
     fn bind(&self, inner: M) -> Self::Make {
         Make {
+            classify: self.classify.clone(),
             registry: self.registry.clone(),
             inner,
             _p: PhantomData,
@@ -179,12 +184,13 @@ where
     >,
     A: tower_h2::Body,
     B: tower_h2::Body,
-    C: Classify<Error = h2::Error>,
+    C: Classify<Error = h2::Error> + Clone,
     C::Class: Hash + Eq,
     C::ClassifyResponse: Send + Sync + 'static,
 {
     fn clone(&self) -> Self {
         Self {
+            classify: self.classify.clone(),
             registry: self.registry.clone(),
             inner: self.inner.clone(),
             _p: PhantomData,
@@ -204,16 +210,17 @@ where
     >,
     A: tower_h2::Body,
     B: tower_h2::Body,
-    C: Classify<Error = h2::Error>,
+    C: Classify<Error = h2::Error> + Clone,
     C::Class: Hash + Eq,
     C::ClassifyResponse: Debug + Send + Sync + 'static,
 {
-    type Value = Measure<M::Value, C>;
+    type Value = Service<M::Value, C>;
     type Error = M::Error;
 
     fn make(&self, target: &T) -> Result<Self::Value, Self::Error> {
         let inner = self.inner.make(target)?;
 
+        let classify = self.classify.clone();
         let metrics = match self.registry.lock() {
             Ok(mut r) => Some(
                 r.by_target
@@ -224,13 +231,13 @@ where
             Err(_) => None,
         };
 
-        Ok(Measure { metrics, inner })
+        Ok(Service { classify, metrics, inner })
     }
 }
 
-// ===== impl Measure =====
+// ===== impl Service =====
 
-impl<C, S, A, B> svc::Service for Measure<S, C>
+impl<C, S, A, B> svc::Service for Service<S, C>
 where
     S: svc::Service<
         Request = http::Request<RequestBody<A, C::Class>>,
@@ -238,7 +245,7 @@ where
     >,
     A: tower_h2::Body,
     B: tower_h2::Body,
-    C: Classify<Error = h2::Error>,
+    C: Classify<Error = h2::Error> + Clone,
     C::Class: Hash + Eq,
     C::ClassifyResponse: Debug + Send + Sync + 'static,
 {
@@ -272,7 +279,7 @@ where
         };
 
         ResponseFuture {
-            classify: req.extensions().get::<C::ClassifyResponse>().cloned(),
+            classify: Some(self.classify.classify(&req)),
             metrics: self.metrics.clone(),
             stream_open_at: clock::now(),
             inner: self.inner.call(req),
@@ -291,20 +298,23 @@ where
     type Error = S::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let (head, inner) = try_ready!(self.inner.poll()).into_parts();
+        let rsp = try_ready!(self.inner.poll());
 
         let mut classify = self.classify.take();
-        let class_at_first_byte = classify.as_mut().and_then(|c| c.start(&head));
+        let class_at_first_byte = classify.as_mut().and_then(|c| c.start(&rsp));
 
-        let body = ResponseBody {
-            classify,
-            class_at_first_byte,
-            metrics: self.metrics.clone(),
-            stream_open_at: self.stream_open_at,
-            first_byte_at: None,
-            inner,
+        let rsp = {
+            let (head, inner) = rsp.into_parts();
+            let body = ResponseBody {
+                classify,
+                class_at_first_byte,
+                metrics: self.metrics.clone(),
+                stream_open_at: self.stream_open_at,
+                first_byte_at: None,
+                inner,
+            };
+            http::Response::from_parts(head, body)
         };
-        let rsp = http::Response::from_parts(head, body);
 
         Ok(rsp.into())
     }

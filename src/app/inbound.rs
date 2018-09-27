@@ -130,14 +130,14 @@ impl fmt::Display for Endpoint {
 
 #[cfg(test)]
 mod tests {
+    use http;
     use std::net;
 
-    use http;
+    use app::{Destination, NameOrAddr};
     use proxy::http::router::Recognize as _Recognize;
     use proxy::http::settings::{Host, Settings};
-
-    use super::{Endpoint, Recognize};
     use proxy::server::Source;
+    use super::{Endpoint, Recognize};
     use transport::tls;
     use Conditional;
 
@@ -147,7 +147,8 @@ mod tests {
             is_h1_upgrade: false,
             was_absolute_form: false,
         };
-        Endpoint { addr, settings }
+        let dst = Destination::new(NameOrAddr::Addr(addr), settings);
+        Endpoint { addr, dst }
     }
 
     const TLS_DISABLED: Conditional<(), tls::ReasonForNoTls> =

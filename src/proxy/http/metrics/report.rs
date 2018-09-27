@@ -46,16 +46,16 @@ where
     C: FmtLabels + Hash + Eq,
 {
     fn fmt_metrics(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let registry = match self.registry.lock() {
+        let mut registry = match self.registry.lock() {
             Err(_) => return Ok(()),
             Ok(r) => r,
         };
+        registry.retain_since(clock::now() - self.retain_idle);
 
+        let registry = registry;
         if registry.by_target.is_empty() {
             return Ok(());
         }
-
-        registry.retain_since(clock::now() - self.retain_idle);
 
         request_total.fmt_help(f)?;
         registry.fmt_by_target(f, request_total, |s| &s.total)?;

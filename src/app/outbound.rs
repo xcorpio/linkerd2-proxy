@@ -223,8 +223,8 @@ impl From<Endpoint> for tap::Endpoint {
     fn from(ep: Endpoint) -> Self {
         tap::Endpoint {
             direction: tap::Direction::Out,
-            client: ep.into(),
             labels: ep.metadata.labels().clone(),
+            client: ep.into(),
         }
     }
 }

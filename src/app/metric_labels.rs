@@ -2,7 +2,7 @@ use std::{fmt, net};
 
 use metrics::FmtLabels;
 
-use super::{inbound, outbound, Destination};
+use super::{classify, inbound, outbound, Destination};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct EndpointLabels {
@@ -35,5 +35,11 @@ impl From<outbound::Endpoint> for EndpointLabels {
 impl FmtLabels for EndpointLabels {
     fn fmt_labels(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.pad(&self.labels)
+    }
+}
+
+impl FmtLabels for classify::Class {
+    fn fmt_labels(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "fuck=this")
     }
 }

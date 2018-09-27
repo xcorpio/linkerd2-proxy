@@ -35,14 +35,18 @@ impl fmt::Display for Destination {
 }
 
 impl Destination {
-    pub fn from_request<A>(req: &http::Request<A>) -> Option<Self> {
-        let name_or_addr = Self::name_or_addr(req)?;
-        let settings = Settings::detect(req);
-        Some(Self {
+    pub fn new(name_or_addr: NameOrAddr, settings: Settings) -> Self {
+        Self {
             name_or_addr,
             settings,
             _p: (),
-        })
+        }
+    }
+
+    pub fn from_request<A>(req: &http::Request<A>) -> Option<Self> {
+        let name_or_addr = Self::name_or_addr(req)?;
+        let settings = Settings::detect(req);
+        Some(Self::new(name_or_addr, settings))
     }
 
     /// Determines the destination for a request.

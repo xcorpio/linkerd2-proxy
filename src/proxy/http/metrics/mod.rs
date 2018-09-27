@@ -11,7 +11,7 @@ mod report;
 mod service;
 
 pub use self::report::Report;
-pub use self::service::{Layer, Make, Measure, RequestBody};
+pub use self::service::Layer;
 
 pub fn new<T, C>(retain_idle: Duration) -> (Arc<Mutex<Registry<T, C>>>, Report<T, C>)
 where

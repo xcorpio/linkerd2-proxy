@@ -1,9 +1,7 @@
 use futures::Poll;
 use http;
-use std::hash::Hash;
 use std::marker::PhantomData;
 
-use metrics::FmtLabels;
 use svc;
 
 /// Determines how a request's response should be classified.
@@ -22,7 +20,7 @@ pub trait Classify {
         + Sync
         + 'static;
 
-    fn classify(&self, req: &http::request::Parts) -> Self::ClassifyResponse;
+    fn classify<B>(&self, req: &http::Request<B>) -> Self::ClassifyResponse;
 }
 
 /// Classifies a single response.
@@ -38,7 +36,7 @@ pub trait ClassifyResponse {
     /// called even when a class is returned.
     ///
     /// This is expected to be called only once.
-    fn start(&mut self, headers: &http::response::Parts) -> Option<Self::Class>;
+    fn start<B>(&mut self, headers: &http::Response<B>) -> Option<Self::Class>;
 
     /// Update the classifier with an EOS.
     ///
@@ -76,23 +74,33 @@ pub struct ExtendRequest<C: Classify, S: svc::Service> {
 
 impl<C, T, M, A, B> Layer<C, T, M>
 where
-    T: FmtLabels + Clone + Hash + Eq,
     M: svc::Make<T>,
-    M::Value:
-        svc::Service<Request = http::Request<A>, Response = http::Response<B>, Error = C::Error>,
+    M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
     C: Classify + Clone,
 {
-    fn new(classify: C) -> Self {
-        Layer { classify, _p: PhantomData, }
+    pub fn new(classify: C) -> Self {
+        Layer {
+            classify,
+            _p: PhantomData,
+        }
+    }
+}
+
+impl<C, T, M, A, B> Clone for Layer<C, T, M>
+where
+    M: svc::Make<T>,
+    M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
+    C: Classify + Clone,
+{
+    fn clone(&self) -> Self {
+        Self::new(self.classify.clone())
     }
 }
 
 impl<T, M, A, B, C> svc::Layer<T, T, M> for Layer<C, T, M>
 where
-    T: FmtLabels + Clone + Hash + Eq,
     M: svc::Make<T>,
-    M::Value:
-        svc::Service<Request = http::Request<A>, Response = http::Response<B>, Error = C::Error>,
+    M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
     C: Classify + Clone,
 {
     type Value = <Make<C, T, M> as svc::Make<T>>::Value;
@@ -108,14 +116,27 @@ where
     }
 }
 
-// ===== impl NewMeasure =====
+// ===== impl Make =====
+
+impl<C, T, M, A, B> Clone for Make<C, T, M>
+where
+    M: svc::Make<T> + Clone,
+    M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
+    C: Classify + Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            classify: self.classify.clone(),
+            _p: PhantomData
+        }
+    }
+}
 
 impl<T, M, A, B, C> svc::Make<T> for Make<C, T, M>
 where
-    T: FmtLabels + Clone + Hash + Eq,
     M: svc::Make<T>,
-    M::Value:
-        svc::Service<Request = http::Request<A>, Response = http::Response<B>, Error = C::Error>,
+    M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
     C: Classify + Clone,
 {
     type Value = ExtendRequest<C, M::Value>;
@@ -133,7 +154,7 @@ where
 
 impl<S, A, B, C> svc::Service for ExtendRequest<C, S>
 where
-    S: svc::Service<Request = http::Request<A>, Response = http::Response<B>, Error = C::Error>,
+    S: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
     C: Classify + Clone,
 {
     type Request = S::Request;
@@ -145,13 +166,10 @@ where
         self.inner.poll_ready()
     }
 
-    fn call(&mut self, req: Self::Request) -> Self::Future {
-        let (mut head, body) = req.into_parts();
+    fn call(&mut self, mut req: Self::Request) -> Self::Future {
+        let classify_response = self.classify.classify(&req);
+        req.extensions_mut().insert(classify_response);
 
-        let classify_response = self.classify.classify(&head);
-        head.extensions.insert(classify_response);
-
-        let req = http::Request::from_parts(head, body);
         self.inner.call(req)
     }
 }

@@ -1,6 +1,7 @@
 use convert::TryFrom;
 use logging;
 
+mod classify;
 pub mod config;
 mod destination;
 mod inbound;

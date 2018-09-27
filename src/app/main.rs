@@ -11,7 +11,7 @@ use tokio::executor::{self, DefaultExecutor, Executor};
 use tokio::runtime::current_thread;
 use tower_h2;
 
-use app::metric_labels::EndpointLabels;
+use app::{classify, metric_labels::EndpointLabels};
 use control;
 use dns;
 use drain;
@@ -173,7 +173,7 @@ where
 
         let (taps, observe) = control::Observe::new(100);
         let (http_metrics, http_report) =
-            proxy::http::metrics::new::<EndpointLabels, _>(config.metrics_retain_idle);
+            proxy::http::metrics::new::<EndpointLabels, classify::Class>(config.metrics_retain_idle);
         let (transport_metrics, transport_report) = transport::metrics::new();
 
         let (tls_config_sensor, tls_config_report) = telemetry::tls_config_reload::new();
@@ -276,7 +276,10 @@ where
             // has a TLS identity.
             let endpoint_inner_stack =
                 outbound::LayerTlsConfig::new(tls_client_config)
-                    .and_then(proxy::http::metrics::Layer::new(http_metrics.clone()))
+                    .and_then(proxy::http::metrics::Layer::new(
+                        http_metrics.clone(),
+                        classify::Classify,
+                    ))
                     .and_then(tap::Layer::new(taps.clone()))
                     ;
 
@@ -335,7 +338,7 @@ where
             let router_stack = router::Layer::new(inbound::Recognize::new(default_fwd_addr))
                 .and_then(limit::Layer::new(MAX_IN_FLIGHT))
                 .and_then(buffer::Layer::new())
-                //.and_then(proxy::http::metrics::Layer::new(http_metrics))
+                //.and_then(proxy::http::metrics::Layer::new(http_metrics, classify::Classify))
                 .and_then(tap::Layer::new(taps))
                 ;
 
