@@ -3,7 +3,6 @@ use std::fmt;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
 
-use app::{Destination, NameOrAddr};
 use proxy::http::{client, orig_proto, router, Settings};
 use proxy::server::Source;
 use svc;
@@ -14,7 +13,9 @@ use Conditional;
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Endpoint {
     pub addr: SocketAddr,
-    pub dst: Destination,
+    pub authority: Option<http::uri::Authority>,
+    pub settings: Settings,
+    pub source_tls_status: tls::Status,
 }
 
 // === Recognize ===
@@ -35,15 +36,18 @@ impl<A> router::Recognize<http::Request<A>> for Recognize {
 
     fn recognize(&self, req: &http::Request<A>) -> Option<Self::Target> {
         let src = req.extensions().get::<Source>();
+        let source_tls_status = src
+            .map(|s| s.tls_status.clone())
+            .unwrap_or_else(|| Conditional::None(tls::ReasonForNoTls::Disabled));
+
         let addr = src
             .and_then(|s| s.orig_dst_if_not_local())
             .or(self.default_addr)?;
 
-        let name_or_addr = NameOrAddr::from_request(req).unwrap_or_else(|| NameOrAddr::Addr(addr));
+        let authority = req.uri().authority_part().cloned();
         let settings = Settings::detect(req);
-        let dst = Destination::new(name_or_addr, settings);
 
-        let ep = Endpoint { addr, dst };
+        let ep = Endpoint { addr, authority, settings, source_tls_status };
         debug!("recognize: src={:?} ep={:?}", src, ep);
         Some(ep)
     }
@@ -110,7 +114,7 @@ impl From<Endpoint> for client::Config {
     fn from(ep: Endpoint) -> Self {
         let tls = Conditional::None(tls::ReasonForNoTls::InternalTraffic);
         let connect = connect::Target::new(ep.addr, tls);
-        client::Config::new(connect, ep.dst.settings)
+        client::Config::new(connect, ep.settings)
     }
 }
 
@@ -136,7 +140,6 @@ mod tests {
     use std::net;
 
     use super::{Endpoint, Recognize};
-    use app::{Destination, NameOrAddr};
     use proxy::http::router::Recognize as _Recognize;
     use proxy::http::settings::{Host, Settings};
     use proxy::server::Source;
@@ -149,8 +152,9 @@ mod tests {
             is_h1_upgrade: false,
             was_absolute_form: false,
         };
-        let dst = Destination::new(NameOrAddr::Addr(addr), settings);
-        Endpoint { addr, dst }
+        let authority = None;
+        let source_tls_status = TLS_DISABLED;
+        Endpoint { addr, authority, settings, source_tls_status }
     }
 
     const TLS_DISABLED: Conditional<(), tls::ReasonForNoTls> =

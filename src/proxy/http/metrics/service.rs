@@ -390,6 +390,8 @@ where
                 .or_insert_with(|| ClassMetrics::default()),
             None => &mut metrics.unclassified,
         };
+        println!("record_class: {:?}", class_metrics);
+
         class_metrics.total.incr();
         class_metrics
             .latency
@@ -399,6 +401,7 @@ where
     fn measure_err(&mut self, err: C::Error) -> C::Error {
         self.class_at_first_byte = None;
         let c = self.classify.take().map(|mut c| c.error(&err));
+        println!("measure_err");
         self.record_class(c);
         err
     }
@@ -425,6 +428,7 @@ where
         }
 
         if let c @ Some(_) = self.class_at_first_byte.take() {
+            println!("data EOS");
             self.record_class(c);
         }
 
@@ -435,6 +439,7 @@ where
         let trls = try_ready!(self.inner.poll_trailers().map_err(|e| self.measure_err(e)));
 
         let c = self.classify.take().map(|mut c| c.eos(trls.as_ref()));
+        println!("trailers EOS");
         self.record_class(c);
 
         Ok(Async::Ready(trls))
@@ -449,6 +454,7 @@ where
 {
     fn drop(&mut self) {
         let c = self.classify.take().map(|mut c| c.eos(None));
+        println!("drop: {:?}", self.stream_open_at);
         self.record_class(c);
     }
 }

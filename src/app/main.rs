@@ -20,13 +20,13 @@ use logging;
 use metrics;
 use proxy::{
     self, buffer,
-    http::{balance, client, insert_target, normalize_uri, router},
+    http::{balance, client, insert_target, metrics::timestamp_request_open, normalize_uri, router},
     limit, timeout,
 };
 use svc::{self, Layer as _Layer, Make as _Make};
 use tap;
 use task;
-use telemetry::{self, http::timestamp_request_open};
+use telemetry;
 use transport::{self, connect, tls, Connection, GetOriginalDst, MakePort};
 use Conditional;
 
@@ -347,12 +347,12 @@ where
             // employed.
             let endpoint_h1_stack = svc::When::new(
                 |ep: &inbound::Endpoint| {
-                    !ep.dst.settings.is_http2() && !ep.dst.settings.was_absolute_form()
+                    !ep.settings.is_http2() && !ep.settings.was_absolute_form()
                 },
                 normalize_uri::Layer::new(),
             ).and_then(svc::When::new(
                 |ep: &inbound::Endpoint| {
-                    !ep.dst.settings.is_http2() && !ep.dst.settings.can_reuse_clients()
+                    !ep.settings.is_http2() && !ep.settings.can_reuse_clients()
                 },
                 svc::make_per_request::Layer::new(),
             ));
