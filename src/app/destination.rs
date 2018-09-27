@@ -44,10 +44,13 @@ impl Destination {
     }
 
     pub fn from_request<A>(req: &http::Request<A>) -> Option<Self> {
-        let name_or_addr = Self::name_or_addr(req)?;
+        let name_or_addr = NameOrAddr::from_request(req)?;
         let settings = Settings::detect(req);
         Some(Self::new(name_or_addr, settings))
     }
+}
+
+impl NameOrAddr {
 
     /// Determines the destination for a request.
     ///
@@ -62,7 +65,7 @@ impl Destination {
     /// configured by the `proxy-init` program).
     ///
     /// If none of this information is available, no `NameOrAddr` is returned.
-    fn name_or_addr<B>(req: &http::Request<B>) -> Option<NameOrAddr> {
+    pub fn from_request<B>(req: &http::Request<B>) -> Option<NameOrAddr> {
         match Self::host_port(req) {
             Some(HostAndPort {
                 host: Host::DnsName(host),

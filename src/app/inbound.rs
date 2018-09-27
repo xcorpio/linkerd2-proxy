@@ -1,10 +1,10 @@
 use http;
+use std::fmt;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
-use std::fmt;
 
-use app::Destination;
-use proxy::http::{client, orig_proto, router};
+use app::{Destination, NameOrAddr};
+use proxy::http::{client, orig_proto, router, Settings};
 use proxy::server::Source;
 use svc;
 use tap;
@@ -39,7 +39,9 @@ impl<A> router::Recognize<http::Request<A>> for Recognize {
             .and_then(|s| s.orig_dst_if_not_local())
             .or(self.default_addr)?;
 
-        let dst = Destination::from_request(req)?;
+        let name_or_addr = NameOrAddr::from_request(req).unwrap_or_else(|| NameOrAddr::Addr(addr));
+        let settings = Settings::detect(req);
+        let dst = Destination::new(name_or_addr, settings);
 
         let ep = Endpoint { addr, dst };
         debug!("recognize: src={:?} ep={:?}", src, ep);
@@ -133,11 +135,11 @@ mod tests {
     use http;
     use std::net;
 
+    use super::{Endpoint, Recognize};
     use app::{Destination, NameOrAddr};
     use proxy::http::router::Recognize as _Recognize;
     use proxy::http::settings::{Host, Settings};
     use proxy::server::Source;
-    use super::{Endpoint, Recognize};
     use transport::tls;
     use Conditional;
 
