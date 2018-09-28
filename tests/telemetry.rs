@@ -246,8 +246,6 @@ mod response_classification {
             Fixture::outbound_with_server(make_test_server());
 
         for (i, status) in STATUSES.iter().enumerate() {
-            println!("status={:?}", status)
-
             let request = client.request(
                 client.request_builder("/")
                     .header(REQ_STATUS_HEADER, status.as_str())

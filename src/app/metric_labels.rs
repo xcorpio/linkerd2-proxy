@@ -1,9 +1,12 @@
 use http;
-use std::{fmt::{self, Write}, net};
+use std::{
+    fmt::{self, Write},
+    net,
+};
 
 use metrics::FmtLabels;
-use Conditional;
 use transport::tls;
+use Conditional;
 
 use super::{classify, inbound, outbound};
 
@@ -17,7 +20,10 @@ pub struct EndpointLabels {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-enum Direction { In, Out }
+enum Direction {
+    In,
+    Out,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct Authority(Option<http::uri::Authority>);
@@ -40,8 +46,7 @@ impl From<outbound::Endpoint> for EndpointLabels {
         let labels = if let Some((k0, v0)) = label_iter.next() {
             let mut s = format!("dst_{}=\"{}\"", k0, v0);
             for (k, v) in label_iter {
-                write!(s, ",dst_{}=\"{}\"", k, v)
-                    .expect("label concat must succeed");
+                write!(s, ",dst_{}=\"{}\"", k, v).expect("label concat must succeed");
             }
             s
         } else {
@@ -60,12 +65,14 @@ impl From<outbound::Endpoint> for EndpointLabels {
 
 impl FmtLabels for EndpointLabels {
     fn fmt_labels(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        ((&self.authority, &self.direction), &self.tls_status)
-            .fmt_labels(f)?;
+        (&self.authority, &self.direction).fmt_labels(f)?;
 
         if !self.labels.is_empty() {
             write!(f, ",{}", self.labels)?;
         }
+
+        write!(f, ",")?;
+        self.tls_status.fmt_labels(f)?;
 
         Ok(())
     }
@@ -91,17 +98,43 @@ impl FmtLabels for Authority {
 
 impl FmtLabels for classify::Class {
     fn fmt_labels(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "classification=\"success\",status_code=\"200\"")
+        use self::classify::Class;
+        match self {
+            Class::Grpc(result, status) => write!(
+                f,
+                "classification=\"{}\",status_code=\"200\",grpc_status={}",
+                result, status
+            ),
+            Class::Http(result, status) => write!(
+                f,
+                "classification=\"{}\",status_code=\"{}\"",
+                result,
+                status.as_str()
+            ),
+            Class::Stream(result, status) => {
+                write!(f, "classification=\"{}\",h2_err=\"{}\"", result, status)
+            }
+        }
+    }
+}
+
+impl fmt::Display for classify::Result {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use self::classify::Result::{Failure, Success};
+        match self {
+            Success => write!(f, "success"),
+            Failure => write!(f, "failure"),
+        }
     }
 }
 
 impl FmtLabels for tls::Status {
     fn fmt_labels(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Conditional::None(tls::ReasonForNoTls::NoIdentity(why)) =>
-                write!(f, "tls=\"no_identity\",no_tls_reason=\"{}\"", why),
-            status =>
-                write!(f, "tls=\"{}\"", status),
+            Conditional::None(tls::ReasonForNoTls::NoIdentity(why)) => {
+                write!(f, "tls=\"no_identity\",no_tls_reason=\"{}\"", why)
+            }
+            status => write!(f, "tls=\"{}\"", status),
         }
     }
 }
