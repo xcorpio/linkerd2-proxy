@@ -25,9 +25,9 @@ pub struct Layer<T, M> {
 
 /// Wraps services to record taps.
 #[derive(Clone, Debug)]
-pub struct Make<T, N>
+pub struct Stack<T, N>
 where
-    N: svc::Make<T>,
+    N: svc::Stack<T>,
 {
     next_id: NextId,
     taps: Arc<Mutex<Taps>>,
@@ -85,7 +85,7 @@ pub struct ResponseBody<B> {
 impl<T, M, A, B> Layer<T, M>
 where
     T: Clone + Into<event::Endpoint>,
-    M: svc::Make<T>,
+    M: svc::Stack<T>,
     M::Value: svc::Service<
         Request = http::Request<RequestBody<A>>,
         Response = http::Response<B>,
@@ -106,7 +106,7 @@ where
 impl<T, M, A, B> svc::Layer<T, T, M> for Layer<T, M>
 where
     T: Clone + Into<event::Endpoint>,
-    M: svc::Make<T>,
+    M: svc::Stack<T>,
     M::Value: svc::Service<
         Request = http::Request<RequestBody<A>>,
         Response = http::Response<B>,
@@ -115,12 +115,12 @@ where
     A: Body,
     B: Body,
 {
-    type Value = <Make<T, M> as svc::Make<T>>::Value;
+    type Value = <Stack<T, M> as svc::Stack<T>>::Value;
     type Error = M::Error;
-    type Make = Make<T, M>;
+    type Stack = Stack<T, M>;
 
-    fn bind(&self, inner: M) -> Self::Make {
-        Make {
+    fn bind(&self, inner: M) -> Self::Stack {
+        Stack {
             next_id: self.next_id.clone(),
             taps: self.taps.clone(),
             inner,
@@ -129,12 +129,12 @@ where
     }
 }
 
-// === Make ===
+// === Stack ===
 
-impl<T, M, A, B> svc::Make<T> for Make<T, M>
+impl<T, M, A, B> svc::Stack<T> for Stack<T, M>
 where
     T: Clone + Into<event::Endpoint>,
-    M: svc::Make<T>,
+    M: svc::Stack<T>,
     M::Value: svc::Service<
         Request = http::Request<RequestBody<A>>,
         Response = http::Response<B>,

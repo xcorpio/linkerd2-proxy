@@ -71,7 +71,7 @@ impl Resolver {
     /// drive that resolver's futures, or an error if the system configuration
     /// could not be parsed.
     ///
-    /// TODO: Make this infallible, like it is in the `domain` crate.
+    /// TODO: Stack this infallible, like it is in the `domain` crate.
     pub fn from_system_config_and_env(env_config: &Config)
         -> Result<(Self, impl Future<Item = (), Error = ()> + Send), ResolveError> {
         let (config, opts) = trust_dns_resolver::system_conf::read_system_conf()?;
@@ -185,7 +185,7 @@ mod tests {
 
     #[test]
     fn test_dns_name_parsing() {
-        // Make sure `dns::Name`'s validation isn't too strict. It is
+        // Stack sure `dns::Name`'s validation isn't too strict. It is
         // implemented in terms of `webpki::DNSName` which has many more tests
         // at https://github.com/briansmith/webpki/blob/master/tests/dns_name_tests.rs.
         use convert::TryFrom;

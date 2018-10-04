@@ -14,13 +14,13 @@ impl<T, U, A, B, N> super::Layer<T, U, N> for Either<A, B>
 where
     A: super::Layer<T, U, N>,
     B: super::Layer<T, U, N, Error = A::Error>,
-    N: super::Make<U>
+    N: super::Stack<U>
 {
-    type Value = <Either<A::Make, B::Make> as super::Make<T>>::Value;
-    type Error = <Either<A::Make, B::Make> as super::Make<T>>::Error;
-    type Make = Either<A::Make, B::Make>;
+    type Value = <Either<A::Stack, B::Stack> as super::Stack<T>>::Value;
+    type Error = <Either<A::Stack, B::Stack> as super::Stack<T>>::Error;
+    type Stack = Either<A::Stack, B::Stack>;
 
-    fn bind(&self, next: N) -> Self::Make {
+    fn bind(&self, next: N) -> Self::Stack {
         match self {
             Either::A(ref a) => Either::A(a.bind(next)),
             Either::B(ref b) => Either::B(b.bind(next)),
@@ -28,10 +28,10 @@ where
     }
 }
 
-impl<T, N, M> super::Make<T> for Either<N, M>
+impl<T, N, M> super::Stack<T> for Either<N, M>
 where
-    N: super::Make<T>,
-    M: super::Make<T, Error = N::Error>,
+    N: super::Stack<T>,
+    M: super::Stack<T, Error = N::Error>,
 {
     type Value = Either<N::Value, M::Value>;
     type Error = N::Error;

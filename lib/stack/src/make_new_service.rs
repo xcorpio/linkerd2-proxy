@@ -1,27 +1,27 @@
 use futures::future;
 use svc;
 
-use super::Make;
+use super::Stack;
 
 #[derive(Clone, Debug)]
-pub struct MakeNewService<T, M: Make<T>> {
+pub struct StackNewService<T, M: Stack<T>> {
     make: M,
     target: T,
 }
 
-impl<T, M> MakeNewService<T, M>
+impl<T, M> StackNewService<T, M>
 where
-    M: Make<T>,
+    M: Stack<T>,
     M::Value: svc::Service,
 {
-    pub fn new(make: M, target: T) -> MakeNewService<T, M> {
+    pub fn new(make: M, target: T) -> StackNewService<T, M> {
         Self { make, target }
     }
 }
 
-impl<T, M> svc::NewService for MakeNewService<T, M>
+impl<T, M> svc::NewService for StackNewService<T, M>
 where
-    M: Make<T>,
+    M: Stack<T>,
     M::Value: svc::Service,
 {
     type Request = <M::Value as svc::Service>::Request;

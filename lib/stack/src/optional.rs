@@ -8,7 +8,7 @@ pub struct Optional<T, N, L> {
 
 impl<T, N, L> Optional<T, N, L>
 where
-    N: super::Make<T>,
+    N: super::Stack<T>,
     L: super::Layer<T, T, N, Value = N::Value, Error = N::Error>,
 {
     pub fn some(layer: L) -> Self {
@@ -30,14 +30,14 @@ where
 
 impl<T, N, L> super::Layer<T, T, N> for Optional<T, N, L>
 where
-    N: super::Make<T>,
+    N: super::Stack<T>,
     L: super::Layer<T, T, N, Value = N::Value, Error = N::Error>,
 {
-    type Value = <super::Either<N, L::Make> as super::Make<T>>::Value;
-    type Error = <super::Either<N, L::Make> as super::Make<T>>::Error;
-    type Make = super::Either<N, L::Make>;
+    type Value = <super::Either<N, L::Stack> as super::Stack<T>>::Value;
+    type Error = <super::Either<N, L::Stack> as super::Stack<T>>::Error;
+    type Stack = super::Either<N, L::Stack>;
 
-    fn bind(&self, next: N) -> Self::Make {
+    fn bind(&self, next: N) -> Self::Stack {
         match self.inner.as_ref() {
             None => super::Either::A(next),
             Some(ref m) => super::Either::B(m.bind(next)),
@@ -47,7 +47,7 @@ where
 
 impl<T, N, L> From<Option<L>> for Optional<T, N, L>
 where
-    N: super::Make<T>,
+    N: super::Stack<T>,
     L: super::Layer<T, T, N, Value = N::Value, Error = N::Error>,
 {
     fn from(inner: Option<L>) -> Self {

@@ -15,13 +15,13 @@ mod cache;
 use self::cache::Cache;
 
 /// Routes requests based on a configurable `Key`.
-pub struct Router<Req, Rec, Mk>
+pub struct Router<Req, Rec, Stk>
 where
     Rec: Recognize<Req>,
-    Mk: stack::Make<Rec::Target>,
-    Mk::Value: svc::Service<Request = Req>,
+    Stk: stack::Stack<Rec::Target>,
+    Stk::Value: svc::Service<Request = Req>,
 {
-    inner: Arc<Inner<Req, Rec, Mk>>,
+    inner: Arc<Inner<Req, Rec, Stk>>,
 }
 
 /// Provides a strategy for routing a Request to a Service.
@@ -53,15 +53,15 @@ where
     state: State<F, E>,
 }
 
-struct Inner<Req, Rec, Mk>
+struct Inner<Req, Rec, Stk>
 where
     Rec: Recognize<Req>,
-    Mk: stack::Make<Rec::Target>,
-    Mk::Value: svc::Service<Request = Req>,
+    Stk: stack::Stack<Rec::Target>,
+    Stk::Value: svc::Service<Request = Req>,
 {
     recognize: Rec,
-    make: Mk,
-    cache: Mutex<Cache<Rec::Target, Mk::Value>>,
+    make: Stk,
+    cache: Mutex<Cache<Rec::Target, Stk::Value>>,
 }
 
 enum State<F, E>
@@ -77,13 +77,13 @@ where
 
 // ===== impl Router =====
 
-impl<Req, Rec, Mk> Router<Req, Rec, Mk>
+impl<Req, Rec, Stk> Router<Req, Rec, Stk>
 where
     Rec: Recognize<Req>,
-    Mk: stack::Make<Rec::Target>,
-    Mk::Value: svc::Service<Request = Req>,
+    Stk: stack::Stack<Rec::Target>,
+    Stk::Value: svc::Service<Request = Req>,
 {
-    pub fn new(recognize: Rec, make: Mk, capacity: usize, max_idle_age: Duration) -> Self {
+    pub fn new(recognize: Rec, make: Stk, capacity: usize, max_idle_age: Duration) -> Self {
         Router {
             inner: Arc::new(Inner {
                 recognize,
@@ -94,16 +94,16 @@ where
     }
 }
 
-impl<Req, Rec, Mk> svc::Service for Router<Req, Rec, Mk>
+impl<Req, Rec, Stk> svc::Service for Router<Req, Rec, Stk>
 where
     Rec: Recognize<Req>,
-    Mk: stack::Make<Rec::Target>,
-    Mk::Value: svc::Service<Request = Req>,
+    Stk: stack::Stack<Rec::Target>,
+    Stk::Value: svc::Service<Request = Req>,
 {
-    type Request = <Mk::Value as svc::Service>::Request;
-    type Response = <Mk::Value as svc::Service>::Response;
-    type Error = Error<<Mk::Value as svc::Service>::Error, Mk::Error>;
-    type Future = ResponseFuture<<Mk::Value as svc::Service>::Future, Mk::Error>;
+    type Request = <Stk::Value as svc::Service>::Request;
+    type Response = <Stk::Value as svc::Service>::Response;
+    type Error = Error<<Stk::Value as svc::Service>::Error, Stk::Error>;
+    type Future = ResponseFuture<<Stk::Value as svc::Service>::Future, Stk::Error>;
 
     /// Always ready to serve.
     ///
@@ -154,11 +154,11 @@ where
     }
 }
 
-impl<Req, Rec, Mk> Clone for Router<Req, Rec, Mk>
+impl<Req, Rec, Stk> Clone for Router<Req, Rec, Stk>
 where
     Rec: Recognize<Req>,
-    Mk: stack::Make<Rec::Target>,
-    Mk::Value: svc::Service<Request = Req>,
+    Stk: stack::Stack<Rec::Target>,
+    Stk::Value: svc::Service<Request = Req>,
 {
     fn clone(&self) -> Self {
         Router { inner: self.inner.clone() }
@@ -253,7 +253,7 @@ where
 #[cfg(test)]
 mod test_util {
     use futures::{Poll, future};
-    use stack::Make;
+    use stack::Stack;
     use svc::Service;
 
     pub struct Recognize;
@@ -280,7 +280,7 @@ mod test_util {
         }
     }
 
-    impl Make<usize> for Recognize {
+    impl Stack<usize> for Recognize {
         type Value = MultiplyAndAssign;
         type Error = ();
 

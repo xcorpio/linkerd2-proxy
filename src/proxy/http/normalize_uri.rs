@@ -7,7 +7,7 @@ use svc;
 
 pub struct Layer<T, M>(PhantomData<fn() -> (T, M)>);
 
-pub struct Make<T, N: svc::Make<T>> {
+pub struct Stack<T, N: svc::Stack<T>> {
     inner: N,
     _p: PhantomData<T>
 }
@@ -21,7 +21,7 @@ pub struct Service<S> {
 
 impl<T, B, M> Layer<T, M>
 where
-    M: svc::Make<T>,
+    M: svc::Stack<T>,
     M::Value: svc::Service<Request = http::Request<B>>,
 {
     pub fn new() -> Self {
@@ -31,7 +31,7 @@ where
 
 impl<T, B, M> Clone for Layer<T, M>
 where
-    M: svc::Make<T>,
+    M: svc::Stack<T>,
     M::Value: svc::Service<Request = http::Request<B>>,
 {
     fn clone(&self) -> Self {
@@ -41,23 +41,23 @@ where
 
 impl<T, B, M> svc::Layer<T, T, M> for Layer<T, M>
 where
-    M: svc::Make<T>,
+    M: svc::Stack<T>,
     M::Value: svc::Service<Request = http::Request<B>>,
 {
-    type Value = <Make<T, M> as svc::Make<T>>::Value;
-    type Error = <Make<T, M> as svc::Make<T>>::Error;
-    type Make = Make<T, M>;
+    type Value = <Stack<T, M> as svc::Stack<T>>::Value;
+    type Error = <Stack<T, M> as svc::Stack<T>>::Error;
+    type Stack = Stack<T, M>;
 
-    fn bind(&self, inner: M) -> Self::Make {
-        Make { inner, _p: PhantomData }
+    fn bind(&self, inner: M) -> Self::Stack {
+        Stack { inner, _p: PhantomData }
     }
 }
 
-// === impl Make ===
+// === impl Stack ===
 
-impl<T, B, M> svc::Make<T> for Make<T, M>
+impl<T, B, M> svc::Stack<T> for Stack<T, M>
 where
-    M: svc::Make<T>,
+    M: svc::Stack<T>,
     M::Value: svc::Service<Request = http::Request<B>>,
 {
     type Value = Service<M::Value>;

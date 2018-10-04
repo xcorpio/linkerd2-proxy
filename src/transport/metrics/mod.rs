@@ -55,7 +55,7 @@ pub struct LayerAccept<I, M> {
 }
 
 #[derive(Debug)]
-pub struct MakeAccept<I, M> {
+pub struct StackAccept<I, M> {
     inner: M,
     direction: Direction,
     registry: Arc<Mutex<Inner>>,
@@ -77,7 +77,7 @@ pub struct LayerConnect<T, M> {
 }
 
 #[derive(Debug)]
-pub struct MakeConnect<T, M> {
+pub struct StackConnect<T, M> {
     inner: M,
     direction: Direction,
     registry: Arc<Mutex<Inner>>,
@@ -210,7 +210,7 @@ impl Registry {
     pub fn accept<I, M>(&self, direction: &'static str) -> LayerAccept<I, M>
     where
         I: AsyncRead + AsyncWrite,
-        M: svc::Make<proxy::Source>,
+        M: svc::Stack<proxy::Source>,
         M::Value: proxy::Accept<I>,
     {
         LayerAccept::new(direction, self.0.clone())
@@ -219,7 +219,7 @@ impl Registry {
     pub fn connect<T, M>(&self, direction: &'static str) -> LayerConnect<T, M>
     where
         T: Into<connect::Target> + Clone,
-        M: svc::Make<T>,
+        M: svc::Stack<T>,
         M::Value: connect::Connect,
     {
         LayerConnect::new(direction, self.0.clone())
@@ -229,7 +229,7 @@ impl Registry {
 impl<I, M> LayerAccept<I, M>
 where
     I: AsyncRead + AsyncWrite,
-    M: svc::Make<proxy::Source>,
+    M: svc::Stack<proxy::Source>,
     M::Value: proxy::Accept<I>,
 {
     fn new(d: &'static str, registry: Arc<Mutex<Inner>>) -> Self {
@@ -244,7 +244,7 @@ where
 impl<I, M> Clone for LayerAccept<I, M>
 where
     I: AsyncRead + AsyncWrite,
-    M: svc::Make<proxy::Source>,
+    M: svc::Stack<proxy::Source>,
     M::Value: proxy::Accept<I>,
 {
     fn clone(&self) -> Self {
@@ -255,15 +255,15 @@ where
 impl<I, M> svc::Layer<proxy::Source, proxy::Source, M> for LayerAccept<I, M>
 where
     I: AsyncRead + AsyncWrite,
-    M: svc::Make<proxy::Source>,
+    M: svc::Stack<proxy::Source>,
     M::Value: proxy::Accept<I>
 {
-    type Value = <MakeAccept<I, M> as svc::Make<proxy::Source>>::Value;
-    type Error = <MakeAccept<I, M> as svc::Make<proxy::Source>>::Error;
-    type Make = MakeAccept<I, M>;
+    type Value = <StackAccept<I, M> as svc::Stack<proxy::Source>>::Value;
+    type Error = <StackAccept<I, M> as svc::Stack<proxy::Source>>::Error;
+    type Stack = StackAccept<I, M>;
 
-    fn bind(&self, inner: M) -> Self::Make {
-        MakeAccept {
+    fn bind(&self, inner: M) -> Self::Stack {
+        StackAccept {
             inner,
             direction: self.direction,
             registry: self.registry.clone(),
@@ -272,14 +272,14 @@ where
     }
 }
 
-impl<I, M> Clone for MakeAccept<I, M>
+impl<I, M> Clone for StackAccept<I, M>
 where
     I: AsyncRead + AsyncWrite,
-    M: svc::Make<proxy::Source> + Clone,
+    M: svc::Stack<proxy::Source> + Clone,
     M::Value: proxy::Accept<I>,
 {
     fn clone(&self) -> Self {
-        MakeAccept {
+        StackAccept {
             inner: self.inner.clone(),
             direction: self.direction,
             registry: self.registry.clone(),
@@ -288,10 +288,10 @@ where
     }
 }
 
-impl<I, M> svc::Make<proxy::Source> for MakeAccept<I, M>
+impl<I, M> svc::Stack<proxy::Source> for StackAccept<I, M>
 where
     I: AsyncRead + AsyncWrite,
-    M: svc::Make<proxy::Source>,
+    M: svc::Stack<proxy::Source>,
     M::Value: proxy::Accept<I>
 {
     type Value = Accept<I, M::Value>;
@@ -333,7 +333,7 @@ where
 impl<T, M> LayerConnect<T, M>
 where
     T: Into<connect::Target> + Clone,
-    M: svc::Make<T>,
+    M: svc::Stack<T>,
     M::Value: connect::Connect,
 {
     fn new(d: &'static str, registry: Arc<Mutex<Inner>>) -> Self {
@@ -348,7 +348,7 @@ where
 impl<T, M> Clone for LayerConnect<T, M>
 where
     T: Into<connect::Target> + Clone,
-    M: svc::Make<T>,
+    M: svc::Stack<T>,
     M::Value: connect::Connect,
 {
     fn clone(&self) -> Self {
@@ -359,15 +359,15 @@ where
 impl<T, M> svc::Layer<T, T, M> for LayerConnect<T, M>
 where
     T: Into<connect::Target> + Clone,
-    M: svc::Make<T>,
+    M: svc::Stack<T>,
     M::Value: connect::Connect,
 {
-    type Value = <MakeConnect<T, M> as svc::Make<T>>::Value;
-    type Error = <MakeConnect<T, M> as svc::Make<T>>::Error;
-    type Make = MakeConnect<T, M>;
+    type Value = <StackConnect<T, M> as svc::Stack<T>>::Value;
+    type Error = <StackConnect<T, M> as svc::Stack<T>>::Error;
+    type Stack = StackConnect<T, M>;
 
-    fn bind(&self, inner: M) -> Self::Make {
-        MakeConnect {
+    fn bind(&self, inner: M) -> Self::Stack {
+        StackConnect {
             inner,
             direction: self.direction,
             registry: self.registry.clone(),
@@ -376,14 +376,14 @@ where
     }
 }
 
-impl<T, M> Clone for MakeConnect<T, M>
+impl<T, M> Clone for StackConnect<T, M>
 where
     T: Into<connect::Target> + Clone,
-    M: svc::Make<T> + Clone,
+    M: svc::Stack<T> + Clone,
     M::Value: connect::Connect,
 {
     fn clone(&self) -> Self {
-        MakeConnect {
+        StackConnect {
             inner: self.inner.clone(),
             direction: self.direction,
             registry: self.registry.clone(),
@@ -393,10 +393,10 @@ where
 }
 
 
-impl<T, M> svc::Make<T> for MakeConnect<T, M>
+impl<T, M> svc::Stack<T> for StackConnect<T, M>
 where
     T: Into<connect::Target> + Clone,
-    M: svc::Make<T>,
+    M: svc::Stack<T>,
     M::Value: connect::Connect,
 {
     type Value = Connect<M::Value>;

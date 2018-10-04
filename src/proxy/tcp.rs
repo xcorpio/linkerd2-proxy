@@ -15,7 +15,7 @@ pub(super) fn forward<I, C, T>(
 where
     T: fmt::Debug,
     I: AsyncRead + AsyncWrite + Send + 'static,
-    C: svc::Make<T>,
+    C: svc::Stack<T>,
     C::Value: Connect,
     C::Error: fmt::Debug,
     <C::Value as Connect>::Future: Send + 'static,

@@ -8,7 +8,7 @@ use svc;
 pub struct Layer<T, M>(PhantomData<fn() -> (T, M)>);
 
 #[derive(Clone, Debug)]
-pub struct Make<M>(M);
+pub struct Stack<M>(M);
 
 #[derive(Clone, Debug)]
 pub struct Service<T, S> {
@@ -31,22 +31,22 @@ impl<T, M> Clone for Layer<T, M> {
 impl<T, M, B> svc::Layer<T, T, M> for Layer<T, M>
 where
     T: Clone + Send + Sync + 'static,
-    M: svc::Make<T>,
+    M: svc::Stack<T>,
     M::Value: svc::Service<Request = http::Request<B>>,
 {
-    type Value = <Make<M> as svc::Make<T>>::Value;
-    type Error = <Make<M> as svc::Make<T>>::Error;
-    type Make = Make<M>;
+    type Value = <Stack<M> as svc::Stack<T>>::Value;
+    type Error = <Stack<M> as svc::Stack<T>>::Error;
+    type Stack = Stack<M>;
 
-    fn bind(&self, next: M) -> Self::Make {
-        Make(next)
+    fn bind(&self, next: M) -> Self::Stack {
+        Stack(next)
     }
 }
 
-impl<T, M, B> svc::Make<T> for Make<M>
+impl<T, M, B> svc::Stack<T> for Stack<M>
 where
     T: Clone + Send + Sync + 'static,
-    M: svc::Make<T>,
+    M: svc::Stack<T>,
     M::Value: svc::Service<Request = http::Request<B>>,
 {
     type Value = Service<T, M::Value>;

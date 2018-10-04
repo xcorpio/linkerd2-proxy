@@ -25,7 +25,7 @@ use proxy::{
     },
     limit, timeout,
 };
-use svc::{self, Layer as _Layer, Make as _Make};
+use svc::{self, Layer as _Layer, Stack as _Stack};
 use tap;
 use task;
 use telemetry;
@@ -205,7 +205,7 @@ where
 
         let (dns_resolver, dns_bg) = dns::Resolver::from_system_config_and_env(&config)
             .unwrap_or_else(|e| {
-                // TODO: Make DNS configuration infallible.
+                // TODO: Stack DNS configuration infallible.
                 panic!("invalid DNS configuration: {:?}", e);
             });
 
@@ -233,7 +233,7 @@ where
             let connect = transport_metrics
                 .connect("outbound")
                 .and_then(proxy::timeout::Layer::new(config.outbound_connect_timeout))
-                .bind(connect::Make::new());
+                .bind(connect::Stack::new());
 
             // As HTTP requests are accepted, we add some request extensions
             // including metadata about the request's origin.
@@ -278,7 +278,7 @@ where
             let capacity = config.outbound_router_capacity;
             let max_idle_age = config.outbound_router_max_idle_age;
             let router = router_layer
-                .bind(client::Make::new("out", connect.clone()))
+                .bind(client::Stack::new("out", connect.clone()))
                 .make(&router::Config::new("out", capacity, max_idle_age))
                 .expect("outbound router");
 
@@ -305,7 +305,7 @@ where
             let connect = transport_metrics
                 .connect("inbound")
                 .and_then(proxy::timeout::Layer::new(config.inbound_connect_timeout))
-                .bind(connect::Make::new());
+                .bind(connect::Stack::new());
 
             // As HTTP requests are accepted, we add some request extensions
             // including metadata about the request's origin.
@@ -352,7 +352,7 @@ where
             let capacity = config.inbound_router_capacity;
             let max_idle_age = config.inbound_router_max_idle_age;
             let router = router_layer
-                .bind(client::Make::new("in", connect.clone()))
+                .bind(client::Stack::new("in", connect.clone()))
                 .make(&router::Config::new("in", capacity, max_idle_age))
                 .expect("inbound router");
 
@@ -433,16 +433,16 @@ fn serve<A, C, R, B, G>(
     drain_rx: drain::Watch,
 ) -> impl Future<Item = (), Error = io::Error> + Send + 'static
 where
-    A: svc::Make<proxy::server::Source, Error = ()> + Send + Clone + 'static,
+    A: svc::Stack<proxy::server::Source, Error = ()> + Send + Clone + 'static,
     A::Value: proxy::Accept<Connection>,
     <A::Value as proxy::Accept<Connection>>::Io: Send + transport::Peek + 'static,
-    C: svc::Make<connect::Target> + Send + Clone + 'static,
+    C: svc::Stack<connect::Target> + Send + Clone + 'static,
     C::Error: error::Error + Send + 'static,
     C::Value: connect::Connect + Send,
     <C::Value as connect::Connect>::Connected: Send + 'static,
     <C::Value as connect::Connect>::Future: Send + 'static,
     <C::Value as connect::Connect>::Error: fmt::Debug + 'static,
-    R: svc::Make<proxy::server::Source, Error = ()> + Send + Clone + 'static,
+    R: svc::Stack<proxy::server::Source, Error = ()> + Send + Clone + 'static,
     R::Value:
         svc::Service<Request = http::Request<proxy::http::Body>, Response = http::Response<B>>,
     R::Value: Send + 'static,

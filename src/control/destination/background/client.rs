@@ -121,7 +121,7 @@ impl BindClient {
     }
 }
 
-impl svc::Make<tls::ConditionalClientConfig> for BindClient {
+impl svc::Stack<tls::ConditionalClientConfig> for BindClient {
     type Value = ClientService;
     type Error = ();
 

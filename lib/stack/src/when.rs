@@ -8,17 +8,17 @@ pub struct Layer<T, P, N, L>
 where
     P: Predicate<T> + Clone,
     L: super::Layer<T, T, N, Error = N::Error> + Clone,
-    N: super::Make<T>,
+    N: super::Stack<T>,
 {
     predicate: P,
     inner: L,
     _p: PhantomData<(T, N, L)>,
 }
 
-pub struct Make<T, P, N, L>
+pub struct Stack<T, P, N, L>
 where
     P: Predicate<T> + Clone,
-    N: super::Make<T> + Clone,
+    N: super::Stack<T> + Clone,
     L: super::Layer<T, T, N>,
 {
     predicate: P,
@@ -30,9 +30,9 @@ where
 impl<T, P, N, L> Layer<T, P, N, L>
 where
     P: Predicate<T> + Clone,
-    N: super::Make<T> + Clone,
+    N: super::Stack<T> + Clone,
     L: super::Layer<T, T, N, Error = N::Error> + Clone,
-    L::Make: super::Make<T>,
+    L::Stack: super::Stack<T>,
 {
     pub fn new(predicate: P, inner: L) -> Self {
         Self  {
@@ -46,9 +46,9 @@ where
 impl<T, P, N, L> Clone for Layer<T, P, N, L>
 where
     P: Predicate<T> + Clone,
-    N: super::Make<T> + Clone,
+    N: super::Stack<T> + Clone,
     L: super::Layer<T, T, N, Error = N::Error> + Clone,
-    L::Make: super::Make<T>,
+    L::Stack: super::Stack<T>,
 {
     fn clone(&self) -> Self {
         Self::new(self.predicate.clone(), self.inner.clone())
@@ -58,16 +58,16 @@ where
 impl<T, P, N, L> super::Layer<T, T, N> for Layer<T, P, N, L>
 where
     P: Predicate<T> + Clone,
-    N: super::Make<T> + Clone,
+    N: super::Stack<T> + Clone,
     L: super::Layer<T, T, N, Error = N::Error> + Clone,
-    L::Make: super::Make<T>,
+    L::Stack: super::Stack<T>,
 {
-    type Value = <Make<T, P, N, L> as super::Make<T>>::Value;
-    type Error = <Make<T, P, N, L> as super::Make<T>>::Error;
-    type Make = Make<T, P, N, L>;
+    type Value = <Stack<T, P, N, L> as super::Stack<T>>::Value;
+    type Error = <Stack<T, P, N, L> as super::Stack<T>>::Error;
+    type Stack = Stack<T, P, N, L>;
 
-    fn bind(&self, next: N) -> Self::Make {
-        Make {
+    fn bind(&self, next: N) -> Self::Stack {
+        Stack {
             predicate: self.predicate.clone(),
             next,
             layer: self.inner.clone(),
@@ -76,12 +76,12 @@ where
     }
 }
 
-impl<T, P, N, L> Clone for Make<T, P, N, L>
+impl<T, P, N, L> Clone for Stack<T, P, N, L>
 where
     P: Predicate<T> + Clone,
-    N: super::Make<T> + Clone,
+    N: super::Stack<T> + Clone,
     L: super::Layer<T, T, N, Error = N::Error> + Clone,
-    L::Make: super::Make<T>,
+    L::Stack: super::Stack<T>,
 {
     fn clone(&self) -> Self {
         Self {
@@ -93,12 +93,12 @@ where
     }
 }
 
-impl<T, P, N, L> super::Make<T> for Make<T, P, N, L>
+impl<T, P, N, L> super::Stack<T> for Stack<T, P, N, L>
 where
     P: Predicate<T> + Clone,
-    N: super::Make<T> + Clone,
+    N: super::Stack<T> + Clone,
     L: super::Layer<T, T, N, Error = N::Error>,
-    L::Make: super::Make<T>,
+    L::Stack: super::Stack<T>,
 {
     type Value = super::Either<N::Value, L::Value>;
     type Error = N::Error;

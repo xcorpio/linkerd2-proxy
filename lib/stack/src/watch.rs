@@ -7,7 +7,7 @@ use svc;
 
 /// A Service that updates itself as a Watch updates.
 #[derive(Clone, Debug)]
-pub struct Service<T, M: super::Make<T>> {
+pub struct Service<T, M: super::Stack<T>> {
     watch: futures_watch::Watch<T>,
     make: M,
     inner: M::Value,
@@ -15,13 +15,13 @@ pub struct Service<T, M: super::Make<T>> {
 
 #[derive(Debug)]
 pub enum Error<I, M> {
-    Make(M),
+    Stack(M),
     Inner(I),
 }
 
 impl<T, M> Service<T, M>
 where
-    M: super::Make<T>,
+    M: super::Stack<T>,
 {
     pub fn try(watch: futures_watch::Watch<T>, make: M) -> Result<Self, M::Error> {
         let inner = make.make(&*watch.borrow())?;
@@ -35,7 +35,7 @@ where
 
 impl<T, M> svc::Service for Service<T, M>
 where
-    M: super::Make<T>,
+    M: super::Stack<T>,
     M::Value: svc::Service,
 {
     type Request = <M::Value as svc::Service>::Request;
@@ -55,7 +55,7 @@ where
             // `inner` is only updated if `target` is valid. The caller may
             // choose to continue using the service or discard as is
             // appropriate.
-            self.inner = self.make.make(&*target).map_err(Error::Make)?;
+            self.inner = self.make.make(&*target).map_err(Error::Stack)?;
         }
 
         self.inner.poll_ready().map_err(Error::Inner)
@@ -70,7 +70,7 @@ impl<I: fmt::Display, M: fmt::Display> fmt::Display for Error<I, M> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Error::Inner(i) => i.fmt(f),
-            Error::Make(m) => m.fmt(f),
+            Error::Stack(m) => m.fmt(f),
         }
     }
 }
@@ -120,8 +120,8 @@ mod tests {
             };
         }
 
-        struct Make;
-        impl ::Make<usize> for Make {
+        struct Stack;
+        impl ::Stack<usize> for Stack {
             type Value = Svc;
             type Error = ();
             fn make(&self, n: &usize) -> Result<Svc, ()> {
@@ -130,7 +130,7 @@ mod tests {
         }
 
         let (watch, mut store) = futures_watch::Watch::new(1);
-        let mut svc = Service::try(watch, Make).unwrap();
+        let mut svc = Service::try(watch, Stack).unwrap();
 
         assert_ready!(svc);
         assert_eq!(call!(svc), 1);

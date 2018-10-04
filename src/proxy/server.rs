@@ -9,7 +9,7 @@ use tower_h2;
 
 use Conditional;
 use drain;
-use svc::{Make, Service, stack::MakeNewService};
+use svc::{Stack, Service, stack::StackNewService};
 use transport::{connect, tls, Connection, GetOriginalDst, Peek};
 use proxy::http::glue::{HttpBody, HttpBodyNewSvc, HyperServerSvc};
 use proxy::protocol::Protocol;
@@ -24,14 +24,14 @@ use super::Accept;
 pub struct Server<A, C, R, B, G>
 where
     // Prepares a server transport, e.g. with telemetry.
-    A: Make<Source, Error = ()> + Clone,
+    A: Stack<Source, Error = ()> + Clone,
     A::Value: Accept<Connection>,
     // Used when forwarding a TCP stream (e.g. with telemetry, timeouts).
-    C: Make<connect::Target> + Clone,
+    C: Stack<connect::Target> + Clone,
     C::Error: error::Error,
     C::Value: connect::Connect,
     // Prepares a route for each accepted HTTP connection.
-    R: Make<Source, Error = ()> + Clone,
+    R: Stack<Source, Error = ()> + Clone,
     R::Value: Service<
         Request = http::Request<HttpBody>,
         Response = http::Response<B>,
@@ -120,9 +120,9 @@ impl fmt::Display for Source {
     }
 }
 
-impl<C> Make<Source> for ForwardConnect<C>
+impl<C> Stack<Source> for ForwardConnect<C>
 where
-    C: Make<connect::Target>,
+    C: Stack<connect::Target>,
     C::Error: error::Error,
 {
     type Value = C::Value;
@@ -151,7 +151,7 @@ impl fmt::Display for NoOriginalDst {
 }
 
 // Allows `()` to be used for `Accept`.
-impl Make<Source> for () {
+impl Stack<Source> for () {
     type Value = ();
     type Error = ();
     fn make(&self, _: &Source) -> Result<(), ()> {
@@ -161,16 +161,16 @@ impl Make<Source> for () {
 
 impl<A, C, R, B, G> Server<A, C, R, B, G>
 where
-    A: Make<Source, Error = ()> + Clone,
+    A: Stack<Source, Error = ()> + Clone,
     A::Value: Accept<Connection>,
     <A::Value as Accept<Connection>>::Io: Send + Peek + 'static,
-    C: Make<connect::Target> + Clone,
+    C: Stack<connect::Target> + Clone,
     C::Error: error::Error,
     C::Value: connect::Connect,
     <C::Value as connect::Connect>::Connected: Send + 'static,
     <C::Value as connect::Connect>::Future: Send + 'static,
     <C::Value as connect::Connect>::Error: fmt::Debug + 'static,
-    R: Make<Source, Error = ()> + Clone,
+    R: Stack<Source, Error = ()> + Clone,
     R::Value: Service<
         Request = http::Request<HttpBody>,
         Response = http::Response<B>,
@@ -307,7 +307,7 @@ where
                     }),
                     Protocol::Http2 => Either::B({
                         trace!("detected HTTP/2");
-                        let new_service = MakeNewService::new(route, source.clone());
+                        let new_service = StackNewService::new(route, source.clone());
                         let h2 = tower_h2::Server::new(
                             HttpBodyNewSvc::new(new_service),
                             h2_settings,

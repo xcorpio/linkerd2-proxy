@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 
 #[derive(Debug, Clone)]
 pub enum Update<Endpoint> {
-    Make(SocketAddr, Endpoint),
+    Stack(SocketAddr, Endpoint),
     Remove(SocketAddr),
 }
 

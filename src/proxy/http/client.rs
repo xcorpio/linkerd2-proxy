@@ -26,10 +26,10 @@ pub struct Config {
 }
 
 #[derive(Debug)]
-pub struct Make<T, C, B>
+pub struct Stack<T, C, B>
 where
     T: Into<Config>,
-    C: svc::Make<connect::Target>,
+    C: svc::Stack<connect::Target>,
     C::Value: connect::Connect + Clone + Send + Sync + 'static,
     B: tower_h2::Body + 'static,
 {
@@ -127,10 +127,10 @@ impl Config {
     }
 }
 
-impl<T, C, B> Make<T, C, B>
+impl<T, C, B> Stack<T, C, B>
 where
     T: Into<Config>,
-    C: svc::Make<connect::Target>,
+    C: svc::Stack<connect::Target>,
     C::Value: connect::Connect + Clone + Send + Sync + 'static,
     B: tower_h2::Body + 'static,
 {
@@ -143,10 +143,10 @@ where
     }
 }
 
-impl<T, C, B> Clone for Make<T, C, B>
+impl<T, C, B> Clone for Stack<T, C, B>
 where
     T: Into<Config>,
-    C: svc::Make<connect::Target> + Clone,
+    C: svc::Stack<connect::Target> + Clone,
     C::Value: connect::Connect + Clone + Send + Sync + 'static,
     B: tower_h2::Body + 'static,
 {
@@ -155,10 +155,10 @@ where
     }
 }
 
-impl<T, C, B> svc::Make<T> for Make<T, C, B>
+impl<T, C, B> svc::Stack<T> for Stack<T, C, B>
 where
     T: Into<Config> + Clone,
-    C: svc::Make<connect::Target>,
+    C: svc::Stack<connect::Target>,
     C::Value: connect::Connect + Clone + Send + Sync + 'static,
     <C::Value as connect::Connect>::Connected: Send,
     <C::Value as connect::Connect>::Future: Send + 'static,

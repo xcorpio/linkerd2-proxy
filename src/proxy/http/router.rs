@@ -21,28 +21,28 @@ pub struct Config {
 }
 
 #[derive(Debug)]
-pub struct Layer<Req, Rec, Mk> {
+pub struct Layer<Req, Rec, Stk> {
     recognize: Rec,
-    _p: PhantomData<fn() -> (Req, Mk)>,
+    _p: PhantomData<fn() -> (Req, Stk)>,
 }
 
-pub struct Make<Req, Rec, Mk>
+pub struct Stack<Req, Rec, Stk>
 where
     Rec: Recognize<Req>,
-    Mk: svc::Make<Rec::Target> + Clone,
+    Stk: svc::Stack<Rec::Target> + Clone,
 {
     recognize: Rec,
-    inner: Mk,
+    inner: Stk,
     _p: PhantomData<fn() -> Req>,
 }
 
-pub struct Service<Req, Rec, Mk>
+pub struct Service<Req, Rec, Stk>
 where
     Rec: Recognize<Req>,
-    Mk: svc::Make<Rec::Target>,
-    Mk::Value: svc::Service<Request = Req>,
+    Stk: svc::Stack<Rec::Target>,
+    Stk::Value: svc::Service<Request = Req>,
 {
-    inner: Router<Req, Rec, Mk>,
+    inner: Router<Req, Rec, Stk>,
 }
 
 /// Catches errors from the inner future and maps them to 500 responses.
@@ -70,7 +70,7 @@ impl fmt::Display for Config {
 
 // === impl Layer ===
 
-impl<Req, Rec, Mk> Layer<Req, Rec, Mk>
+impl<Req, Rec, Stk> Layer<Req, Rec, Stk>
 where
     Rec: Recognize<Req> + Clone,
 {
@@ -79,22 +79,22 @@ where
     }
 }
 
-impl<T, Req, Rec, Mk, B> svc::Layer<T, Rec::Target, Mk> for Layer<Req, Rec, Mk>
+impl<T, Req, Rec, Stk, B> svc::Layer<T, Rec::Target, Stk> for Layer<Req, Rec, Stk>
 where
     Rec: Recognize<Req> + Clone,
-    Mk: svc::Make<Rec::Target> + Clone + Send + Sync + 'static,
-    Mk::Value: svc::Service<Response = http::Response<B>>,
-    <Mk::Value as svc::Service>::Error: error::Error,
-    Mk::Error: fmt::Debug,
+    Stk: svc::Stack<Rec::Target> + Clone + Send + Sync + 'static,
+    Stk::Value: svc::Service<Response = http::Response<B>>,
+    <Stk::Value as svc::Service>::Error: error::Error,
+    Stk::Error: fmt::Debug,
     B: Default + Send + 'static,
-    Make<Req, Rec, Mk>: svc::Make<T>,
+    Stack<Req, Rec, Stk>: svc::Stack<T>,
 {
-    type Value = <Make<Req, Rec, Mk> as svc::Make<T>>::Value;
-    type Error = <Make<Req, Rec, Mk> as svc::Make<T>>::Error;
-    type Make = Make<Req, Rec, Mk>;
+    type Value = <Stack<Req, Rec, Stk> as svc::Stack<T>>::Value;
+    type Error = <Stack<Req, Rec, Stk> as svc::Stack<T>>::Error;
+    type Stack = Stack<Req, Rec, Stk>;
 
-    fn bind(&self, inner: Mk) -> Self::Make {
-        Make {
+    fn bind(&self, inner: Stk) -> Self::Stack {
+        Stack {
             inner,
             recognize: self.recognize.clone(),
             _p: PhantomData,
@@ -102,12 +102,12 @@ where
     }
 }
 
-// === impl Make ===
+// === impl Stack ===
 
-impl<Req, Rec, Mk> Clone for Make<Req, Rec, Mk>
+impl<Req, Rec, Stk> Clone for Stack<Req, Rec, Stk>
 where
     Rec: Recognize<Req> + Clone,
-    Mk: svc::Make<Rec::Target> + Clone,
+    Stk: svc::Stack<Rec::Target> + Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -118,16 +118,16 @@ where
     }
 }
 
-impl<Req, Rec, Mk, B> svc::Make<Config> for Make<Req, Rec, Mk>
+impl<Req, Rec, Stk, B> svc::Stack<Config> for Stack<Req, Rec, Stk>
 where
     Rec: Recognize<Req> + Clone + Send + Sync + 'static,
-    Mk: svc::Make<Rec::Target> + Clone + Send + Sync + 'static,
-    Mk::Value: svc::Service<Request = Req, Response = http::Response<B>>,
-    <Mk::Value as svc::Service>::Error: error::Error,
-    Mk::Error: fmt::Debug,
+    Stk: svc::Stack<Rec::Target> + Clone + Send + Sync + 'static,
+    Stk::Value: svc::Service<Request = Req, Response = http::Response<B>>,
+    <Stk::Value as svc::Service>::Error: error::Error,
+    Stk::Error: fmt::Debug,
     B: Default + Send + 'static,
 {
-    type Value = Service<Req, Rec, Mk>;
+    type Value = Service<Req, Rec, Stk>;
     type Error = ();
 
     fn make(&self, config: &Config) -> Result<Self::Value, Self::Error> {
@@ -170,19 +170,19 @@ where
 
 // === impl Service ===
 
-impl<Req, Rec, Mk, B> svc::Service for Service<Req, Rec, Mk>
+impl<Req, Rec, Stk, B> svc::Service for Service<Req, Rec, Stk>
 where
     Rec: Recognize<Req> + Send + Sync + 'static,
-    Mk: svc::Make<Rec::Target> + Send + Sync + 'static,
-    Mk::Value: svc::Service<Request = Req, Response = http::Response<B>>,
-    <Mk::Value as svc::Service>::Error: error::Error,
-    Mk::Error: fmt::Debug,
+    Stk: svc::Stack<Rec::Target> + Send + Sync + 'static,
+    Stk::Value: svc::Service<Request = Req, Response = http::Response<B>>,
+    <Stk::Value as svc::Service>::Error: error::Error,
+    Stk::Error: fmt::Debug,
     B: Default + Send + 'static,
 {
-    type Request = <Router<Req, Rec, Mk> as svc::Service>::Request;
-    type Response = <Router<Req, Rec, Mk> as svc::Service>::Response;
+    type Request = <Router<Req, Rec, Stk> as svc::Service>::Request;
+    type Response = <Router<Req, Rec, Stk> as svc::Service>::Response;
     type Error = h2::Error;
-    type Future = ResponseFuture<<Router<Req, Rec, Mk> as svc::Service>::Future>;
+    type Future = ResponseFuture<<Router<Req, Rec, Stk> as svc::Service>::Future>;
 
     fn poll_ready(&mut self) -> Poll<(), Self::Error> {
         self.inner.poll_ready().map_err(|e| {
@@ -197,12 +197,12 @@ where
     }
 }
 
-impl<Req, Rec, Mk> Clone for Service<Req, Rec, Mk>
+impl<Req, Rec, Stk> Clone for Service<Req, Rec, Stk>
 where
     Rec: Recognize<Req>,
-    Mk: svc::Make<Rec::Target>,
-    Mk::Value: svc::Service<Request = Req>,
-    Router<Req, Rec, Mk>: Clone,
+    Stk: svc::Stack<Rec::Target>,
+    Stk::Value: svc::Service<Request = Req>,
+    Router<Req, Rec, Stk>: Clone,
 {
     fn clone(&self) -> Self {
         Self {

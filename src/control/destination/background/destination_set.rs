@@ -254,12 +254,12 @@ impl<T: HttpService<ResponseBody = RecvBody>> DestinationSet<T> {
     ) {
         let (update_str, update, addr) = match change {
             CacheChange::Insertion { key, value } => {
-                ("insert", Update::Make(key, value.clone()), key)
+                ("insert", Update::Stack(key, value.clone()), key)
             },
             CacheChange::Removal { key } => ("remove", Update::Remove(key), key),
             CacheChange::Modification { key, new_value } => (
                 "change metadata for",
-                Update::Make(key, new_value.clone()),
+                Update::Stack(key, new_value.clone()),
                 key,
             ),
         };

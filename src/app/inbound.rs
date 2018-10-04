@@ -77,9 +77,9 @@ pub fn orig_proto_downgrade<M>() -> LayerDowngrade<M> {
 pub struct LayerDowngrade<M>(PhantomData<fn() -> (M)>);
 
 #[derive(Clone, Debug)]
-pub struct MakeDowngrade<M>
+pub struct StackDowngrade<M>
 where
-    M: svc::Make<Source>,
+    M: svc::Stack<Source>,
 {
     inner: M,
 }
@@ -92,21 +92,21 @@ impl<M> Clone for LayerDowngrade<M> {
 
 impl<M, A, B> svc::Layer<Source, Source, M> for LayerDowngrade<M>
 where
-    M: svc::Make<Source>,
+    M: svc::Stack<Source>,
     M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
 {
-    type Value = <MakeDowngrade<M> as svc::Make<Source>>::Value;
-    type Error = <MakeDowngrade<M> as svc::Make<Source>>::Error;
-    type Make = MakeDowngrade<M>;
+    type Value = <StackDowngrade<M> as svc::Stack<Source>>::Value;
+    type Error = <StackDowngrade<M> as svc::Stack<Source>>::Error;
+    type Stack = StackDowngrade<M>;
 
-    fn bind(&self, inner: M) -> Self::Make {
-        MakeDowngrade { inner }
+    fn bind(&self, inner: M) -> Self::Stack {
+        StackDowngrade { inner }
     }
 }
 
-impl<M, A, B> svc::Make<Source> for MakeDowngrade<M>
+impl<M, A, B> svc::Stack<Source> for StackDowngrade<M>
 where
-    M: svc::Make<Source>,
+    M: svc::Stack<Source>,
     M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
 {
     type Value = orig_proto::Downgrade<M::Value>;
@@ -119,7 +119,7 @@ where
     }
 }
 
-// Makes it possible to build a client::Make<Endpoint>.
+// Stacks it possible to build a client::Stack<Endpoint>.
 impl From<Endpoint> for client::Config {
     fn from(ep: Endpoint) -> Self {
         let tls = Conditional::None(tls::ReasonForNoTls::InternalTraffic);

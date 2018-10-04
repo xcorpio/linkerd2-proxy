@@ -8,6 +8,6 @@ pub use self::stack::{
     watch,
     Either,
     Layer,
-    Make,
+    Stack,
     Shared,
 };

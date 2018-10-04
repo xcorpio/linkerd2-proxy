@@ -9,9 +9,9 @@ use svc;
 #[derive(Debug)]
 pub struct Layer<T, M>(PhantomData<fn() -> (T, M)>);
 
-/// A `Make` that builds a single-serving client for each request.
+/// A `Stack` that builds a single-serving client for each request.
 #[derive(Debug)]
-pub struct Make<T, M: super::Make<T>> {
+pub struct Stack<T, M: super::Stack<T>> {
     inner: M,
     _p: PhantomData<fn() -> T>,
 }
@@ -20,15 +20,15 @@ pub struct Make<T, M: super::Make<T>> {
 ///
 /// `Service` does not handle any underlying errors and it is expected that an
 /// instance will not be used after an error is returned.
-pub struct Service<T, M: super::Make<T>> {
+pub struct Service<T, M: super::Stack<T>> {
     // When `poll_ready` is called, the _next_ service to be used may be bound
     // ahead-of-time. This stack is used only to serve the next request to this
     // service.
     next: Option<M::Value>,
-    make: MakeValid<T, M>
+    make: StackValid<T, M>
 }
 
-struct MakeValid<T, M: super::Make<T>> {
+struct StackValid<T, M: super::Stack<T>> {
     target: T,
     make: M,
 }
@@ -38,7 +38,7 @@ struct MakeValid<T, M: super::Make<T>> {
 impl<T, N> Layer<T, N>
 where
     T: Clone,
-    N: super::Make<T> + Clone,
+    N: super::Stack<T> + Clone,
     N::Error: fmt::Debug,
 {
     pub fn new() -> Self {
@@ -49,7 +49,7 @@ where
 impl<T, N> Clone for Layer<T, N>
 where
     T: Clone,
-    N: super::Make<T> + Clone,
+    N: super::Stack<T> + Clone,
     N::Error: fmt::Debug,
 {
     fn clone(&self) -> Self {
@@ -60,39 +60,39 @@ where
 impl<T, N> super::Layer<T, T, N> for Layer<T, N>
 where
     T: Clone,
-    N: super::Make<T> + Clone,
+    N: super::Stack<T> + Clone,
     N::Error: fmt::Debug,
 {
-    type Value = <Make<T, N> as super::Make<T>>::Value;
-    type Error = <Make<T, N> as super::Make<T>>::Error;
-    type Make = Make<T, N>;
+    type Value = <Stack<T, N> as super::Stack<T>>::Value;
+    type Error = <Stack<T, N> as super::Stack<T>>::Error;
+    type Stack = Stack<T, N>;
 
-    fn bind(&self, inner: N) -> Self::Make {
-        Make {
+    fn bind(&self, inner: N) -> Self::Stack {
+        Stack {
             inner,
             _p: PhantomData,
         }
     }
 }
 
-// === Make ===
+// === Stack ===
 
-impl<T, N> Clone for Make<T, N>
+impl<T, N> Clone for Stack<T, N>
 where
     T: Clone,
-    N: super::Make<T> + Clone,
+    N: super::Stack<T> + Clone,
     N::Error: fmt::Debug,
 {
     fn clone(&self) -> Self {
         let inner = self.inner.clone();
-        Make { inner, _p: PhantomData }
+        Stack { inner, _p: PhantomData }
     }
 }
 
-impl<T, N> super::Make<T> for Make<T, N>
+impl<T, N> super::Stack<T> for Stack<T, N>
 where
     T: Clone,
-    N: super::Make<T> + Clone,
+    N: super::Stack<T> + Clone,
     N::Error: fmt::Debug,
 {
     type Value = Service<T, N>;
@@ -100,7 +100,7 @@ where
 
     fn make(&self, target: &T) -> Result<Self::Value, N::Error> {
         let next = self.inner.make(target)?;
-        let valid = MakeValid {
+        let valid = StackValid {
             make: self.inner.clone(),
             target: target.clone(),
         };
@@ -116,7 +116,7 @@ where
 impl<T, N> svc::Service for Service<T, N>
 where
     T: Clone,
-    N: super::Make<T> + Clone,
+    N: super::Stack<T> + Clone,
     N::Value: svc::Service,
     N::Error: fmt::Debug,
 {
@@ -147,11 +147,11 @@ where
     }
 }
 
-// === MakeValid ===
+// === StackValid ===
 
-impl<T, M> MakeValid<T, M>
+impl<T, M> StackValid<T, M>
 where
-    M: super::Make<T>,
+    M: super::Stack<T>,
     M::Error: fmt::Debug
 {
     fn make_valid(&self) -> M::Value {

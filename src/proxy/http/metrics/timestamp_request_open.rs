@@ -27,9 +27,9 @@ pub struct TimestampRequestOpen<S> {
 #[derive(Debug)]
 pub struct Layer<T, M>(::std::marker::PhantomData<fn() -> (T, M)>);
 
-/// Uses an `M`-typed `Make` to build a `TimestampRequestOpen` service.
+/// Uses an `M`-typed `Stack` to build a `TimestampRequestOpen` service.
 #[derive(Clone, Debug)]
-pub struct Make<M>(M);
+pub struct Stack<M>(M);
 
 // === impl TimestampRequsetOpen ===
 
@@ -68,23 +68,23 @@ impl<T, M> Clone for Layer<T, M> {
 
 impl<T, B, M> svc::Layer<T, T, M> for Layer<T, M>
 where
-    M: svc::Make<T>,
+    M: svc::Stack<T>,
     M::Value: svc::Service<Request = http::Request<B>>,
 {
-    type Value = <Make<M> as svc::Make<T>>::Value;
-    type Error = <Make<M> as svc::Make<T>>::Error;
-    type Make = Make<M>;
+    type Value = <Stack<M> as svc::Stack<T>>::Value;
+    type Error = <Stack<M> as svc::Stack<T>>::Error;
+    type Stack = Stack<M>;
 
-    fn bind(&self, next: M) -> Self::Make {
-        Make(next)
+    fn bind(&self, next: M) -> Self::Stack {
+        Stack(next)
     }
 }
 
-// === impl Make ===
+// === impl Stack ===
 
-impl<T, B, M> svc::Make<T> for Make<M>
+impl<T, B, M> svc::Stack<T> for Stack<M>
 where
-    M: svc::Make<T>,
+    M: svc::Stack<T>,
     M::Value: svc::Service<Request = http::Request<B>>,
 {
     type Value = TimestampRequestOpen<M::Value>;

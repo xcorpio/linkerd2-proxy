@@ -14,7 +14,7 @@ pub struct Layer<T, M> {
 }
 
 #[derive(Debug)]
-pub struct Make<T, M> {
+pub struct Stack<T, M> {
     max_in_flight: usize,
     inner: M,
     _p: PhantomData<fn() -> T>
@@ -38,17 +38,17 @@ impl<T, M> Clone for Layer<T, M> {
 impl<T, M> svc::Layer<T, T, M> for Layer<T, M>
 where
     T: fmt::Display + Clone + Send + Sync + 'static,
-    M: svc::Make<T>,
+    M: svc::Stack<T>,
     M::Value: svc::Service + Send + 'static,
     <M::Value as svc::Service>::Request: Send,
     <M::Value as svc::Service>::Future: Send,
 {
-    type Value = <Make<T, M> as svc::Make<T>>::Value;
-    type Error = <Make<T, M> as svc::Make<T>>::Error;
-    type Make = Make<T, M>;
+    type Value = <Stack<T, M> as svc::Stack<T>>::Value;
+    type Error = <Stack<T, M> as svc::Stack<T>>::Error;
+    type Stack = Stack<T, M>;
 
-    fn bind(&self, inner: M) -> Self::Make {
-        Make {
+    fn bind(&self, inner: M) -> Self::Stack {
+        Stack {
             inner,
             max_in_flight: self.max_in_flight,
             _p: PhantomData
@@ -56,7 +56,7 @@ where
     }
 }
 
-impl<T, M: Clone> Clone for Make<T, M> {
+impl<T, M: Clone> Clone for Stack<T, M> {
     fn clone(&self) -> Self {
         Self {
             max_in_flight: self.max_in_flight,
@@ -66,10 +66,10 @@ impl<T, M: Clone> Clone for Make<T, M> {
     }
 }
 
-impl<T, M> svc::Make<T> for Make<T, M>
+impl<T, M> svc::Stack<T> for Stack<T, M>
 where
     T: fmt::Display + Clone + Send + Sync + 'static,
-    M: svc::Make<T>,
+    M: svc::Stack<T>,
     M::Value: svc::Service + Send + 'static,
     <M::Value as svc::Service>::Request: Send,
     <M::Value as svc::Service>::Future: Send,

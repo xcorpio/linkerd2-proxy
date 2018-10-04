@@ -44,27 +44,27 @@ pub fn orig_proto_upgrade<M>() -> LayerUpgrade<M> {
 pub struct LayerUpgrade<M>(PhantomData<fn() -> (M)>);
 
 #[derive(Clone, Debug)]
-pub struct MakeUpgrade<M>
+pub struct StackUpgrade<M>
 where
-    M: svc::Make<Endpoint>,
+    M: svc::Stack<Endpoint>,
 {
     inner: M,
 }
 
 #[derive(Debug)]
-pub struct LayerTlsConfig<M: svc::Make<Endpoint>> {
+pub struct LayerTlsConfig<M: svc::Stack<Endpoint>> {
     watch: Watch<tls::ConditionalClientConfig>,
     _p: PhantomData<fn() -> (M)>,
 }
 
 #[derive(Clone, Debug)]
-pub struct MakeTlsConfig<M: svc::Make<Endpoint>> {
+pub struct StackTlsConfig<M: svc::Stack<Endpoint>> {
     watch: Watch<tls::ConditionalClientConfig>,
     inner: M,
 }
 
 #[derive(Clone, Debug)]
-pub struct MakeEndpointWithTls<M: svc::Make<Endpoint>> {
+pub struct StackEndpointWithTls<M: svc::Stack<Endpoint>> {
     endpoint: Endpoint,
     inner: M,
 }
@@ -120,7 +120,7 @@ where
         match self {
             Resolution::Name(ref dst, ref mut res) => match try_ready!(res.poll()) {
                 resolve::Update::Remove(addr) => Ok(Async::Ready(resolve::Update::Remove(addr))),
-                resolve::Update::Make(addr, metadata) => {
+                resolve::Update::Stack(addr, metadata) => {
                     // If the endpoint does not have TLS, note the reason.
                     // Otherwise, indicate that we don't (yet) have a TLS
                     // config. This value may be changed by a stack layer that
@@ -135,7 +135,7 @@ where
                         metadata,
                         _p: (),
                     };
-                    Ok(Async::Ready(resolve::Update::Make(addr, ep)))
+                    Ok(Async::Ready(resolve::Update::Stack(addr, ep)))
                 }
             },
             Resolution::Addr(ref dst, ref mut addr) => match addr.take() {
@@ -147,7 +147,7 @@ where
                         metadata: Metadata::none(tls),
                         _p: (),
                     };
-                    let up = resolve::Update::Make(addr, ep);
+                    let up = resolve::Update::Stack(addr, ep);
                     Ok(Async::Ready(up))
                 }
                 None => Ok(Async::NotReady),
@@ -164,21 +164,21 @@ impl<M> Clone for LayerUpgrade<M> {
 
 impl<M, A, B> svc::Layer<Endpoint, Endpoint, M> for LayerUpgrade<M>
 where
-    M: svc::Make<Endpoint>,
+    M: svc::Stack<Endpoint>,
     M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
 {
-    type Value = <MakeUpgrade<M> as svc::Make<Endpoint>>::Value;
-    type Error = <MakeUpgrade<M> as svc::Make<Endpoint>>::Error;
-    type Make = MakeUpgrade<M>;
+    type Value = <StackUpgrade<M> as svc::Stack<Endpoint>>::Value;
+    type Error = <StackUpgrade<M> as svc::Stack<Endpoint>>::Error;
+    type Stack = StackUpgrade<M>;
 
-    fn bind(&self, inner: M) -> Self::Make {
-        MakeUpgrade { inner }
+    fn bind(&self, inner: M) -> Self::Stack {
+        StackUpgrade { inner }
     }
 }
 
-impl<M, A, B> svc::Make<Endpoint> for MakeUpgrade<M>
+impl<M, A, B> svc::Stack<Endpoint> for StackUpgrade<M>
 where
-    M: svc::Make<Endpoint>,
+    M: svc::Stack<Endpoint>,
     M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
 {
     type Value = svc::Either<orig_proto::Upgrade<M::Value>, M::Value>;
@@ -212,7 +212,7 @@ fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     }
 }
 
-// Makes it possible to build a client::Make<Endpoint>.
+// Stacks it possible to build a client::Stack<Endpoint>.
 impl From<Endpoint> for client::Config {
     fn from(ep: Endpoint) -> Self {
         client::Config::new(ep.connect, ep.dst.settings)
@@ -231,7 +231,7 @@ impl From<Endpoint> for tap::Endpoint {
 
 impl<M> LayerTlsConfig<M>
 where
-    M: svc::Make<Endpoint> + Clone,
+    M: svc::Stack<Endpoint> + Clone,
 {
     pub fn new(watch: Watch<tls::ConditionalClientConfig>) -> Self {
         LayerTlsConfig {
@@ -243,7 +243,7 @@ where
 
 impl<M> Clone for LayerTlsConfig<M>
 where
-    M: svc::Make<Endpoint> + Clone,
+    M: svc::Stack<Endpoint> + Clone,
 {
     fn clone(&self) -> Self {
         Self::new(self.watch.clone())
@@ -252,29 +252,29 @@ where
 
 impl<M> svc::Layer<Endpoint, Endpoint, M> for LayerTlsConfig<M>
 where
-    M: svc::Make<Endpoint> + Clone,
+    M: svc::Stack<Endpoint> + Clone,
 {
-    type Value = <MakeTlsConfig<M> as svc::Make<Endpoint>>::Value;
-    type Error = <MakeTlsConfig<M> as svc::Make<Endpoint>>::Error;
-    type Make = MakeTlsConfig<M>;
+    type Value = <StackTlsConfig<M> as svc::Stack<Endpoint>>::Value;
+    type Error = <StackTlsConfig<M> as svc::Stack<Endpoint>>::Error;
+    type Stack = StackTlsConfig<M>;
 
-    fn bind(&self, inner: M) -> Self::Make {
-        MakeTlsConfig {
+    fn bind(&self, inner: M) -> Self::Stack {
+        StackTlsConfig {
             inner,
             watch: self.watch.clone(),
         }
     }
 }
 
-impl<M> svc::Make<Endpoint> for MakeTlsConfig<M>
+impl<M> svc::Stack<Endpoint> for StackTlsConfig<M>
 where
-    M: svc::Make<Endpoint> + Clone,
+    M: svc::Stack<Endpoint> + Clone,
 {
-    type Value = svc::watch::Service<tls::ConditionalClientConfig, MakeEndpointWithTls<M>>;
+    type Value = svc::watch::Service<tls::ConditionalClientConfig, StackEndpointWithTls<M>>;
     type Error = M::Error;
 
     fn make(&self, endpoint: &Endpoint) -> Result<Self::Value, Self::Error> {
-        let inner = MakeEndpointWithTls {
+        let inner = StackEndpointWithTls {
             endpoint: endpoint.clone(),
             inner: self.inner.clone(),
         };
@@ -282,9 +282,9 @@ where
     }
 }
 
-impl<M> svc::Make<tls::ConditionalClientConfig> for MakeEndpointWithTls<M>
+impl<M> svc::Stack<tls::ConditionalClientConfig> for StackEndpointWithTls<M>
 where
-    M: svc::Make<Endpoint>,
+    M: svc::Stack<Endpoint>,
 {
     type Value = M::Value;
     type Error = M::Error;

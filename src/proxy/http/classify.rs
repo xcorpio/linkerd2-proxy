@@ -55,12 +55,12 @@ pub trait ClassifyResponse {
 }
 
 /// A `Stack` module that adds a `ClassifyResponse` instance to each
-pub struct Layer<C: Classify, T, M: svc::Make<T>> {
+pub struct Layer<C: Classify, T, M: svc::Stack<T>> {
     classify: C,
     _p: PhantomData<fn() -> (T, M)>,
 }
 
-pub struct Make<C: Classify, T, M: svc::Make<T>> {
+pub struct Stack<C: Classify, T, M: svc::Stack<T>> {
     classify: C,
     inner: M,
     _p: PhantomData<fn() -> T>,
@@ -74,7 +74,7 @@ pub struct ExtendRequest<C: Classify, S: svc::Service> {
 
 impl<C, T, M, A, B> Layer<C, T, M>
 where
-    M: svc::Make<T>,
+    M: svc::Stack<T>,
     M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
     C: Classify + Clone,
 {
@@ -88,7 +88,7 @@ where
 
 impl<C, T, M, A, B> Clone for Layer<C, T, M>
 where
-    M: svc::Make<T>,
+    M: svc::Stack<T>,
     M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
     C: Classify + Clone,
 {
@@ -99,16 +99,16 @@ where
 
 impl<T, M, A, B, C> svc::Layer<T, T, M> for Layer<C, T, M>
 where
-    M: svc::Make<T>,
+    M: svc::Stack<T>,
     M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
     C: Classify + Clone,
 {
-    type Value = <Make<C, T, M> as svc::Make<T>>::Value;
+    type Value = <Stack<C, T, M> as svc::Stack<T>>::Value;
     type Error = M::Error;
-    type Make = Make<C, T, M>;
+    type Stack = Stack<C, T, M>;
 
-    fn bind(&self, inner: M) -> Self::Make {
-        Make {
+    fn bind(&self, inner: M) -> Self::Stack {
+        Stack {
             inner,
             classify: self.classify.clone(),
             _p: PhantomData,
@@ -116,11 +116,11 @@ where
     }
 }
 
-// ===== impl Make =====
+// ===== impl Stack =====
 
-impl<C, T, M, A, B> Clone for Make<C, T, M>
+impl<C, T, M, A, B> Clone for Stack<C, T, M>
 where
-    M: svc::Make<T> + Clone,
+    M: svc::Stack<T> + Clone,
     M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
     C: Classify + Clone,
 {
@@ -133,9 +133,9 @@ where
     }
 }
 
-impl<T, M, A, B, C> svc::Make<T> for Make<C, T, M>
+impl<T, M, A, B, C> svc::Stack<T> for Stack<C, T, M>
 where
-    M: svc::Make<T>,
+    M: svc::Stack<T>,
     M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
     C: Classify + Clone,
 {

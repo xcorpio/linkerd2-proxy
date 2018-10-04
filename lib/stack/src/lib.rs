@@ -39,15 +39,15 @@ pub mod when;
 pub use self::either::Either;
 pub use self::optional::Optional;
 pub use self::layer::Layer;
-pub use self::make_new_service::MakeNewService;
+pub use self::make_new_service::StackNewService;
 
-pub trait Make<Target> {
+pub trait Stack<Target> {
     type Value;
     type Error;
 
     fn make(&self, t: &Target) -> Result<Self::Value, Self::Error>;
 
-    fn push<U, L>(self, layer: L) -> L::Make
+    fn push<U, L>(self, layer: L) -> L::Stack
     where
         L: Layer<U, Target, Self>,
         Self: Sized,
@@ -72,7 +72,7 @@ impl<T, V: Clone> Clone for Shared<T, V> {
     }
 }
 
-impl<T, V: Clone> Make<T> for Shared<T, V> {
+impl<T, V: Clone> Stack<T> for Shared<T, V> {
     type Value = V;
     type Error = ();
 

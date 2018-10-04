@@ -25,14 +25,14 @@ pub struct Layer<T, R>  {
 }
 
 #[derive(Clone, Debug)]
-pub struct Make<T, R, M> {
+pub struct Stack<T, R, M> {
     decay: Duration,
     resolve: R,
     inner: M,
     _p: PhantomData<fn() -> T>,
 }
 
-pub struct Discover<R: Resolution, M: svc::Make<R::Endpoint>> {
+pub struct Discover<R: Resolution, M: svc::Stack<R::Endpoint>> {
     resolution: R,
     make: M,
 }
@@ -64,7 +64,7 @@ impl<T, R, M, A, B> svc::Layer<T, R::Endpoint, M> for Layer<T, R>
 where
     R: Resolve<T> + Clone,
     R::Endpoint: fmt::Debug,
-    M: svc::Make<R::Endpoint> + Clone,
+    M: svc::Stack<R::Endpoint> + Clone,
     M::Value: svc::Service<
         Request = http::Request<A>,
         Response = http::Response<B>,
@@ -72,12 +72,12 @@ where
     A: Body,
     B: Body,
 {
-    type Value = <Make<T, R, M> as svc::Make<T>>::Value;
-    type Error = <Make<T, R, M> as svc::Make<T>>::Error;
-    type Make = Make<T, R, M>;
+    type Value = <Stack<T, R, M> as svc::Stack<T>>::Value;
+    type Error = <Stack<T, R, M> as svc::Stack<T>>::Error;
+    type Stack = Stack<T, R, M>;
 
-    fn bind(&self, inner: M) -> Self::Make {
-        Make {
+    fn bind(&self, inner: M) -> Self::Stack {
+        Stack {
             decay: self.decay,
             resolve: self.resolve.clone(),
             inner,
@@ -86,11 +86,11 @@ where
     }
 }
 
-impl<T, R, M, A, B> svc::Make<T> for Make<T, R, M>
+impl<T, R, M, A, B> svc::Stack<T> for Stack<T, R, M>
 where
     R: Resolve<T>,
     R::Endpoint: fmt::Debug,
-    M: svc::Make<R::Endpoint> + Clone,
+    M: svc::Stack<R::Endpoint> + Clone,
     M::Value: svc::Service<
         Request = http::Request<A>,
         Response = http::Response<B>,
@@ -120,7 +120,7 @@ impl<R, M> TowerDiscover for Discover<R, M>
 where
     R: Resolution,
     R::Endpoint: fmt::Debug,
-    M: svc::Make<R::Endpoint>,
+    M: svc::Stack<R::Endpoint>,
     M::Value: svc::Service,
 {
     type Key = SocketAddr;
@@ -137,12 +137,12 @@ where
             let up = try_ready!(self.resolution.poll().map_err(Error::Resolve));
             trace!("watch: {:?}", up);
             match up {
-                Update::Make(addr, target) => {
+                Update::Stack(addr, target) => {
                     // We expect the load balancer to handle duplicate inserts
                     // by replacing the old endpoint with the new one, so
                     // insertions of new endpoints and metadata changes for
                     // existing ones can be handled in the same way.
-                    let svc = self.make.make(&target).map_err(Error::Make)?;
+                    let svc = self.make.make(&target).map_err(Error::Stack)?;
                     return Ok(Async::Ready(Change::Insert(addr, svc)));
                 },
                 Update::Remove(addr) => {
@@ -156,7 +156,7 @@ where
 #[derive(Debug)]
 pub enum Error<R, M> {
     Resolve(R),
-    Make(M),
+    Stack(M),
 }
 
 impl<M> fmt::Display for Error<(), M>
@@ -166,7 +166,7 @@ where
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Error::Resolve(()) => unreachable!("resolution must succeed"),
-            Error::Make(e) => e.fmt(f),
+            Error::Stack(e) => e.fmt(f),
         }
     }
 }

@@ -19,7 +19,7 @@ pub struct Layer<T, M, K, C>
 where
     T: Clone + Debug,
     K: Clone + Hash + Eq + From<T>,
-    M: svc::Make<T>,
+    M: svc::Stack<T>,
     M::Value: svc::Service,
     C: Classify<Error = h2::Error> + Clone,
     C::Class: Hash + Eq,
@@ -31,11 +31,11 @@ where
 
 /// Wraps services to record metrics.
 #[derive(Debug)]
-pub struct Make<T, M, K, C>
+pub struct Stack<T, M, K, C>
 where
     T: Clone + Debug,
     K: Clone + Hash + Eq + From<T>,
-    M: svc::Make<T>,
+    M: svc::Stack<T>,
     M::Value: svc::Service,
     C: Classify<Error = h2::Error> + Clone,
     C::Class: Hash + Eq,
@@ -96,13 +96,13 @@ where
     inner: B,
 }
 
-// ===== impl Make =====
+// ===== impl Stack =====
 
 impl<T, M, K, C, A, B> Layer<T, M, K, C>
 where
     T: Clone + Debug,
     K: Clone + Hash + Eq + From<T>,
-    M: svc::Make<T>,
+    M: svc::Stack<T>,
     M::Value: svc::Service<
         Request = http::Request<RequestBody<A, C::Class>>,
         Response = http::Response<B>,
@@ -126,7 +126,7 @@ impl<T, M, K, C, A, B> Clone for Layer<T, M, K, C>
 where
     T: Clone + Debug,
     K: Clone + Hash + Eq + From<T>,
-    M: svc::Make<T>,
+    M: svc::Stack<T>,
     M::Value: svc::Service<
         Request = http::Request<RequestBody<A, C::Class>>,
         Response = http::Response<B>,
@@ -146,7 +146,7 @@ impl<T, M, K, C, A, B> svc::Layer<T, T, M> for Layer<T, M, K, C>
 where
     T: Clone + Debug,
     K: Clone + Hash + Eq + From<T>,
-    M: svc::Make<T>,
+    M: svc::Stack<T>,
     M::Value: svc::Service<
         Request = http::Request<RequestBody<A, C::Class>>,
         Response = http::Response<B>,
@@ -157,12 +157,12 @@ where
     C::ClassifyResponse: Debug + Send + Sync + 'static,
     C::Class: Hash + Eq,
 {
-    type Value = <Make<T, M, K, C> as svc::Make<T>>::Value;
+    type Value = <Stack<T, M, K, C> as svc::Stack<T>>::Value;
     type Error = M::Error;
-    type Make = Make<T, M, K, C>;
+    type Stack = Stack<T, M, K, C>;
 
-    fn bind(&self, inner: M) -> Self::Make {
-        Make {
+    fn bind(&self, inner: M) -> Self::Stack {
+        Stack {
             classify: self.classify.clone(),
             registry: self.registry.clone(),
             inner,
@@ -171,13 +171,13 @@ where
     }
 }
 
-// ===== impl Make =====
+// ===== impl Stack =====
 
-impl<T, M, K, C, A, B> Clone for Make<T, M, K, C>
+impl<T, M, K, C, A, B> Clone for Stack<T, M, K, C>
 where
     T: Clone + Debug,
     K: Clone + Hash + Eq + From<T>,
-    M: svc::Make<T> + Clone,
+    M: svc::Stack<T> + Clone,
     M::Value: svc::Service<
         Request = http::Request<RequestBody<A, C::Class>>,
         Response = http::Response<B>,
@@ -199,11 +199,11 @@ where
 }
 
 
-impl<T, M, K, C, A, B> svc::Make<T> for Make<T, M, K, C>
+impl<T, M, K, C, A, B> svc::Stack<T> for Stack<T, M, K, C>
 where
     T: Clone + Debug,
     K: Clone + Hash + Eq + From<T>,
-    M: svc::Make<T>,
+    M: svc::Stack<T>,
     M::Value: svc::Service<
         Request = http::Request<RequestBody<A, C::Class>>,
         Response = http::Response<B>,

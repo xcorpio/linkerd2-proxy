@@ -16,7 +16,7 @@ use svc;
 use transport::{connection, tls};
 
 #[derive(Debug, Clone)]
-pub struct Make {}
+pub struct Stack {}
 
 #[derive(Clone, Debug)]
 pub struct Target {
@@ -141,15 +141,15 @@ impl Connect for Target {
     }
 }
 
-// ===== impl Make =====
+// ===== impl Stack =====
 
-impl Make {
+impl Stack {
     pub fn new() -> Self {
         Self {}
     }
 }
 
-impl<T> svc::Make<T> for Make
+impl<T> svc::Stack<T> for Stack
 where
     T: Clone,
     Target: From<T>,
