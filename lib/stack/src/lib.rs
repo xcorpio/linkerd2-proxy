@@ -29,38 +29,46 @@ extern crate tower_service as svc;
 use std::marker::PhantomData;
 
 pub mod either;
-pub mod make_new_service;
-pub mod make_per_request;
 pub mod optional;
 pub mod layer;
+pub mod stack_new_service;
+pub mod stack_per_request;
 pub mod watch;
 pub mod when;
 
 pub use self::either::Either;
 pub use self::optional::Optional;
 pub use self::layer::Layer;
-pub use self::make_new_service::StackNewService;
+pub use self::stack_new_service::StackNewService;
 
-pub trait Stack<Target> {
+/// A composable builder.
+///
+/// A `Stack` attempts to build a `Value` given a `T`-typed "target".
+///
+/// `Stack`s may be wrapped by `Layer`s to
+pub trait Stack<T> {
     type Value;
+
+    /// Indicates that a given `T` could not be used to produce a `Value`.
     type Error;
 
-    fn make(&self, t: &Target) -> Result<Self::Value, Self::Error>;
+    fn make(&self, target: &T) -> Result<Self::Value, Self::Error>;
 
+    /// Wraps this `Stack` with an `L`-typed `Layer` to produce a `Stack<U>`.
     fn push<U, L>(self, layer: L) -> L::Stack
     where
-        L: Layer<U, Target, Self>,
+        L: Layer<U, T, Self>,
         Self: Sized,
     {
         layer.bind(self)
     }
 }
 
-
+/// Implements `Stack<T>` for any `T` by cloning a `V`-typed value.
 #[derive(Debug)]
-pub struct Shared<T, V>(V, PhantomData<fn() -> T>);
+pub struct Shared<T, V: Clone>(V, PhantomData<fn() -> T>);
 
-impl<T, V: Clone> Shared<T,V> {
+impl<T, V: Clone> Shared<T, V> {
     pub fn new(v: V) -> Self {
         Shared(v, PhantomData)
     }

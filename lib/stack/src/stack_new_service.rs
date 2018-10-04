@@ -3,6 +3,7 @@ use svc;
 
 use super::Stack;
 
+/// Implements `NewService` using a `Stack` of `Service`.
 #[derive(Clone, Debug)]
 pub struct StackNewService<T, M: Stack<T>> {
     make: M,

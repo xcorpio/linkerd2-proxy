@@ -1,30 +1,21 @@
 use std::marker::PhantomData;
 
+// A `Layer ` that optionally wraps an inner `Stack`
 #[derive(Debug)]
 pub struct Optional<T, N, L> {
     inner: Option<L>,
     _p: PhantomData<fn() -> (T, N)>
 }
 
-impl<T, N, L> Optional<T, N, L>
+// === impl Optional ===
+
+impl<T, N, L> From<Option<L>> for Optional<T, N, L>
 where
     N: super::Stack<T>,
     L: super::Layer<T, T, N, Value = N::Value, Error = N::Error>,
 {
-    pub fn some(layer: L) -> Self {
-        Some(layer).into()
-    }
-
-    pub fn none() -> Self {
-        None.into()
-    }
-
-    pub fn when<F: FnOnce() -> L>(predicate: bool, mk: F) -> Self {
-        if predicate {
-            Self::some(mk())
-        } else {
-            Self::none()
-        }
+    fn from(inner: Option<L>) -> Self {
+        Optional { inner, _p: PhantomData }
     }
 }
 
@@ -42,15 +33,5 @@ where
             None => super::Either::A(next),
             Some(ref m) => super::Either::B(m.bind(next)),
         }
-    }
-}
-
-impl<T, N, L> From<Option<L>> for Optional<T, N, L>
-where
-    N: super::Stack<T>,
-    L: super::Layer<T, T, N, Value = N::Value, Error = N::Error>,
-{
-    fn from(inner: Option<L>) -> Self {
-        Optional { inner, _p: PhantomData }
     }
 }

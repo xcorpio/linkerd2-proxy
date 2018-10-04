@@ -3,7 +3,7 @@ use futures::Poll;
 
 use svc;
 
-/// A client that may be one of two concrete types.
+/// Describes two alternate `Layer`s, `Stacks`s or `Service`s.
 #[derive(Debug)]
 pub enum Either<A, B> {
     A(A),

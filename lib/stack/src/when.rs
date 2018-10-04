@@ -1,9 +1,7 @@
 use std::marker::PhantomData;
 
-pub trait Predicate<T> {
-    fn apply(&self, t: &T) -> bool;
-}
-
+/// Produces `Stack`s that include an `L`-typed layer only when a `P`-typed
+/// `Predicate` evaluates to `true` for the stack's target.
 pub struct Layer<T, P, N, L>
 where
     P: Predicate<T> + Clone,
@@ -15,6 +13,15 @@ where
     _p: PhantomData<(T, N, L)>,
 }
 
+/// A condition that determines whether a layer should be applied for a `T`-typed
+/// target.
+pub trait Predicate<T> {
+    /// Returns true iff a conditional layer should be applied for this target.
+    fn affirm(&self, target: &T) -> bool;
+}
+
+/// When the `P`-typed predicate applies to a target, the `L`
+/// `Predicate` evaluates to `true` for the stack's target.
 pub struct Stack<T, P, N, L>
 where
     P: Predicate<T> + Clone,
@@ -26,6 +33,8 @@ where
     layer: L,
     _p: PhantomData<T>,
 }
+
+// === impl Layer ===
 
 impl<T, P, N, L> Layer<T, P, N, L>
 where
@@ -76,6 +85,8 @@ where
     }
 }
 
+// === impl Stack ===
+
 impl<T, P, N, L> Clone for Stack<T, P, N, L>
 where
     P: Predicate<T> + Clone,
@@ -104,13 +115,11 @@ where
     type Error = N::Error;
 
     fn make(&self, target: &T) -> Result<Self::Value, Self::Error> {
-        if !self.predicate.apply(&target) {
-            debug!("predicate does not apply");
+        if !self.predicate.affirm(&target) {
             self.next
                 .make(&target)
                 .map(super::Either::A)
         } else {
-            debug!("predicate applies");
             self.layer
                 .bind(self.next.clone())
                 .make(&target)
@@ -119,8 +128,10 @@ where
     }
 }
 
+// === impl Predicate<T> for Fn(&T) -> bool ===
+
 impl<T, F: Fn(&T) -> bool> Predicate<T> for F {
-    fn apply(&self, t: &T) -> bool {
+    fn affirm(&self, t: &T) -> bool {
         (self)(t)
     }
 }

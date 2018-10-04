@@ -6,18 +6,20 @@ use std::marker::PhantomData;
 
 use svc;
 
+/// A `Layer` produces a `Service` `Stack` that creates a new service for each
+/// request.
 #[derive(Debug)]
 pub struct Layer<T, M>(PhantomData<fn() -> (T, M)>);
 
-/// A `Stack` that builds a single-serving client for each request.
+/// A `Stack` that builds a new `Service` for each request it serves.
 #[derive(Debug)]
 pub struct Stack<T, M: super::Stack<T>> {
     inner: M,
     _p: PhantomData<fn() -> T>,
 }
 
-/// A `Service` that optionally uses a
-///
+/// A `Service` that uses a new inner service for each request.
+ ///
 /// `Service` does not handle any underlying errors and it is expected that an
 /// instance will not be used after an error is returned.
 pub struct Service<T, M: super::Stack<T>> {
@@ -28,6 +30,8 @@ pub struct Service<T, M: super::Stack<T>> {
     make: StackValid<T, M>
 }
 
+/// A helper that asserts `M` can successfully build services for a specific
+/// value of `T`.
 struct StackValid<T, M: super::Stack<T>> {
     target: T,
     make: M,

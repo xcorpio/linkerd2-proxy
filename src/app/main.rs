@@ -240,7 +240,7 @@ where
             let source_layer =
                 timestamp_request_open::Layer::new().and_then(insert_target::Layer::new());
 
-            // `normalize_uri` and `make_per_request` are applied on the stack
+            // `normalize_uri` and `stack_per_request` are applied on the stack
             // selectively. For HTTP/2 stacks, for instance, neither service will be
             // employed.
             //
@@ -272,7 +272,7 @@ where
                     |ep: &outbound::Endpoint| {
                         !ep.dst.settings.is_http2() && !ep.dst.settings.can_reuse_clients()
                     },
-                    svc::make_per_request::Layer::new(),
+                    svc::stack_per_request::Layer::new(),
                 );
 
             let capacity = config.outbound_router_capacity;
@@ -323,7 +323,7 @@ where
             // If there is no `SO_ORIGINAL_DST` for an inbound socket,
             // `default_fwd_addr` may be used.
             //
-            // `normalize_uri` and `make_per_request` are applied on the stack
+            // `normalize_uri` and `stack_per_request` are applied on the stack
             // selectively. For HTTP/2 stacks, for instance, neither service will be
             // employed.
             let default_fwd_addr = config.inbound_forward.map(|a| a.into());
@@ -345,7 +345,7 @@ where
                     |ep: &inbound::Endpoint| {
                         !ep.settings.is_http2() && !ep.settings.can_reuse_clients()
                     },
-                    svc::make_per_request::Layer::new(),
+                    svc::stack_per_request::Layer::new(),
                 );
 
             // Build a router using the above policy
