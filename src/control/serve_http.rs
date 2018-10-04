@@ -3,11 +3,11 @@ use hyper::{Body, server::conn::Http, service::Service};
 use tokio::executor::current_thread::TaskExecutor;
 
 use task;
-use transport::MakePort;
+use transport::BoundPort;
 
 pub fn serve_http<S>(
     name: &'static str,
-    bound_port: MakePort,
+    bound_port: BoundPort,
     service: S,
 ) -> impl Future<Item = (), Error = ()>
 where

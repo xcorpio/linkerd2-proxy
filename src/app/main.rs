@@ -29,7 +29,7 @@ use svc::{self, Layer as _Layer, Make as _Make};
 use tap;
 use task;
 use telemetry;
-use transport::{self, connect, tls, Connection, GetOriginalDst, MakePort};
+use transport::{self, connect, tls, Connection, GetOriginalDst, BoundPort};
 use Conditional;
 
 use super::config::Config;
@@ -52,10 +52,10 @@ pub struct Main<G> {
 
     start_time: SystemTime,
 
-    control_listener: MakePort,
-    inbound_listener: MakePort,
-    outbound_listener: MakePort,
-    metrics_listener: MakePort,
+    control_listener: BoundPort,
+    inbound_listener: BoundPort,
+    outbound_listener: BoundPort,
+    metrics_listener: BoundPort,
 
     get_original_dst: G,
 
@@ -75,7 +75,7 @@ where
         let tls_config_watch = tls::ConfigWatch::new(config.tls_settings.clone());
 
         // TODO: Serve over TLS.
-        let control_listener = MakePort::new(
+        let control_listener = BoundPort::new(
             config.control_listener.addr,
             Conditional::None(tls::ReasonForNoIdentity::NotImplementedForTap.into()),
         ).expect("controller listener bind");
@@ -90,10 +90,10 @@ where
                         config: tls_server_config.clone(),
                     })
             });
-            MakePort::new(config.inbound_listener.addr, tls).expect("public listener bind")
+            BoundPort::new(config.inbound_listener.addr, tls).expect("public listener bind")
         };
 
-        let outbound_listener = MakePort::new(
+        let outbound_listener = BoundPort::new(
             config.outbound_listener.addr,
             Conditional::None(tls::ReasonForNoTls::InternalTraffic),
         ).expect("private listener bind");
@@ -101,7 +101,7 @@ where
         let runtime = runtime.into();
 
         // TODO: Serve over TLS.
-        let metrics_listener = MakePort::new(
+        let metrics_listener = BoundPort::new(
             config.metrics_listener.addr,
             Conditional::None(tls::ReasonForNoIdentity::NotImplementedForMetrics.into()),
         ).expect("metrics listener bind");
@@ -424,7 +424,7 @@ where
 
 fn serve<A, C, R, B, G>(
     proxy_name: &'static str,
-    bound_port: MakePort,
+    bound_port: BoundPort,
     accept: A,
     connect: C,
     router: R,
@@ -524,7 +524,7 @@ where
 }
 
 fn serve_tap<N, B>(
-    bound_port: MakePort,
+    bound_port: BoundPort,
     new_service: N,
 ) -> impl Future<Item = (), Error = ()> + 'static
 where
