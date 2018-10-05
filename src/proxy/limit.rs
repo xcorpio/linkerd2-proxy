@@ -7,12 +7,14 @@ pub use self::tower_in_flight_limit::InFlightLimit;
 
 use svc;
 
+/// Wraps `Service` stacks with an `InFlightLimit`.
 #[derive(Debug)]
 pub struct Layer<T, M> {
     max_in_flight: usize,
     _p: PhantomData<fn() -> (T, M)>
 }
 
+/// Produces `Services` wrapped with an `InFlightLimit`.
 #[derive(Debug)]
 pub struct Stack<T, M> {
     max_in_flight: usize,

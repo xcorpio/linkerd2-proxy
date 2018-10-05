@@ -8,19 +8,23 @@ pub use self::tower_buffer::{Buffer, SpawnError};
 use logging;
 use svc;
 
+/// Wraps `Service` stacks with a `Buffer`.
 #[derive(Debug)]
 pub struct Layer<T, M>(PhantomData<fn() -> (T, M)>);
 
+/// Produces `Service`s wrapped with a `Buffer`
 #[derive(Debug)]
 pub struct Stack<T, M> {
     inner: M,
-    _p: PhantomData<fn() -> T>
+    _p: PhantomData<fn() -> T>,
 }
 
 pub enum Error<M, S> {
     Stack(M),
     Spawn(SpawnError<S>),
 }
+
+// === impl Layer ===
 
 impl<T, M> Layer<T, M> {
     pub fn new() -> Self {
@@ -49,10 +53,12 @@ where
     fn bind(&self, inner: M) -> Self::Stack {
         Stack {
             inner,
-            _p: PhantomData
+            _p: PhantomData,
         }
     }
 }
+
+// === impl Stack ===
 
 impl<T, M: Clone> Clone for Stack<T, M> {
     fn clone(&self) -> Self {
@@ -81,6 +87,8 @@ where
     }
 }
 
+// === impl Error ===
+
 impl<M: fmt::Debug, S> fmt::Debug for Error<M, S> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -89,4 +97,3 @@ impl<M: fmt::Debug, S> fmt::Debug for Error<M, S> {
         }
     }
 }
-

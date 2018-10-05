@@ -11,19 +11,22 @@ use std::time::Duration;
 use tower_h2::Body;
 
 pub use self::tower_balance::{choose::PowerOfTwoChoices, load::WithPeakEwma, Balance};
-use self::tower_discover::{Change, Discover as TowerDiscover};
+use self::tower_discover::{Change, Discover};
 pub use self::tower_h2_balance::{PendingUntilFirstData, PendingUntilFirstDataBody};
 
 use proxy::resolve::{Resolve, Resolution, Update};
 use svc;
 
+/// Configures a stack to resolve `T` typed targets to balance requests over
+/// `M`-typed endpoint stacks.
 #[derive(Clone, Debug)]
-pub struct Layer<T, R>  {
+pub struct Layer<T, R, M>  {
     decay: Duration,
     resolve: R,
-    _p: PhantomData<fn() -> T>,
+    _p: PhantomData<fn() -> (T, M)>,
 }
 
+/// Resolves `T` typed targets to balance requests over `M`-typed endpoint stacks.
 #[derive(Clone, Debug)]
 pub struct Stack<T, R, M> {
     decay: Duration,
@@ -32,15 +35,26 @@ pub struct Stack<T, R, M> {
     _p: PhantomData<fn() -> T>,
 }
 
-pub struct Discover<R: Resolution, M: svc::Stack<R::Endpoint>> {
+/// Observes an `R`-typed resolution stream, using an `M`-typed endpoint stack to
+/// build a service for each endpoint.
+pub struct Service<R: Resolution, M: svc::Stack<R::Endpoint>> {
     resolution: R,
     make: M,
 }
 
-impl<T, R> Layer<T, R>
+// === impl Layer ===
+
+impl<T, R, M, A, B> Layer<T, R, M>
 where
     R: Resolve<T> + Clone,
     R::Endpoint: fmt::Debug,
+    M: svc::Stack<R::Endpoint> + Clone,
+    M::Value: svc::Service<
+        Request = http::Request<A>,
+        Response = http::Response<B>,
+    >,
+    A: Body,
+    B: Body,
 {
     pub const DEFAULT_DECAY: Duration = Duration::from_secs(10);
 
@@ -60,7 +74,7 @@ where
     // }
 }
 
-impl<T, R, M, A, B> svc::Layer<T, R::Endpoint, M> for Layer<T, R>
+impl<T, R, M, A, B> svc::Layer<T, R::Endpoint, M> for Layer<T, R, M>
 where
     R: Resolve<T> + Clone,
     R::Endpoint: fmt::Debug,
@@ -86,6 +100,8 @@ where
     }
 }
 
+// === impl Stack ===
+
 impl<T, R, M, A, B> svc::Stack<T> for Stack<T, R, M>
 where
     R: Resolve<T>,
@@ -99,13 +115,13 @@ where
     B: Body,
 {
     type Value = Balance<
-        WithPeakEwma<Discover<R::Resolution, M>, PendingUntilFirstData>,
+        WithPeakEwma<Service<R::Resolution, M>, PendingUntilFirstData>,
         PowerOfTwoChoices,
     >;
     type Error = M::Error;
 
     fn make(&self, target: &T) -> Result<Self::Value, Self::Error> {
-        let discover = Discover {
+        let discover = Service {
             resolution: self.resolve.resolve(&target),
             make: self.inner.clone(),
         };
@@ -116,7 +132,9 @@ where
     }
 }
 
-impl<R, M> TowerDiscover for Discover<R, M>
+// === impl Service ===
+
+impl<R, M> Discover for Service<R, M>
 where
     R: Resolution,
     R::Endpoint: fmt::Debug,
@@ -137,7 +155,7 @@ where
             let up = try_ready!(self.resolution.poll().map_err(Error::Resolve));
             trace!("watch: {:?}", up);
             match up {
-                Update::Stack(addr, target) => {
+                Update::Add(addr, target) => {
                     // We expect the load balancer to handle duplicate inserts
                     // by replacing the old endpoint with the new one, so
                     // insertions of new endpoints and metadata changes for
@@ -152,6 +170,8 @@ where
         }
     }
 }
+
+// === impl Error ===
 
 #[derive(Debug)]
 pub enum Error<R, M> {

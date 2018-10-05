@@ -1,3 +1,5 @@
+//! Configures and runs the linkerd2 service sidecar proxy
+
 use convert::TryFrom;
 use logging;
 

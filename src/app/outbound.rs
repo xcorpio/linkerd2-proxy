@@ -120,7 +120,7 @@ where
         match self {
             Resolution::Name(ref dst, ref mut res) => match try_ready!(res.poll()) {
                 resolve::Update::Remove(addr) => Ok(Async::Ready(resolve::Update::Remove(addr))),
-                resolve::Update::Stack(addr, metadata) => {
+                resolve::Update::Add(addr, metadata) => {
                     // If the endpoint does not have TLS, note the reason.
                     // Otherwise, indicate that we don't (yet) have a TLS
                     // config. This value may be changed by a stack layer that
@@ -135,7 +135,7 @@ where
                         metadata,
                         _p: (),
                     };
-                    Ok(Async::Ready(resolve::Update::Stack(addr, ep)))
+                    Ok(Async::Ready(resolve::Update::Add(addr, ep)))
                 }
             },
             Resolution::Addr(ref dst, ref mut addr) => match addr.take() {
@@ -147,7 +147,7 @@ where
                         metadata: Metadata::none(tls),
                         _p: (),
                     };
-                    let up = resolve::Update::Stack(addr, ep);
+                    let up = resolve::Update::Add(addr, ep);
                     Ok(Async::Ready(up))
                 }
                 None => Ok(Async::NotReady),

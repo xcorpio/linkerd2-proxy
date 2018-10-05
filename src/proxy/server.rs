@@ -18,9 +18,29 @@ use super::Accept;
 
 /// A protocol-transparent Server!
 ///
-/// This type can `serve` new connections, determine what protocol
-/// the connection is speaking, and route it to the corresponding
-/// service.
+/// As TCP streams are passed to `Server::serve`, the following occurs:
+///
+/// 1. A `G`-typed `GetOriginalDst` is used to determine the socket's original
+///    destination address (i.e. before iptables redirected the connection to the
+///    proxy).
+///
+/// 2.  A `Source` is created to describe the accepted connection.
+///
+/// 3. An `A`-typed `Accept` is used to decorate the transport (i.e., for
+///    telemetry).
+///
+/// 4. If the original destination address's port is not specified in
+///    `disable_protocol_detection_ports`, then data received on the connection is
+///    buffered until the server can determine whether the streams begins with a
+///    HTTP/1 or HTTP/2 preamble.
+///
+/// 5. If the stream is not determined to be HTTP, then the orignal destination
+///    address is used to transparently forward the TCP stream. A `C`-typed
+///    `Connect` `Stack` is used to build a connection to the destination (i.e.,
+///    instrumented with telemetry, etc).
+///
+/// 6. Otherwise, an `R`-typed `Service` `Stack` is used to build a service that
+///    can routeHTTP  requests for the `Source`.
 pub struct Server<A, C, R, B, G>
 where
     // Prepares a server transport, e.g. with telemetry.
@@ -68,6 +88,8 @@ pub struct Source {
 #[derive(Clone, Debug)]
 struct ForwardConnect<C>(C);
 
+/// An error indicating an accepted socket did not have an SO_ORIGINAL_DST
+/// address and therefore could not be forwarded.
 #[derive(Clone, Debug)]
 pub struct NoOriginalDst;
 

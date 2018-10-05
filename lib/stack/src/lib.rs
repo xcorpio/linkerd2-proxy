@@ -1,26 +1,3 @@
-//! Infrastructure for proxying request-response message streams
-//!
-//! This module contains utilities for proxying request-response streams. This
-//! module borrows (and re-exports) from `tower`.
-//!
-//! ## Clients
-//!
-//! A client is a `Service` through which the proxy may dispatch requests.
-//!
-//! In the proxy, there are currently two types of clients:
-//!
-//! - As the proxy routes requests to an outbound `Destination`, a client
-//!   service is resolves the destination to and load balances requests
-//!   over its endpoints.
-//!
-//! - As an outbound load balancer dispatches a request to an endpoint, or as
-//!   the inbound proxy fowards an inbound request, a client service models an
-//!   individual `SocketAddr`.
-//!
-//! ## TODO
-//!
-//! * Move HTTP-specific service infrastructure into `svc::http`.
-
 extern crate futures;
 #[macro_use]
 extern crate log;
@@ -43,9 +20,12 @@ pub use self::stack_new_service::StackNewService;
 
 /// A composable builder.
 ///
-/// A `Stack` attempts to build a `Value` given a `T`-typed "target".
+/// A `Stack` attempts to build a `Value` given a `T`-typed _target_. An error is
+/// returned iff the target cannot be used to produce a value. Otherwise a value
+/// is produced.
 ///
-/// `Stack`s may be wrapped by `Layer`s to
+/// The `Layer` trait provides a mechanism to compose stacks that are generic
+/// over another, inner `Stack` type.
 pub trait Stack<T> {
     type Value;
 
