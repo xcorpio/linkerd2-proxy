@@ -220,7 +220,6 @@ pub mod orig_proto_upgrade {
         }
     }
 
-
     impl<M, A, B> svc::Layer<Endpoint, Endpoint, M> for Layer
     where
         M: svc::Stack<Endpoint>,

@@ -70,14 +70,12 @@ where
         }
     }
 
-    // TODO: once a stacked clients needs backoff...
-    //
-    // pub fn with_fixed_backoff(self, wait: Duration) -> Self {
-    //     Self {
-    //         backoff: Backoff::Fixed(wait),
-    //         .. self
-    //     }
-    // }
+    pub fn with_fixed_backoff(self, wait: Duration) -> Self {
+        Self {
+            backoff: Backoff::Fixed(wait),
+            .. self
+        }
+    }
 }
 
 impl<T, M> Clone for Layer<T, M> {
@@ -143,30 +141,6 @@ where
 
 // === impl Service ===
 
-impl<T, N> Service<T, N>
-where
-    T: fmt::Debug,
-    N: svc::NewService,
-    N::InitError: fmt::Display,
-{
-    pub fn new(target: T, new_service: N) -> Self {
-        Self {
-            inner: Reconnect::new(new_service),
-            target,
-            backoff: Backoff::None,
-            active_backoff: None,
-            mute_connect_error_log: false,
-        }
-    }
-
-    pub fn with_fixed_backoff(self, wait: Duration) -> Self {
-        Self {
-            backoff: Backoff::Fixed(wait),
-            .. self
-        }
-    }
-}
-
 impl<T, N> svc::Service for Service<T, N>
 where
     T: fmt::Debug,
@@ -179,7 +153,7 @@ where
     type Future = ResponseFuture<N>;
 
     fn poll_ready(&mut self) -> Poll<(), Self::Error> {
-        match  self.backoff {
+        match self.backoff {
             Backoff::None => {}
             Backoff::Fixed(_) => {
                 if let Some(delay) = self.active_backoff.as_mut() {
