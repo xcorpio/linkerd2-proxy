@@ -7,6 +7,7 @@ pub mod insert_target;
 pub mod metrics;
 pub mod normalize_uri;
 pub mod orig_proto;
+pub mod profiles;
 pub mod router;
 pub mod settings;
 pub mod upgrade;

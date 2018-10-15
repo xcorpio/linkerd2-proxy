@@ -3,7 +3,7 @@ use std::fmt;
 use std::net::SocketAddr;
 
 use proxy::{
-    http::{h1, Settings},
+    http::{h1, profiles::CanGetDestination, Settings},
     Source,
 };
 use transport::{DnsNameAndPort, Host, HostAndPort};
@@ -38,6 +38,16 @@ impl Destination {
         let name_or_addr = NameOrAddr::from_request(req)?;
         let settings = Settings::detect(req);
         Some(Self::new(name_or_addr, settings))
+    }
+}
+
+impl CanGetDestination for Destination {
+    fn get_destination(&self) -> String {
+        use std::fmt::Write;
+
+        let mut s = String::new();
+        write!(s, "{}", self).unwrap();
+        s
     }
 }
 
