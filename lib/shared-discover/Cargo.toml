@@ -6,6 +6,7 @@ authors = ["Oliver Gould <ver@buoyant.io>"]
 [dependencies]
 futures = "0.1"
 indexmap = "1.0"
+linkerd2-stack = { path = "../stack" }
 tokio = "0.1.7"
 tower-discover = { git = "https://github.com/tower-rs/tower" }
 tower-service  = { git = "https://github.com/tower-rs/tower" }

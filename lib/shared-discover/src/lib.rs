@@ -1,6 +1,7 @@
 #[macro_use]
 extern crate futures;
 extern crate indexmap;
+extern crate linkerd2_stack as stk;
 extern crate tokio;
 extern crate tower_discover;
 extern crate tower_service as svc;
@@ -13,20 +14,21 @@ use tower_discover::{Change, Discover};
 pub fn new<D>(discover: D) -> (Share<D>, Background<D>)
 where
     D: Discover,
+    D::Key: Clone,
     D::Service: Clone,
 {
-    let (txtx, txrx) = mpsc::unbounded();
+    let (notify_tx, notify_rx) = mpsc::unbounded();
     let bg = Background {
         discover,
-        txrx,
-        txs: VecDeque::new(),
+        notify_rx: Some(notify_rx),
+        notifiers: VecDeque::new(),
         cache: IndexMap::new(),
     };
-    (Share { txtx }, bg)
+    (Share { notify_tx }, bg)
 }
 
 pub struct Share<D: Discover> {
-    txtx: mpsc::UnboundedSender<Tx<D>>,
+    notify_tx: mpsc::UnboundedSender<Notify<D>>,
 }
 
 pub struct SharedDiscover<D: Discover> {
@@ -35,12 +37,12 @@ pub struct SharedDiscover<D: Discover> {
 
 pub struct Background<D: Discover> {
     discover: D,
-    txrx: mpsc::UnboundedReceiver<Tx<D>>,
-    txs: VecDeque<Tx<D>>,
+    notify_rx: Option<mpsc::UnboundedReceiver<Notify<D>>>,
+    notifiers: VecDeque<Notify<D>>,
     cache: IndexMap<D::Key, D::Service>,
 }
 
-struct Tx<D: Discover> {
+struct Notify<D: Discover> {
     tx: mpsc::UnboundedSender<Change<D::Key, D::Service>>,
 }
 
@@ -52,7 +54,7 @@ where
 {
     pub fn share(&self) -> SharedDiscover<D> {
         let (tx, rx) = mpsc::unbounded();
-        let _ = self.txtx.unbounded_send(Tx { tx });
+        let _ = self.notify_tx.unbounded_send(Notify { tx });
         SharedDiscover { rx }
     }
 }
@@ -63,7 +65,7 @@ where
     D::Key: Clone,
     D::Service: Clone,
 {
-    fn update_from_cache(&self, tx: &Tx<D>) -> Result<(), ()> {
+    fn update_from_cache(&self, tx: &Notify<D>) -> Result<(), ()> {
         for (key, svc) in self.cache.iter() {
             tx.tx
                 .unbounded_send(Change::Insert(key.clone(), svc.clone()))
@@ -73,30 +75,32 @@ where
         Ok(())
     }
 
-    fn notify_txs(&mut self, change: &Change<D::Key, D::Service>) {
-        for _ in 0..self.txs.len() {
-            let tx = self.txs.pop_front().unwrap();
+    fn notify_notifiers(&mut self, change: &Change<D::Key, D::Service>) {
+        for _ in 0..self.notifiers.len() {
+            let tx = self.notifiers.pop_front().unwrap();
             let c = match change {
                 Change::Insert(ref k, ref s) => Change::Insert(k.clone(), s.clone()),
                 Change::Remove(ref k) => Change::Remove(k.clone()),
             };
             if tx.tx.unbounded_send(c).is_ok() {
-                self.txs.push_back(tx);
+                self.notifiers.push_back(tx);
             }
         }
     }
 
-    fn poll_txrx(&mut self) {
+    fn poll_notify_rx(&mut self) {
         loop {
-            match self.txrx.poll() {
-                Ok(Async::NotReady) => return,
-                Ok(Async::Ready(Some(tx))) => {
+            match self.notify_rx.as_mut().map(|ref mut notify_rx| notify_rx.poll()) {
+                Some(Ok(Async::NotReady)) => return,
+                None | Some(Err(_)) | Some(Ok(Async::Ready(None))) => {
+                    self.notify_rx = None;
+                    return;
+                }
+                Some(Ok(Async::Ready(Some(tx)))) => {
                     if self.update_from_cache(&tx).is_ok() {
-                        self.txs.push_back(tx);
+                        self.notifiers.push_back(tx);
                     }
                 }
-                // No more
-                Ok(Async::Ready(None)) | Err(_) => return,
             }
         }
     }
@@ -112,19 +116,23 @@ where
     type Error = D::DiscoverError;
 
     fn poll(&mut self) -> Poll<(), Self::Error> {
-        self.poll_txrx();
-
         loop {
+            self.poll_notify_rx();
+
+            if self.notify_rx.is_none() && self.notifiers.is_empty() {
+                return Ok(Async::Ready(()))
+            }
+
             let change = try_ready!(self.discover.poll());
+            self.notify_notifiers(&change);
             match change {
-                Change::Insert(ref key, ref svc) => {
-                    self.cache.insert(key.clone(), svc.clone());
+                Change::Insert(key, svc) => {
+                    self.cache.insert(key, svc);
                 }
-                Change::Remove(ref key) => {
-                    self.cache.remove(key);
+                Change::Remove(key) => {
+                    self.cache.remove(&key);
                 }
             }
-            self.notify_txs(&change);
         }
     }
 }
