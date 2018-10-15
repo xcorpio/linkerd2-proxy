@@ -5,6 +5,7 @@ members = [
     "lib/futures-mpsc-lossy",
     "lib/metrics",
     "lib/router",
+    "lib/shared-discover",
     "lib/stack",
     "lib/task",
     "lib/timeout",
