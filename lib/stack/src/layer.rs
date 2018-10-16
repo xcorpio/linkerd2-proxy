@@ -34,6 +34,17 @@ pub trait Layer<T, U, M: super::Stack<U>> {
     }
 }
 
+/// The identity layer.
+impl<T, M: super::Stack<T>> Layer<T, T, M> for () {
+    type Value = M::Value;
+    type Error = M::Error;
+    type Stack = M;
+
+    fn bind(&self, inner: M) -> M {
+        inner
+    }
+}
+
 /// Combines two `Layers` as one.
 ///
 /// Given an `Outer: Layer<T, U, _>` and an `Inner: Layer<U, V, _>`, producesa
