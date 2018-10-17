@@ -1,7 +1,6 @@
 #[macro_use]
 extern crate futures;
 extern crate indexmap;
-extern crate linkerd2_stack as stk;
 extern crate tokio;
 extern crate tower_discover;
 extern crate tower_service as svc;
@@ -18,13 +17,14 @@ where
     D::Service: Clone,
 {
     let (notify_tx, notify_rx) = mpsc::unbounded();
+    let share = Share { notify_tx };
     let bg = Background {
         discover,
         notify_rx: Some(notify_rx),
         notifiers: VecDeque::new(),
         cache: IndexMap::new(),
     };
-    (Share { notify_tx }, bg)
+    (share, bg)
 }
 
 pub struct Share<D: Discover> {
@@ -46,6 +46,14 @@ struct Notify<D: Discover> {
     tx: mpsc::UnboundedSender<Change<D::Key, D::Service>>,
 }
 
+impl<D: Discover> Clone for Share<D> {
+    fn clone(&self) -> Self {
+        Self {
+            notify_tx: self.notify_tx.clone(),
+        }
+    }
+}
+
 impl<D> Share<D>
 where
     D: Discover,
@@ -56,6 +64,28 @@ where
         let (tx, rx) = mpsc::unbounded();
         let _ = self.notify_tx.unbounded_send(Notify { tx });
         SharedDiscover { rx }
+    }
+}
+
+impl<D: Discover> Discover for SharedDiscover<D>
+where
+    D: Discover,
+    D::Service: Clone,
+{
+    type Key = D::Key;
+    type Request = D::Request;
+    type Response = D::Response;
+    type Error = D::Error;
+    type Service = D::Service;
+    type DiscoverError = D::DiscoverError;
+
+    fn poll(&mut self) -> Poll<Change<Self::Key, Self::Service>, Self::DiscoverError> {
+        match self.rx.poll() {
+            Ok(Async::Ready(Some(c))) => Ok(Async::Ready(c)),
+            Ok(Async::Ready(None)) => Ok(Async::NotReady),
+            Ok(Async::NotReady) => Ok(Async::NotReady),
+            Err(_) => Ok(Async::NotReady),
+        }
     }
 }
 
@@ -90,7 +120,11 @@ where
 
     fn poll_notify_rx(&mut self) {
         loop {
-            match self.notify_rx.as_mut().map(|ref mut notify_rx| notify_rx.poll()) {
+            match self
+                .notify_rx
+                .as_mut()
+                .map(|ref mut notify_rx| notify_rx.poll())
+            {
                 Some(Ok(Async::NotReady)) => return,
                 None | Some(Err(_)) | Some(Ok(Async::Ready(None))) => {
                     self.notify_rx = None;
@@ -120,7 +154,7 @@ where
             self.poll_notify_rx();
 
             if self.notify_rx.is_none() && self.notifiers.is_empty() {
-                return Ok(Async::Ready(()))
+                return Ok(Async::Ready(()));
             }
 
             let change = try_ready!(self.discover.poll());
@@ -133,24 +167,6 @@ where
                     self.cache.remove(&key);
                 }
             }
-        }
-    }
-}
-
-impl<D: Discover> Discover for SharedDiscover<D> {
-    type Key = D::Key;
-    type Request = D::Request;
-    type Response = D::Response;
-    type Error = D::Error;
-    type Service = D::Service;
-    type DiscoverError = D::DiscoverError;
-
-    fn poll(&mut self) -> Poll<Change<Self::Key, Self::Service>, Self::DiscoverError> {
-        match self.rx.poll() {
-            Ok(Async::Ready(Some(c))) => Ok(Async::Ready(c)),
-            Ok(Async::Ready(None)) => Ok(Async::NotReady),
-            Ok(Async::NotReady) => Ok(Async::NotReady),
-            Err(_) => Ok(Async::NotReady),
         }
     }
 }

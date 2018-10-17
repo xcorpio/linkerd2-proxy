@@ -527,6 +527,7 @@ dependencies = [
  "linkerd2-metrics 0.1.0",
  "linkerd2-proxy-api 0.1.2 (git+https://github.com/linkerd/linkerd2-proxy-api?branch=ver/route-labels)",
  "linkerd2-router 0.1.0",
+ "linkerd2-shared-discover 0.1.0",
  "linkerd2-stack 0.1.0",
  "linkerd2-task 0.1.0",
  "linkerd2-timeout 0.1.0",
