@@ -5,7 +5,6 @@ members = [
     "lib/futures-mpsc-lossy",
     "lib/metrics",
     "lib/router",
-    "lib/shared-discover",
     "lib/stack",
     "lib/task",
     "lib/timeout",
@@ -27,7 +26,6 @@ futures-mpsc-lossy = { path = "lib/futures-mpsc-lossy" }
 linkerd2-fs-watch  = { path = "lib/fs-watch" }
 linkerd2-metrics   = { path = "lib/metrics" }
 linkerd2-router    = { path = "lib/router" }
-linkerd2-shared-discover = { path = "lib/shared-discover" }
 linkerd2-stack     = { path = "lib/stack" }
 linkerd2-task      = { path = "lib/task" }
 linkerd2-timeout   = { path = "lib/timeout" }
