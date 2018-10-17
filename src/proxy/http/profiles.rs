@@ -272,11 +272,12 @@ pub mod per_endpoint {
     use svc::{self, Stack as _Stack};
 
     use super::tower_discover::{Change, Discover};
+    use super::Route;
 
     pub fn layer<K, S, E>(endpoint_layer: E) -> Layer<E>
     where
         S: svc::Service + Clone,
-        E: svc::Layer<K, K, svc::Shared<K, S>> + Clone,
+        E: svc::Layer<(Route, K), (Route, K), svc::Shared<(Route, K), S>> + Clone,
     {
         Layer { endpoint_layer }
     }
@@ -292,6 +293,7 @@ pub mod per_endpoint {
 
     pub struct PerEndpoint<D, E = ()> {
         discover: D,
+        route: Route,
         endpoint_layer: E,
     }
 
@@ -300,21 +302,21 @@ pub mod per_endpoint {
         Endpoint(E),
     }
 
-    impl<T, D, E> svc::Layer<T, T, D> for Layer<E>
+    impl<D, E> svc::Layer<Route, Route, D> for Layer<E>
     where
-        D: svc::Stack<T>,
+        D: svc::Stack<Route>,
         D::Value: Discover,
         <D::Value as Discover>::Service: Clone,
         E: svc::Layer<
-                <D::Value as Discover>::Key,
-                <D::Value as Discover>::Key,
-                svc::Shared<<D::Value as Discover>::Key, <D::Value as Discover>::Service>,
+                (Route, <D::Value as Discover>::Key),
+                (Route, <D::Value as Discover>::Key),
+                svc::Shared<(Route, <D::Value as Discover>::Key), <D::Value as Discover>::Service>,
             >
             + Clone,
         E::Value: svc::Service + Clone,
     {
-        type Value = <Stack<D, E> as svc::Stack<T>>::Value;
-        type Error = <Stack<D, E> as svc::Stack<T>>::Error;
+        type Value = <Stack<D, E> as svc::Stack<Route>>::Value;
+        type Error = <Stack<D, E> as svc::Stack<Route>>::Error;
         type Stack = Stack<D, E>;
 
         fn bind(&self, discover: D) -> Self::Stack {
@@ -325,15 +327,15 @@ pub mod per_endpoint {
         }
     }
 
-    impl<T, D, E> svc::Stack<T> for Stack<D, E>
+    impl<D, E> svc::Stack<Route> for Stack<D, E>
     where
-        D: svc::Stack<T>,
+        D: svc::Stack<Route>,
         D::Value: Discover,
         <D::Value as Discover>::Service: Clone,
         E: svc::Layer<
-                <D::Value as Discover>::Key,
-                <D::Value as Discover>::Key,
-                svc::Shared<<D::Value as Discover>::Key, <D::Value as Discover>::Service>,
+                (Route, <D::Value as Discover>::Key),
+                (Route, <D::Value as Discover>::Key),
+                svc::Shared<(Route, <D::Value as Discover>::Key), <D::Value as Discover>::Service>,
             >
             + Clone,
         E::Value: svc::Service + Clone,
@@ -341,10 +343,11 @@ pub mod per_endpoint {
         type Value = PerEndpoint<D::Value, E>;
         type Error = D::Error;
 
-        fn make(&self, target: &T) -> Result<Self::Value, Self::Error> {
-            let discover = self.discover.make(&target)?;
+        fn make(&self, route: &Route) -> Result<Self::Value, Self::Error> {
+            let discover = self.discover.make(&route)?;
             Ok(PerEndpoint {
                 discover,
+                route: route.clone(),
                 endpoint_layer: self.endpoint_layer.clone(),
             })
         }
@@ -353,8 +356,10 @@ pub mod per_endpoint {
     impl<D, E> Discover for PerEndpoint<D, E>
     where
         D: Discover,
+        D::Key: Clone,
         D::Service: Clone,
-        E: svc::Layer<D::Key, D::Key, svc::Shared<D::Key, D::Service>> + Clone,
+        E: svc::Layer<(Route, D::Key), (Route, D::Key), svc::Shared<(Route, D::Key), D::Service>>
+            + Clone,
         E::Value: svc::Service + Clone,
     {
         type Key = D::Key;
@@ -370,7 +375,7 @@ pub mod per_endpoint {
                     let svc = self
                         .endpoint_layer
                         .bind(svc::Shared::new(svc))
-                        .make(&key)
+                        .make(&(self.route.clone(), key.clone()))
                         .map_err(Error::Endpoint)?;
                     Ok(Change::Insert(key, svc).into())
                 }
@@ -390,6 +395,7 @@ pub mod shared_discover {
 
     use super::tower_discover::{Change, Discover};
     use super::void::Void;
+    use super::Route;
 
     pub fn new<D>(discover: D) -> (Stack<D>, Background<D>)
     where
@@ -429,7 +435,7 @@ pub mod shared_discover {
 
     // === impl Stack ===
 
-    impl<T, D> svc::Stack<T> for Stack<D>
+    impl<D> svc::Stack<Route> for Stack<D>
     where
         D: Discover,
         D::Key: Clone,
@@ -438,7 +444,7 @@ pub mod shared_discover {
         type Value = SharedDiscover<D>;
         type Error = Void;
 
-        fn make(&self, _: &T) -> Result<Self::Value, Self::Error> {
+        fn make(&self, _: &Route) -> Result<Self::Value, Self::Error> {
             let (tx, rx) = mpsc::unbounded();
             let _ = self.notify_tx.unbounded_send(Notify { tx });
 
