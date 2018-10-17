@@ -72,6 +72,14 @@ pub mod router {
 
     use super::*;
 
+    pub fn layer<G: GetRoutes + Clone>(get_routes: G) -> Layer<G, ()> {
+        Layer {
+            get_routes,
+            route_layer: (),
+            default_route: Route::default(),
+        }
+    }
+
     #[derive(Clone, Debug)]
     pub struct Layer<G, R = ()> {
         get_routes: G,
@@ -87,7 +95,7 @@ pub mod router {
         default_route: Route,
     }
 
-    pub enum StackError<D, R> {
+    pub enum Error<D, R> {
         Discover(D),
         Route(R),
     }
@@ -111,14 +119,6 @@ pub mod router {
     where
         G: GetRoutes + Clone,
     {
-        pub fn new(get_routes: G) -> Self {
-            Layer {
-                get_routes,
-                route_layer: (),
-                default_route: Route::default(),
-            }
-        }
-
         pub fn with_route_layer<D, R>(self, route_layer: R) -> Layer<G, R>
         where
             D: Discover,
@@ -172,17 +172,17 @@ pub mod router {
         R::Value: svc::Service,
     {
         type Value = Service<D::Value, G::Stream, R::Stack>;
-        type Error = StackError<D::Error, R::Error>;
+        type Error = Error<D::Error, R::Error>;
 
         fn make(&self, target: &T) -> Result<Self::Value, Self::Error> {
             let (stack, discover_bg) = {
-                let discover = self.discover.make(&target).map_err(StackError::Discover)?;
+                let discover = self.discover.make(&target).map_err(Error::Discover)?;
                 let (share, bg) = shared_discover::new(discover);
                 let stack = self.route_layer.bind(share);
                 (stack, bg)
             };
 
-            let default_route = stack.make(&self.default_route).map_err(StackError::Route)?;
+            let default_route = stack.make(&self.default_route).map_err(Error::Route)?;
 
             let route_stream = self.get_routes.get_routes(target.get_destination());
 
@@ -266,6 +266,120 @@ pub mod router {
     }
 }
 
+pub mod per_endpoint {
+    use futures::Poll;
+
+    use svc::{self, Stack as _Stack};
+
+    use super::tower_discover::{Change, Discover};
+
+    pub fn layer<K, S, E>(endpoint_layer: E) -> Layer<E>
+    where
+        S: svc::Service + Clone,
+        E: svc::Layer<K, K, svc::Shared<K, S>> + Clone,
+    {
+        Layer { endpoint_layer }
+    }
+
+    pub struct Layer<E = ()> {
+        endpoint_layer: E,
+    }
+
+    pub struct Stack<D, E = ()> {
+        discover: D,
+        endpoint_layer: E,
+    }
+
+    pub struct PerEndpoint<D, E = ()> {
+        discover: D,
+        endpoint_layer: E,
+    }
+
+    pub enum Error<D, E> {
+        Discover(D),
+        Endpoint(E),
+    }
+
+    impl<T, D, E> svc::Layer<T, T, D> for Layer<E>
+    where
+        D: svc::Stack<T>,
+        D::Value: Discover,
+        <D::Value as Discover>::Service: Clone,
+        E: svc::Layer<
+                <D::Value as Discover>::Key,
+                <D::Value as Discover>::Key,
+                svc::Shared<<D::Value as Discover>::Key, <D::Value as Discover>::Service>,
+            >
+            + Clone,
+        E::Value: svc::Service + Clone,
+    {
+        type Value = <Stack<D, E> as svc::Stack<T>>::Value;
+        type Error = <Stack<D, E> as svc::Stack<T>>::Error;
+        type Stack = Stack<D, E>;
+
+        fn bind(&self, discover: D) -> Self::Stack {
+            Stack {
+                discover,
+                endpoint_layer: self.endpoint_layer.clone(),
+            }
+        }
+    }
+
+    impl<T, D, E> svc::Stack<T> for Stack<D, E>
+    where
+        D: svc::Stack<T>,
+        D::Value: Discover,
+        <D::Value as Discover>::Service: Clone,
+        E: svc::Layer<
+                <D::Value as Discover>::Key,
+                <D::Value as Discover>::Key,
+                svc::Shared<<D::Value as Discover>::Key, <D::Value as Discover>::Service>,
+            >
+            + Clone,
+        E::Value: svc::Service + Clone,
+    {
+        type Value = PerEndpoint<D::Value, E>;
+        type Error = D::Error;
+
+        fn make(&self, target: &T) -> Result<Self::Value, Self::Error> {
+            let discover = self.discover.make(&target)?;
+            Ok(PerEndpoint {
+                discover,
+                endpoint_layer: self.endpoint_layer.clone(),
+            })
+        }
+    }
+
+    impl<D, E> Discover for PerEndpoint<D, E>
+    where
+        D: Discover,
+        D::Service: Clone,
+        E: svc::Layer<D::Key, D::Key, svc::Shared<D::Key, D::Service>> + Clone,
+        E::Value: svc::Service + Clone,
+    {
+        type Key = D::Key;
+        type Request = <E::Value as svc::Service>::Request;
+        type Response = <E::Value as svc::Service>::Response;
+        type Error = <E::Value as svc::Service>::Error;
+        type Service = E::Value;
+        type DiscoverError = Error<D::DiscoverError, E::Error>;
+
+        fn poll(&mut self) -> Poll<Change<Self::Key, Self::Service>, Self::DiscoverError> {
+            match try_ready!(self.discover.poll().map_err(Error::Discover)) {
+                Change::Insert(key, svc) => {
+                    let svc = self
+                        .endpoint_layer
+                        .bind(svc::Shared::new(svc))
+                        .make(&key)
+                        .map_err(Error::Endpoint)?;
+                    Ok(Change::Insert(key, svc).into())
+                }
+                Change::Remove(key) => Ok(Change::Remove(key).into()),
+            }
+        }
+    }
+}
+
 pub mod shared_discover {
     use futures::{sync::mpsc, Async, Future, Poll, Stream};
     use indexmap::IndexMap;
@@ -273,6 +387,7 @@ pub mod shared_discover {
     use std::fmt;
 
     use svc;
+
     use super::tower_discover::{Change, Discover};
     use super::void::Void;
 
@@ -333,7 +448,9 @@ pub mod shared_discover {
 
     impl<D: Discover> Clone for Stack<D> {
         fn clone(&self) -> Self {
-            Self { notify_tx: self.notify_tx.clone() }
+            Self {
+                notify_tx: self.notify_tx.clone(),
+            }
         }
     }
 
