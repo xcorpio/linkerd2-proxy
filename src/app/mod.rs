@@ -11,6 +11,7 @@ mod inbound;
 mod main;
 mod metric_labels;
 mod outbound;
+mod profiles;
 
 use self::config::{Config, Env};
 use self::destination::{Destination, NameOrAddr};

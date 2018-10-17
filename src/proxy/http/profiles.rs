@@ -397,7 +397,7 @@ pub mod shared_discover {
     use super::void::Void;
     use super::Route;
 
-    pub fn new<D>(discover: D) -> (Stack<D>, Background<D>)
+    pub(super) fn new<D>(discover: D) -> (Stack<D>, Background<D>)
     where
         D: Discover,
         D::Key: Clone,

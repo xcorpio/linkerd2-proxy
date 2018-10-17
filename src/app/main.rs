@@ -262,7 +262,7 @@ where
             let outbound = {
                 use super::outbound::{discovery::Resolve, orig_proto_upgrade, Recognize};
                 use proxy::{
-                    http::{balance, metrics},
+                    http::{balance, metrics, profiles},
                     resolve,
                 };
 
@@ -292,12 +292,15 @@ where
                     .and_then(limit::Layer::new(MAX_IN_FLIGHT))
                     .and_then(timeout::Layer::new(config.bind_timeout))
                     .and_then(buffer::Layer::new())
+                    .and_then(profiles::router::layer(controller))
                     .and_then(balance::layer())
+                    .and_then(profiles::per_endpoint::layer(
+                        tls_client_config
+                            .and_then(metrics::Layer::new(http_metrics, classify::Classify))
+                            .and_then(tap::Layer::new(tap_next_id.clone(), taps.clone()))
+                    ))
                     .and_then(resolve::layer(Resolve::new(resolver)))
                     .and_then(orig_proto_upgrade::Layer::new())
-                    .and_then(tls_client_config)
-                    .and_then(metrics::Layer::new(http_metrics, classify::Classify))
-                    .and_then(tap::Layer::new(tap_next_id.clone(), taps.clone()))
                     .and_then(normalize_uri::Layer::new())
                     .and_then(svc::stack_per_request::Layer::new())
                     .and_then(reconnect::Layer::new())
