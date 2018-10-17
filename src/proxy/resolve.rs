@@ -40,6 +40,12 @@ pub struct Stack<R, M> {
     inner: M,
 }
 
+#[derive(Debug)]
+pub enum Error<R, M> {
+    Resolve(R),
+    Stack(M),
+}
+
 /// Observes an `R`-typed resolution stream, using an `M`-typed endpoint stack to
 /// build a service for each endpoint.
 #[derive(Clone, Debug)]
@@ -89,7 +95,7 @@ where
     M::Value: svc::Service,
 {
     type Value = Discover<R::Resolution, M>;
-    type Error = M::Error;
+    type Error = Error<<R::Resolution as Resolution>::Error, M::Error>;
 
     fn make(&self, target: &T) -> Result<Self::Value, Self::Error> {
         let resolution = self.resolve.resolve(target);
@@ -138,12 +144,6 @@ where
 }
 
 // === impl Error ===
-
-#[derive(Debug)]
-pub enum Error<R, M> {
-    Resolve(R),
-    Stack(M),
-}
 
 impl<M> fmt::Display for Error<(), M>
 where

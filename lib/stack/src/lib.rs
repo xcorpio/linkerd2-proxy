@@ -3,8 +3,6 @@ extern crate futures;
 extern crate log;
 extern crate tower_service as svc;
 
-use std::marker::PhantomData;
-
 pub mod either;
 pub mod layer;
 pub mod stack_new_service;
@@ -42,26 +40,39 @@ pub trait Stack<T> {
 }
 
 /// Implements `Stack<T>` for any `T` by cloning a `V`-typed value.
-#[derive(Debug)]
-pub struct Shared<T, V: Clone>(V, PhantomData<fn() -> T>);
+pub mod shared {
+    use std::{error, fmt};
 
-impl<T, V: Clone> Shared<T, V> {
-    pub fn new(v: V) -> Self {
-        Shared(v, PhantomData)
+    pub fn stack<V: Clone>(v: V) -> Stack<V> {
+        Stack(v)
     }
-}
 
-impl<T, V: Clone> Clone for Shared<T, V> {
-    fn clone(&self) -> Self {
-        Self::new(self.0.clone())
+    #[derive(Debug)]
+    pub struct Stack<V: Clone>(V);
+
+    #[derive(Debug)]
+    pub enum Error {}
+
+    impl<V: Clone> Clone for Stack<V> {
+        fn clone(&self) -> Self {
+            stack(self.0.clone())
+        }
     }
-}
 
-impl<T, V: Clone> Stack<T> for Shared<T, V> {
-    type Value = V;
-    type Error = ();
+    impl<T, V: Clone> super::Stack<T> for Stack<V> {
+        type Value = V;
+        type Error = Error;
 
-    fn make(&self, _: &T) -> Result<V, ()> {
-        Ok(self.0.clone())
+        fn make(&self, _: &T) -> Result<V, Error> {
+            Ok(self.0.clone())
+        }
     }
+
+    impl fmt::Display for Error {
+        fn fmt(&self, _: &mut fmt::Formatter) -> fmt::Result {
+            unreachable!()
+        }
+    }
+
+    impl error::Error for Error {}
 }

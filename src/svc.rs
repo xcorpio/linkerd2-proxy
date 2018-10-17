@@ -9,5 +9,5 @@ pub use self::stack::{
     Either,
     Layer,
     Stack,
-    Shared,
+    shared,
 };

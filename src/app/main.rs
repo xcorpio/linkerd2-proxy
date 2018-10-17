@@ -292,14 +292,23 @@ where
                     .and_then(limit::Layer::new(MAX_IN_FLIGHT))
                     .and_then(timeout::Layer::new(config.bind_timeout))
                     .and_then(buffer::Layer::new())
-                    .and_then(profiles::router::layer(controller))
-                    .and_then(balance::layer())
-                    .and_then(profiles::per_endpoint::layer(
-                        tls_client_config
-                            .and_then(metrics::Layer::new(http_metrics, classify::Classify))
-                            .and_then(tap::Layer::new(tap_next_id.clone(), taps.clone()))
-                    ))
-                    .and_then(resolve::layer(Resolve::new(resolver)))
+                    .and_then(
+                        profiles::router::layer(controller)
+                            .with_route_layer(
+                                balance::layer().and_then(profiles::per_endpoint::layer(
+                                    tls_client_config
+                                        .and_then(metrics::Layer::new(
+                                            http_metrics,
+                                            classify::Classify,
+                                        ))
+                                        .and_then(tap::Layer::new(
+                                            tap_next_id.clone(),
+                                            taps.clone(),
+                                        )),
+                                )),
+                            )
+                            .and_then(resolve::layer(Resolve::new(resolver)))
+                    )
                     .and_then(orig_proto_upgrade::Layer::new())
                     .and_then(normalize_uri::Layer::new())
                     .and_then(svc::stack_per_request::Layer::new())
@@ -317,7 +326,7 @@ where
                 // including metadata about the request's origin.
                 let server_stack = timestamp_request_open::layer()
                     .and_then(insert_target::layer())
-                    .bind(svc::Shared::new(router));
+                    .bind(svc::shared::stack(router));
 
                 serve(
                     "out",
@@ -392,7 +401,7 @@ where
                     inbound_listener,
                     accept,
                     connect,
-                    source_layer.bind(svc::Shared::new(router)),
+                    source_layer.bind(svc::shared::stack(router)),
                     config.inbound_ports_disable_protocol_detection,
                     get_original_dst.clone(),
                     drain_rx.clone(),

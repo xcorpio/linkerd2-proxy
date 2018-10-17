@@ -47,7 +47,7 @@ where
     T::ResponseBody: Body<Data = Data>,
 {
     type Item = Vec<(profiles::RequestMatch, profiles::Route)>;
-    type Error = profiles::Void;
+    type Error = profiles::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         match self.service {
