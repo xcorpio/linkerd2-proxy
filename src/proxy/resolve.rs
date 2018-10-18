@@ -7,6 +7,8 @@ use std::{error, fmt};
 pub use self::tower_discover::Change;
 use svc;
 
+pub type Update<E> = Change<SocketAddr, E>;
+
 /// Resolves `T`-typed names/addresses as a `Resolution`.
 pub trait Resolve<T> {
     type Endpoint;
@@ -23,10 +25,10 @@ pub trait Resolution {
     fn poll(&mut self) -> Poll<Update<Self::Endpoint>, Self::Error>;
 }
 
-#[derive(Clone, Debug)]
-pub enum Update<T> {
-    Add(SocketAddr, T),
-    Remove(SocketAddr),
+pub trait HasEndpoint {
+    type Endpoint;
+
+    fn endpoint(&self) -> &Self::Endpoint;
 }
 
 #[derive(Clone, Debug)]
@@ -54,22 +56,26 @@ pub struct Discover<R: Resolution, M: svc::Stack<R::Endpoint>> {
     make: M,
 }
 
+#[derive(Clone, Debug)]
+pub struct EndpointService<E, S> {
+    endpoint: E,
+    service: S,
+}
+
 // === impl Layer ===
 
 pub fn layer<T, R>(resolve: R) -> Layer<R>
 where
     R: Resolve<T> + Clone,
-    R::Endpoint: fmt::Debug,
+    R::Endpoint: fmt::Debug + Clone,
 {
-    Layer {
-        resolve,
-    }
+    Layer { resolve }
 }
 
 impl<T, R, M> svc::Layer<T, R::Endpoint, M> for Layer<R>
 where
     R: Resolve<T> + Clone,
-    R::Endpoint: fmt::Debug,
+    R::Endpoint: fmt::Debug + Clone,
     M: svc::Stack<R::Endpoint> + Clone,
     M::Value: svc::Service,
 {
@@ -90,7 +96,7 @@ where
 impl<T, R, M> svc::Stack<T> for Stack<R, M>
 where
     R: Resolve<T>,
-    R::Endpoint: fmt::Debug,
+    R::Endpoint: fmt::Debug + Clone,
     M: svc::Stack<R::Endpoint> + Clone,
     M::Value: svc::Service,
 {
@@ -111,7 +117,7 @@ where
 impl<R, M> tower_discover::Discover for Discover<R, M>
 where
     R: Resolution,
-    R::Endpoint: fmt::Debug,
+    R::Endpoint: fmt::Debug + Clone,
     M: svc::Stack<R::Endpoint>,
     M::Value: svc::Service,
 {
@@ -119,27 +125,52 @@ where
     type Request = <M::Value as svc::Service>::Request;
     type Response = <M::Value as svc::Service>::Response;
     type Error = <M::Value as svc::Service>::Error;
-    type Service = M::Value;
+    type Service = EndpointService<R::Endpoint, M::Value>;
     type DiscoverError = Error<R::Error, M::Error>;
 
-    fn poll(&mut self) -> Poll<Change<Self::Key, Self::Service>, Self::DiscoverError> {
+    fn poll(&mut self) -> Poll<Change<SocketAddr, Self::Service>, Self::DiscoverError> {
         loop {
-            let up = try_ready!(self.resolution.poll().map_err(Error::Resolve));
-            trace!("watch: {:?}", up);
-            match up {
-                Update::Add(addr, target) => {
-                    // We expect the load balancer to handle duplicate inserts
-                    // by replacing the old endpoint with the new one, so
-                    // insertions of new endpoints and metadata changes for
-                    // existing ones can be handled in the same way.
-                    let svc = self.make.make(&target).map_err(Error::Stack)?;
+            match try_ready!(self.resolution.poll().map_err(Error::Resolve)) {
+                Change::Insert(addr, endpoint) => {
+                    trace!("discover: insert: addr={}; endpoint={:?}", addr, endpoint);
+                    let service = self.make.make(&endpoint).map_err(Error::Stack)?;
+                    let svc = EndpointService { endpoint, service };
                     return Ok(Async::Ready(Change::Insert(addr, svc)));
                 }
-                Update::Remove(addr) => {
+                Change::Remove(addr) => {
+                    trace!("discover: remove: addr={}", addr);
                     return Ok(Async::Ready(Change::Remove(addr)));
                 }
             }
         }
+    }
+}
+
+// === impl EndpointService ===
+
+impl<E, S> HasEndpoint for EndpointService<E, S> {
+    type Endpoint = E;
+
+    fn endpoint(&self) -> &Self::Endpoint {
+        &self.endpoint
+    }
+}
+
+impl<E, S> svc::Service for EndpointService<E, S>
+where
+    S: svc::Service,
+{
+    type Request = S::Request;
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future = S::Future;
+
+    fn poll_ready(&mut self) -> Poll<(), Self::Error> {
+        self.service.poll_ready()
+    }
+
+    fn call(&mut self, req: Self::Request) -> Self::Future {
+        self.service.call(req)
     }
 }
 

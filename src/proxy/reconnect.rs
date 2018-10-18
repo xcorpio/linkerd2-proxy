@@ -141,6 +141,30 @@ where
 
 // === impl Service ===
 
+#[cfg(test)]
+impl<N> Service<&'static str, N>
+where
+    N: svc::NewService,
+    N::InitError: fmt::Display,
+{
+    fn for_test(new_service: N) -> Self {
+        Self {
+            inner: Reconnect::new(new_service),
+            target: "test",
+            backoff: Backoff::None,
+            active_backoff: None,
+            mute_connect_error_log: false,
+        }
+    }
+
+    fn with_fixed_backoff(self, wait: Duration) -> Self {
+        Self {
+            backoff: Backoff::Fixed(wait),
+            .. self
+        }
+    }
+}
+
 impl<T, N> svc::Service for Service<T, N>
 where
     T: fmt::Debug,
@@ -321,7 +345,7 @@ mod tests {
     #[test]
     fn reconnects_with_backoff() {
         let mock = NewService { fails: 2.into() };
-        let mut backoff = super::Service::new("test", mock)
+        let mut backoff = super::Service::for_test(mock)
             .with_fixed_backoff(Duration::from_millis(100));
         let mut rt = Runtime::new().unwrap();
 

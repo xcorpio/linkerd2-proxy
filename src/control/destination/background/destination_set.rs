@@ -21,7 +21,7 @@ use api::{
 
 use control::{
     cache::{Cache, CacheChange, Exists},
-    destination::{Metadata, Responder, ProtocolHint, Update},
+    destination::{resolve, Metadata, ProtocolHint, Responder},
     remote_stream::Remote,
 };
 use dns::{self, IpAddrListFuture};
@@ -258,19 +258,23 @@ where
     ) {
         let (update_str, update, addr) = match change {
             CacheChange::Insertion { key, value } => {
-                ("insert", Update::Add(key, value.clone()), key)
+                ("insert", resolve::Change::Insert(key, value.clone()), key)
             },
-            CacheChange::Removal { key } => ("remove", Update::Remove(key), key),
+            CacheChange::Removal { key } => ("remove", resolve::Change::Remove(key), key),
             CacheChange::Modification { key, new_value } => (
                 "change metadata for",
-                Update::Add(key, new_value.clone()),
+                resolve::Change::Insert(key, new_value.clone()),
                 key,
             ),
         };
         trace!("{} {:?} for {:?}", update_str, addr, authority_for_logging);
         // retain is used to drop any senders that are dead
         responders.retain(|r| {
-            let sent = r.update_tx.unbounded_send(update.clone());
+            let u = match update {
+                resolve::Change::Insert(ref k, ref s) => resolve::Change::Insert(k.clone(), s.clone()),
+                resolve::Change::Remove(ref k) => resolve::Change::Remove(k.clone()),
+            };
+            let sent = r.update_tx.unbounded_send(u);
             sent.is_ok()
         });
     }

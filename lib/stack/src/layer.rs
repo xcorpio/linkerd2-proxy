@@ -10,13 +10,13 @@ use std::marker::PhantomData;
 /// ```ignore
 /// impl<M: Stack<SocketAddr>> Layer<Authority, SocketAddr, M> for BalanceLayer<M> { ... }
 /// ```
-pub trait Layer<T, U, M: super::Stack<U>> {
+pub trait Layer<T, U, S: super::Stack<U>> {
     type Value;
     type Error;
     type Stack: super::Stack<T, Value = Self::Value, Error = Self::Error>;
 
     /// Produce a `Stack` value from a `M` value.
-    fn bind(&self, next: M) -> Self::Stack;
+    fn bind(&self, next: S) -> Self::Stack;
 
     /// Compose this `Layer` with another.
     fn and_then<V, N, L>(self, inner: L)
@@ -31,6 +31,16 @@ pub trait Layer<T, U, M: super::Stack<U>> {
             inner,
             _p: PhantomData,
         }
+    }
+
+    fn map_err<M>(self, map_err: M)
+        -> AndThen<T, super::map_err::Layer<M>, Self>
+    where
+        Self: Sized,
+        M: super::map_err::MapErr<Self::Error>,
+        super::map_err::Layer<M>: Layer<T, T, Self::Stack>,
+    {
+        super::map_err::layer(map_err).and_then(self)
     }
 }
 

@@ -82,19 +82,31 @@ pub mod router {
 
     use super::*;
 
-    pub fn layer<G: GetRoutes + Clone>(get_routes: G) -> Layer<G, ()> {
+    pub fn layer<T, D, G, R>(get_routes: G, route_layer: R) -> Layer<G, D, R>
+    where
+        T: CanGetDestination,
+        D: svc::Stack<T>,
+        D::Value: Discover,
+        <D::Value as Discover>::Key: Clone,
+        <D::Value as Discover>::Service: Clone,
+        G: GetRoutes + Clone,
+        R: svc::Layer<Route, Route, shared_discover::Stack<D::Value>> + Clone,
+        R::Value: svc::Service,
+    {
         Layer {
             get_routes,
-            route_layer: (),
+            route_layer,
             default_route: Route::default(),
+            _p: ::std::marker::PhantomData
         }
     }
 
     #[derive(Clone, Debug)]
-    pub struct Layer<G, R = ()> {
+    pub struct Layer<G, D, R = ()> {
         get_routes: G,
         route_layer: R,
         default_route: Route,
+        _p: ::std::marker::PhantomData<fn() -> D>,
     }
 
     #[derive(Clone, Debug)]
@@ -137,28 +149,7 @@ pub mod router {
 
     impl<D: error::Error, R: error::Error> error::Error for Error<D, R> {}
 
-
-    impl<G> Layer<G, ()>
-    where
-        G: GetRoutes + Clone,
-    {
-        pub fn with_route_layer<D, R>(self, route_layer: R) -> Layer<G, R>
-        where
-            D: Discover,
-            D::Key: Clone,
-            D::Service: Clone,
-            R: svc::Layer<Route, Route, shared_discover::Stack<D>> + Clone,
-            R::Value: svc::Service,
-        {
-            Layer {
-                route_layer,
-                get_routes: self.get_routes,
-                default_route: self.default_route,
-            }
-        }
-    }
-
-    impl<T, D, G, R> svc::Layer<T, T, D> for Layer<G, R>
+    impl<T, D, G, R> svc::Layer<T, T, D> for Layer<G, D, R>
     where
         T: CanGetDestination,
         D: svc::Stack<T>,
@@ -291,17 +282,24 @@ pub mod router {
 
 pub mod per_endpoint {
     use futures::Poll;
+    use std::{error, fmt};
 
+    use proxy::resolve::HasEndpoint;
     use svc::{self, Stack as _Stack};
 
     use super::tower_discover::{Change, Discover};
     use super::Route;
 
-    pub fn layer<K, S, E>(endpoint_layer: E) -> Layer<E>
+    pub fn layer<S, E>(endpoint_layer: E) -> Layer<E>
     where
-        K: WithRoute,
-        S: svc::Service + Clone,
-        E: svc::Layer<K::Output, K::Output, svc::shared::Stack<S>> + Clone,
+        S: svc::Service + Clone + HasEndpoint,
+        <S as HasEndpoint>::Endpoint: WithRoute,
+        E: svc::Layer<
+                <<S as HasEndpoint>::Endpoint as WithRoute>::Output,
+                <<S as HasEndpoint>::Endpoint as WithRoute>::Output,
+                svc::shared::Stack<S>,
+            >
+            + Clone,
     {
         Layer { endpoint_layer }
     }
@@ -329,6 +327,7 @@ pub mod per_endpoint {
         endpoint_layer: E,
     }
 
+    #[derive(Debug)]
     pub enum Error<D, E> {
         Discover(D),
         Endpoint(E),
@@ -338,14 +337,12 @@ pub mod per_endpoint {
     where
         D: svc::Stack<Route>,
         D::Value: Discover,
-        <D::Value as Discover>::Key: WithRoute,
-        <D::Value as Discover>::Service: Clone,
+        <D::Value as Discover>::Service: HasEndpoint + Clone,
+        <<D::Value as Discover>::Service as HasEndpoint>::Endpoint: WithRoute + Clone,
         E: svc::Layer<
-                <<D::Value as Discover>::Key as WithRoute>::Output,
-                <<D::Value as Discover>::Key as WithRoute>::Output,
-                svc::shared::Stack<
-                    <D::Value as Discover>::Service,
-                >,
+                <<<D::Value as Discover>::Service as HasEndpoint>::Endpoint as WithRoute>::Output,
+                <<<D::Value as Discover>::Service as HasEndpoint>::Endpoint as WithRoute>::Output,
+                svc::shared::Stack<<D::Value as Discover>::Service>,
             >
             + Clone,
         E::Value: svc::Service + Clone,
@@ -366,14 +363,12 @@ pub mod per_endpoint {
     where
         D: svc::Stack<Route>,
         D::Value: Discover,
-        <D::Value as Discover>::Key: WithRoute,
-        <D::Value as Discover>::Service: Clone,
+        <D::Value as Discover>::Service: HasEndpoint + Clone,
+        <<D::Value as Discover>::Service as HasEndpoint>::Endpoint: WithRoute + Clone,
         E: svc::Layer<
-                <<D::Value as Discover>::Key as WithRoute>::Output,
-                <<D::Value as Discover>::Key as WithRoute>::Output,
-                svc::shared::Stack<
-                    <D::Value as Discover>::Service,
-                >,
+                <<<D::Value as Discover>::Service as HasEndpoint>::Endpoint as WithRoute>::Output,
+                <<<D::Value as Discover>::Service as HasEndpoint>::Endpoint as WithRoute>::Output,
+                svc::shared::Stack<<D::Value as Discover>::Service>,
             >
             + Clone,
         E::Value: svc::Service + Clone,
@@ -394,11 +389,11 @@ pub mod per_endpoint {
     impl<D, E> Discover for PerEndpoint<D, E>
     where
         D: Discover,
-        D::Key: WithRoute,
-        D::Service: Clone,
+        D::Service: HasEndpoint + Clone,
+        <D::Service as HasEndpoint>::Endpoint: WithRoute + Clone,
         E: svc::Layer<
-                <D::Key as WithRoute>::Output,
-                <D::Key as WithRoute>::Output,
+                <<D::Service as HasEndpoint>::Endpoint as WithRoute>::Output,
+                <<D::Service as HasEndpoint>::Endpoint as WithRoute>::Output,
                 svc::shared::Stack<D::Service>,
             >
             + Clone,
@@ -414,14 +409,35 @@ pub mod per_endpoint {
         fn poll(&mut self) -> Poll<Change<Self::Key, Self::Service>, Self::DiscoverError> {
             match try_ready!(self.discover.poll().map_err(Error::Discover)) {
                 Change::Insert(key, svc) => {
+                    let endpoint = svc.endpoint().with_route(self.route.clone());
                     let svc = self
                         .endpoint_layer
                         .bind(svc::shared::stack(svc))
-                        .make(&key.with_route(self.route.clone()))
+                        .make(&endpoint)
                         .map_err(Error::Endpoint)?;
                     Ok(Change::Insert(key, svc).into())
                 }
                 Change::Remove(key) => Ok(Change::Remove(key).into()),
+            }
+        }
+    }
+
+    // === impl Error ===
+
+    impl<D: fmt::Display, E: fmt::Display> fmt::Display for Error<D, E> {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            match self {
+                Error::Discover(d) => fmt::Display::fmt(d, f),
+                Error::Endpoint(e) => fmt::Display::fmt(e, f),
+            }
+        }
+    }
+
+    impl<D: error::Error, E: error::Error> error::Error for Error<D, E> {
+        fn cause(&self) -> Option<&error::Error> {
+            match self {
+                Error::Discover(d) => error::Error::cause(d),
+                Error::Endpoint(e) => error::Error::cause(e),
             }
         }
     }

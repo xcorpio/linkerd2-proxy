@@ -3,7 +3,7 @@ use std::fmt;
 
 use app::Destination;
 use control::destination::{Metadata, ProtocolHint};
-use proxy::http::{client, router, normalize_uri::ShouldNormalizeUri};
+use proxy::http::{client, normalize_uri::ShouldNormalizeUri, profiles, router};
 use svc::{self, stack_per_request::ShouldStackPerRequest};
 use tap;
 use transport::{connect, tls};
@@ -13,6 +13,13 @@ pub struct Endpoint {
     pub dst: Destination,
     pub connect: connect::Target,
     pub metadata: Metadata,
+    _p: (),
+}
+
+#[derive(Clone, Debug)]
+pub struct RouteEndpoint {
+    pub route: profiles::Route,
+    pub endpoint: Endpoint,
     _p: (),
 }
 
@@ -30,6 +37,18 @@ impl Endpoint {
     }
 }
 
+impl profiles::per_endpoint::WithRoute for Endpoint {
+    type Output = RouteEndpoint;
+
+    fn with_route(&self, route: profiles::Route) -> Self::Output {
+        RouteEndpoint {
+            route,
+            endpoint: self.clone(),
+            _p: (),
+        }
+    }
+}
+
 impl ShouldNormalizeUri for Endpoint {
     fn should_normalize_uri(&self) -> bool {
         !self.dst.settings.is_http2() && !self.dst.settings.was_absolute_form()
@@ -42,24 +61,26 @@ impl ShouldStackPerRequest for Endpoint {
     }
 }
 
-impl svc::watch::WithUpdate<tls::ConditionalClientConfig> for Endpoint {
+impl fmt::Display for Endpoint {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.connect.addr.fmt(f)
+    }
+}
+
+// === impl RouteEndpoint ===
+
+impl svc::watch::WithUpdate<tls::ConditionalClientConfig> for RouteEndpoint {
     type Updated = Self;
 
     fn with_update(&self, client_config: &tls::ConditionalClientConfig) -> Self::Updated {
         let mut ep = self.clone();
-        ep.connect.tls = ep.metadata.tls_identity().and_then(|identity| {
+        ep.endpoint.connect.tls = ep.endpoint.metadata.tls_identity().and_then(|identity| {
             client_config.as_ref().map(|config| tls::ConnectionConfig {
                 server_identity: identity.clone(),
                 config: config.clone(),
             })
         });
         ep
-    }
-}
-
-impl fmt::Display for Endpoint {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.connect.addr.fmt(f)
     }
 }
 
@@ -70,12 +91,13 @@ impl From<Endpoint> for client::Config {
     }
 }
 
-impl From<Endpoint> for tap::Endpoint {
-    fn from(ep: Endpoint) -> Self {
+impl From<RouteEndpoint> for tap::Endpoint {
+    fn from(ep: RouteEndpoint) -> Self {
+        // TODO add route labels...
         tap::Endpoint {
             direction: tap::Direction::Out,
-            labels: ep.metadata.labels().clone(),
-            client: ep.into(),
+            labels: ep.endpoint.metadata.labels().clone(),
+            client: ep.endpoint.into(),
         }
     }
 }
@@ -156,10 +178,10 @@ pub mod discovery {
         fn poll(&mut self) -> Poll<resolve::Update<Self::Endpoint>, Self::Error> {
             match self {
                 Resolution::Name(ref dst, ref mut res) => match try_ready!(res.poll()) {
-                    resolve::Update::Remove(addr) => {
-                        Ok(Async::Ready(resolve::Update::Remove(addr)))
+                    resolve::Change::Remove(addr) => {
+                        Ok(Async::Ready(resolve::Change::Remove(addr)))
                     }
-                    resolve::Update::Add(addr, metadata) => {
+                    resolve::Change::Insert(addr, metadata) => {
                         // If the endpoint does not have TLS, note the reason.
                         // Otherwise, indicate that we don't (yet) have a TLS
                         // config. This value may be changed by a stack layer that
@@ -174,7 +196,7 @@ pub mod discovery {
                             metadata,
                             _p: (),
                         };
-                        Ok(Async::Ready(resolve::Update::Add(addr, ep)))
+                        Ok(Async::Ready(resolve::Change::Insert(addr, ep)))
                     }
                 },
                 Resolution::Addr(ref dst, ref mut addr) => match addr.take() {
@@ -186,7 +208,7 @@ pub mod discovery {
                             metadata: Metadata::none(tls),
                             _p: (),
                         };
-                        let up = resolve::Update::Add(addr, ep);
+                        let up = resolve::Change::Insert(addr, ep);
                         Ok(Async::Ready(up))
                     }
                     None => Ok(Async::NotReady),
