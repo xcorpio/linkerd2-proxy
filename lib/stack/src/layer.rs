@@ -33,6 +33,21 @@ pub trait Layer<T, U, S: super::Stack<U>> {
         }
     }
 
+    /// Compose this `Layer` with another.
+    fn push<R, L>(self, outer: L)
+        -> AndThen<T, L, Self>
+    where
+        L: Layer<R, T, Self::Stack>,
+        Self: Sized,
+    {
+        AndThen {
+            outer,
+            inner: self,
+            _p: PhantomData,
+        }
+    }
+
+
     fn map_err<M>(self, map_err: M)
         -> AndThen<T, super::map_err::Layer<M>, Self>
     where
