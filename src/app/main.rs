@@ -296,16 +296,11 @@ where
                     .push(svc::watch::layer(tls_client_config))
                     .push(buffer::layer());
 
-                let profile_route_stack = endpoint_stack
-                    .push(resolve::layer(Resolve::new(resolver)))
-                    .push(profiles::router::layer(
-                        controller,
-                        svc::stack::phantom_data::layer()
-                            //.push(profiles::per_endpoint::layer(()))
-                            .push(balance::layer()),
-                    ));
+                let profile_route_layer = balance::layer();
 
-                let dst_route_stack = profile_route_stack
+                let dst_route_stack = endpoint_stack
+                    .push(resolve::layer(Resolve::new(resolver)))
+                    .push(profiles::router::layer(controller, profile_route_layer))
                     .push(buffer::layer())
                     .push(timeout::Layer::new(config.bind_timeout))
                     .push(limit::Layer::new(MAX_IN_FLIGHT))
