@@ -40,11 +40,8 @@ impl From<inbound::Endpoint> for EndpointLabels {
     }
 }
 
-impl From<outbound::RouteEndpoint> for EndpointLabels {
-    fn from(re: outbound::RouteEndpoint) -> Self {
-        let ep = re.endpoint;
-
-        // TODO incorporate route labels.
+impl From<outbound::Endpoint> for EndpointLabels {
+    fn from(ep: outbound::Endpoint) -> Self {
         let mut label_iter = ep.metadata.labels().into_iter();
         let labels = if let Some((k0, v0)) = label_iter.next() {
             let mut s = format!("dst_{}=\"{}\"", k0, v0);

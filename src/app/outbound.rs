@@ -67,14 +67,12 @@ impl fmt::Display for Endpoint {
     }
 }
 
-// === impl RouteEndpoint ===
-
-impl svc::watch::WithUpdate<tls::ConditionalClientConfig> for RouteEndpoint {
+impl svc::watch::WithUpdate<tls::ConditionalClientConfig> for Endpoint {
     type Updated = Self;
 
     fn with_update(&self, client_config: &tls::ConditionalClientConfig) -> Self::Updated {
         let mut ep = self.clone();
-        ep.endpoint.connect.tls = ep.endpoint.metadata.tls_identity().and_then(|identity| {
+        ep.connect.tls = ep.metadata.tls_identity().and_then(|identity| {
             client_config.as_ref().map(|config| tls::ConnectionConfig {
                 server_identity: identity.clone(),
                 config: config.clone(),
@@ -91,13 +89,13 @@ impl From<Endpoint> for client::Config {
     }
 }
 
-impl From<RouteEndpoint> for tap::Endpoint {
-    fn from(ep: RouteEndpoint) -> Self {
+impl From<Endpoint> for tap::Endpoint {
+    fn from(ep: Endpoint) -> Self {
         // TODO add route labels...
         tap::Endpoint {
             direction: tap::Direction::Out,
-            labels: ep.endpoint.metadata.labels().clone(),
-            client: ep.endpoint.into(),
+            labels: ep.metadata.labels().clone(),
+            client: ep.into(),
         }
     }
 }

@@ -290,19 +290,18 @@ where
                 let endpoint_stack = client_stack
                     .push(svc::stack_per_request::layer())
                     .push(normalize_uri::Layer::new())
-                    .push(orig_proto_upgrade::Layer::new());
+                    .push(orig_proto_upgrade::Layer::new())
+                    .push(tap::Layer::new(tap_next_id.clone(), taps.clone()))
+                    .push(metrics::Layer::new(http_metrics, classify::Classify))
+                    .push(svc::watch::layer(tls_client_config))
+                    .push(buffer::layer());
 
                 let profile_route_stack = endpoint_stack
-                    .push(buffer::layer())
                     .push(resolve::layer(Resolve::new(resolver)))
                     .push(profiles::router::layer(
                         controller,
                         svc::stack::phantom_data::layer()
-                            .push(profiles::per_endpoint::layer(
-                                tap::Layer::new(tap_next_id.clone(), taps.clone())
-                                    .push(metrics::Layer::new(http_metrics, classify::Classify))
-                                    .push(svc::watch::layer(tls_client_config)),
-                            ))
+                            //.push(profiles::per_endpoint::layer(()))
                             .push(balance::layer()),
                     ));
 
