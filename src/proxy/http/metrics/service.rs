@@ -98,18 +98,7 @@ where
     C::Class: Hash + Eq,
     C::ClassifyResponse: Send + Sync + 'static,
 {
-    pub fn new<T, A, B>(registry: Arc<Mutex<Registry<K, C::Class>>>, classify: C) -> Self
-    where
-        T: Clone + Debug,
-        K: From<T>,
-        M: svc::Stack<T>,
-        M::Value: svc::Service<
-            Request = http::Request<RequestBody<A, C::Class>>,
-            Response = http::Response<B>,
-        >,
-        A: tower_h2::Body,
-        B: tower_h2::Body,
-    {
+    pub fn new(registry: Arc<Mutex<Registry<K, C::Class>>>, classify: C) -> Self {
         Self {
             classify,
             registry,

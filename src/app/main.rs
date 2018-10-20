@@ -11,12 +11,15 @@ use tokio::executor::{self, DefaultExecutor, Executor};
 use tokio::runtime::current_thread;
 use tower_h2;
 
-use app::{classify, metric_labels::EndpointLabels};
+use app::{
+    classify,
+    metric_labels::{EndpointLabels, RouteLabels},
+};
 use control;
 use dns;
 use drain;
 use logging;
-use metrics;
+use metrics::{self, FmtMetrics};
 use proxy::{
     self, buffer,
     http::{client, insert_target, metrics::timestamp_request_open, normalize_uri, router},
@@ -181,20 +184,27 @@ where
 
         let tap_next_id = tap::NextId::default();
         let (taps, observe) = control::Observe::new(100);
-        let (http_metrics, http_report) = proxy::http::metrics::new::<
-            EndpointLabels,
-            classify::Class,
-        >(config.metrics_retain_idle);
+
+        let (endpoint_http_metrics, endpoint_http_report) = {
+            proxy::http::metrics::new::<EndpointLabels, classify::Class>(config.metrics_retain_idle)
+        };
+
+        let (route_http_metrics, route_http_report) = {
+            let (m, r) = proxy::http::metrics::new::<RouteLabels, classify::Class>(
+                config.metrics_retain_idle,
+            );
+            (m, r.with_prefix("route"))
+        };
+
         let (transport_metrics, transport_report) = transport::metrics::new();
 
         let (tls_config_sensor, tls_config_report) = telemetry::tls_config_reload::new();
 
-        let report = telemetry::Report::new(
-            http_report,
-            transport_report,
-            tls_config_report,
-            telemetry::process::Report::new(start_time),
-        );
+        let report = endpoint_http_report
+            .and_then(route_http_report)
+            .and_then(transport_report)
+            .and_then(tls_config_report)
+            .and_then(telemetry::process::Report::new(start_time));
 
         let tls_client_config = tls_config_watch.client.clone();
         let tls_cfg_bg = tls_config_watch.start(tls_config_sensor);
@@ -224,7 +234,7 @@ where
                 .push(proxy::timeout::Layer::new(config.control_connect_timeout))
                 .push(svc::watch::layer(tls_client_config.clone()))
                 .push(control::add_origin::Layer::new())
-                .push(buffer::layer())
+                .push(buffer::layer("control"))
                 .push(limit::Layer::new(config.destination_concurrency_limit));
 
             // Because the control client is buffered, we need to be able to
@@ -268,7 +278,7 @@ where
                     resolve,
                 };
 
-                let http_metrics = http_metrics.clone();
+                let endpoint_http_metrics = endpoint_http_metrics.clone();
 
                 // As the outbound proxy accepts connections, we don't do any
                 // special transport-level handling.
@@ -292,16 +302,22 @@ where
                     .push(normalize_uri::Layer::new())
                     .push(orig_proto_upgrade::Layer::new())
                     .push(tap::Layer::new(tap_next_id.clone(), taps.clone()))
-                    .push(metrics::Layer::new(http_metrics, classify::Classify))
+                    .push(metrics::Layer::new(
+                        endpoint_http_metrics,
+                        classify::Classify,
+                    ))
                     .push(svc::watch::layer(tls_client_config))
-                    .push(buffer::layer());
-
-                let profile_route_layer = balance::layer();
+                    .push(buffer::layer("outbound endpoint"));
 
                 let dst_route_stack = endpoint_stack
                     .push(resolve::layer(Resolve::new(resolver)))
-                    .push(profiles::router::layer(controller, profile_route_layer))
-                    .push(buffer::layer())
+                    balance::layer()
+                    .push(profiles::router::layer(
+                        controller,
+                            .push(metrics::Layer::new(route_http_metrics, classify::Classify))
+                            .push(buffer::layer("outbound route"))
+                    ))
+                    .push(buffer::layer("outbound dst"))
                     .push(timeout::Layer::new(config.bind_timeout))
                     .push(limit::Layer::new(MAX_IN_FLIGHT))
                     .push(router::Layer::new(Recognize::new()));
@@ -364,10 +380,10 @@ where
                     .push(normalize_uri::Layer::new())
                     .push(tap::Layer::new(tap_next_id, taps))
                     .push(proxy::http::metrics::Layer::new(
-                        http_metrics,
+                        endpoint_http_metrics,
                         classify::Classify,
                     ))
-                    .push(buffer::layer())
+                    .push(buffer::layer("inbound"))
                     .push(limit::Layer::new(MAX_IN_FLIGHT))
                     .push(router::Layer::new(inbound::Recognize::new(
                         default_fwd_addr,

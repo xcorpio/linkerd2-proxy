@@ -149,6 +149,7 @@ impl pb::server::Destination for Controller {
             }
         }
 
+        println!("unexpected GetDestination call: {:?}", req);
         future::err(grpc::Error::Grpc(grpc::Status::INTERNAL, HeaderMap::new()))
     }
 
@@ -166,6 +167,7 @@ impl pb::server::Destination for Controller {
             }
         }
 
+        println!("unexpected GetProfile call: {:?}", req);
         future::err(grpc::Error::Grpc(grpc::Status::INTERNAL, HeaderMap::new()))
     }
 }
