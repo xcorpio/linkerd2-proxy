@@ -1,5 +1,6 @@
 use futures::{Async, Future, Poll, Stream};
 use regex::Regex;
+use std::fmt;
 use std::time::Duration;
 use tokio_timer::{clock, Delay};
 use tower_grpc as grpc;
@@ -35,12 +36,10 @@ impl<T> Client<T>
 where
     T: HttpService<RequestBody = BoxBody> + Clone,
     T::ResponseBody: Body<Data = Data>,
+    T::Error: fmt::Debug,
 {
     pub fn new(service: Option<T>, backoff: Duration) -> Self {
-        Self {
-            service,
-            backoff,
-        }
+        Self { service, backoff }
     }
 }
 
@@ -48,6 +47,7 @@ impl<T> profiles::GetRoutes for Client<T>
 where
     T: HttpService<RequestBody = BoxBody> + Clone,
     T::ResponseBody: Body<Data = Data>,
+    T::Error: fmt::Debug,
 {
     type Stream = Rx<T>;
 
@@ -67,6 +67,7 @@ impl<T> Stream for Rx<T>
 where
     T: HttpService<RequestBody = BoxBody> + Clone,
     T::ResponseBody: Body<Data = Data>,
+    T::Error: fmt::Debug,
 {
     type Item = Vec<(profiles::RequestMatch, profiles::Route)>;
     type Error = profiles::Error;
@@ -77,30 +78,44 @@ where
                 self.state = match self.state {
                     State::Disconnected => {
                         let mut client = api::client::Destination::new(service.clone());
-                        let rspf = client.get_profile(grpc::Request::new(api::GetDestination {
+                        let req = api::GetDestination {
                             scheme: "http".to_owned(),
                             path: self.dst.clone(),
-                        }));
+                        };
+                        debug!("disconnected; getting profile: {:?}", req);
+                        let rspf = client.get_profile(grpc::Request::new(req));
                         State::Waiting(rspf)
                     }
-                    State::Backoff(ref mut f) => match f.poll() {
+                    State::Waiting(ref mut f) => match f.poll() {
                         Ok(Async::NotReady) => return Ok(Async::NotReady),
-                        Err(_) | Ok(Async::Ready(())) => State::Disconnected,
-                    }
-                   State::Waiting(ref mut f) => match f.poll() {
-                        Ok(Async::NotReady) => return Ok(Async::NotReady),
-                        Ok(Async::Ready(rsp)) => State::Streaming(rsp.into_inner()),
-                        Err(_) => State::Backoff(Delay::new(clock::now() + self.backoff)),
+                        Ok(Async::Ready(rsp)) => {
+                            debug!("response received");
+                            State::Streaming(rsp.into_inner())
+                        }
+                        Err(e) => {
+                            warn!("error fetching profile for {}: {:?}", self.dst, e);
+                            State::Backoff(Delay::new(clock::now() + self.backoff))
+                        }
                     },
                     State::Streaming(ref mut s) => match s.poll() {
                         Ok(Async::NotReady) => return Ok(Async::NotReady),
                         Ok(Async::Ready(Some(profile))) => {
+                            debug!("profile received: {:?}", profile);
                             let routes = Self::convert_routes(profile);
                             return Ok(Async::Ready(Some(routes)));
                         }
-                        Ok(Async::Ready(None)) | Err(_) => {
+                        Ok(Async::Ready(None)) => {
+                            debug!("profile stream ended");
                             State::Backoff(Delay::new(clock::now() + self.backoff))
                         }
+                        Err(e) => {
+                            warn!("profile stream failed: {:?}", e);
+                            State::Backoff(Delay::new(clock::now() + self.backoff))
+                        }
+                    },
+                    State::Backoff(ref mut f) => match f.poll() {
+                        Ok(Async::NotReady) => return Ok(Async::NotReady),
+                        Err(_) | Ok(Async::Ready(())) => State::Disconnected,
                     },
                 };
             }
