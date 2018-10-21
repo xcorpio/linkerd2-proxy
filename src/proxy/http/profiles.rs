@@ -2,7 +2,6 @@
 
 extern crate tower_discover;
 
-use self::tower_discover::Discover;
 use futures::Stream;
 use http;
 use indexmap::IndexMap;
@@ -100,7 +99,7 @@ impl fmt::Display for Error {
 impl error::Error for Error {}
 
 pub mod router {
-    use futures::{Async, Future, Poll, Stream};
+    use futures::{Async, Poll, Stream};
     use http;
     use std::{error, fmt};
 
@@ -108,18 +107,16 @@ pub mod router {
 
     use super::*;
 
-    pub fn layer<T, D, G, R>(get_routes: G, route_layer: R) -> Layer<G, D, R>
+    pub fn layer<T, G, M, R>(get_routes: G, route_layer: R) -> Layer<G, M, R>
     where
         T: CanGetDestination + WithRoute + Clone,
-        D: svc::Stack<T>,
-        D::Value: Discover,
-        <D::Value as Discover>::Key: Clone,
-        <D::Value as Discover>::Service: Clone,
+        M: svc::Stack<T>,
+        M::Value: Clone,
         G: GetRoutes + Clone,
         R: svc::Layer<
                 <T as WithRoute>::Output,
                 <T as WithRoute>::Output,
-                shared_discover::Stack<D::Value>,
+                svc::shared::Stack<M::Value>,
             >
             + Clone,
         R::Value: svc::Service,
@@ -133,16 +130,16 @@ pub mod router {
     }
 
     #[derive(Clone, Debug)]
-    pub struct Layer<G, D, R = ()> {
+    pub struct Layer<G, M, R = ()> {
         get_routes: G,
         route_layer: R,
         default_route: Route,
-        _p: ::std::marker::PhantomData<fn() -> D>,
+        _p: ::std::marker::PhantomData<fn() -> M>,
     }
 
     #[derive(Clone, Debug)]
-    pub struct Stack<D, G, R = ()> {
-        discover: D,
+    pub struct Stack<G, M, R = ()> {
+        inner: M,
         get_routes: G,
         route_layer: R,
         default_route: Route,
@@ -150,22 +147,18 @@ pub mod router {
 
     #[derive(Debug)]
     pub enum Error<D, R> {
-        Discover(D),
+        Inner(D),
         Route(R),
     }
 
-    pub struct Service<D, G, T, R>
+    pub struct Service<G, T, R>
     where
-        D: Discover,
-        D::Key: Clone,
-        D::Service: Clone,
         T: WithRoute,
         R: svc::Stack<T::Output>,
         R::Value: svc::Service,
     {
         target: T,
         stack: R,
-        discover_bg: Option<shared_discover::Background<D>>,
         route_stream: G,
         routes: Vec<(RequestMatch, R::Value)>,
         default_route: R::Value,
@@ -174,7 +167,7 @@ pub mod router {
     impl<D: fmt::Display, R: fmt::Display> fmt::Display for Error<D, R> {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             match self {
-                Error::Discover(e) => fmt::Display::fmt(&e, f),
+                Error::Inner(e) => fmt::Display::fmt(&e, f),
                 Error::Route(e) => fmt::Display::fmt(&e, f),
             }
         }
@@ -182,29 +175,27 @@ pub mod router {
 
     impl<D: error::Error, R: error::Error> error::Error for Error<D, R> {}
 
-    impl<T, D, G, R> svc::Layer<T, T, D> for Layer<G, D, R>
+    impl<T, G, M, R> svc::Layer<T, T, M> for Layer<G, M, R>
     where
         T: CanGetDestination + WithRoute + Clone,
-        D: svc::Stack<T>,
-        D::Value: Discover,
-        <D::Value as Discover>::Key: Clone,
-        <D::Value as Discover>::Service: Clone,
         G: GetRoutes + Clone,
+        M: svc::Stack<T>,
+        M::Value: Clone,
         R: svc::Layer<
                 <T as WithRoute>::Output,
                 <T as WithRoute>::Output,
-                shared_discover::Stack<D::Value>,
+                svc::shared::Stack<M::Value>,
             >
             + Clone,
         R::Value: svc::Service,
     {
-        type Value = <Stack<D, G, R> as svc::Stack<T>>::Value;
-        type Error = <Stack<D, G, R> as svc::Stack<T>>::Error;
-        type Stack = Stack<D, G, R>;
+        type Value = <Stack<G, M, R> as svc::Stack<T>>::Value;
+        type Error = <Stack<G, M, R> as svc::Stack<T>>::Error;
+        type Stack = Stack<G, M, R>;
 
-        fn bind(&self, discover: D) -> Self::Stack {
+        fn bind(&self, inner: M) -> Self::Stack {
             Stack {
-                discover,
+                inner,
                 get_routes: self.get_routes.clone(),
                 route_layer: self.route_layer.clone(),
                 default_route: self.default_route.clone(),
@@ -212,32 +203,26 @@ pub mod router {
         }
     }
 
-    impl<T, D, G, R> svc::Stack<T> for Stack<D, G, R>
+    impl<T, G, M, R> svc::Stack<T> for Stack<G, M, R>
     where
         T: CanGetDestination + WithRoute + Clone,
-        D: svc::Stack<T>,
-        D::Value: Discover,
-        <D::Value as Discover>::Key: Clone,
-        <D::Value as Discover>::Service: Clone,
+        M: svc::Stack<T>,
+        M::Value: Clone,
         G: GetRoutes,
         R: svc::Layer<
                 <T as WithRoute>::Output,
                 <T as WithRoute>::Output,
-                shared_discover::Stack<D::Value>,
+                svc::shared::Stack<M::Value>,
             >
             + Clone,
         R::Value: svc::Service,
     {
-        type Value = Service<D::Value, G::Stream, T, R::Stack>;
-        type Error = Error<D::Error, R::Error>;
+        type Value = Service<G::Stream, T, R::Stack>;
+        type Error = Error<M::Error, R::Error>;
 
         fn make(&self, target: &T) -> Result<Self::Value, Self::Error> {
-            let (stack, discover_bg) = {
-                let discover = self.discover.make(&target).map_err(Error::Discover)?;
-                let (share, bg) = shared_discover::new(discover);
-                let stack = self.route_layer.bind(share);
-                (stack, bg)
-            };
+            let inner = self.inner.make(&target).map_err(Error::Inner)?;
+            let stack = self.route_layer.bind(svc::shared::stack(inner));
 
             let default_route = {
                 let t = target.clone().with_route(self.default_route.clone());
@@ -251,17 +236,13 @@ pub mod router {
                 stack,
                 route_stream,
                 default_route,
-                discover_bg: Some(discover_bg),
                 routes: Vec::new(),
             })
         }
     }
 
-    impl<D, G, T, R> Service<D, G, T, R>
+    impl<G, T, R> Service<G, T, R>
     where
-        D: Discover,
-        D::Key: Clone,
-        D::Service: Clone,
         T: WithRoute + Clone,
         R: svc::Stack<T::Output> + Clone,
         R::Value: svc::Service,
@@ -280,13 +261,9 @@ pub mod router {
         }
     }
 
-    impl<D, G, T, R, B> svc::Service for Service<D, G, T, R>
+    impl<G, T, R, B> svc::Service for Service<G, T, R>
     where
         G: Stream<Item = Routes, Error = super::Error>,
-        D: Discover,
-        D::Key: Clone,
-        D::Service: Clone,
-        D::DiscoverError: fmt::Debug,
         T: WithRoute + Clone,
         R: svc::Stack<T::Output> + Clone,
         R::Value: svc::Service<Request = http::Request<B>>,
@@ -297,18 +274,6 @@ pub mod router {
         type Future = <R::Value as svc::Service>::Future;
 
         fn poll_ready(&mut self) -> Poll<(), Self::Error> {
-            match self.discover_bg.as_mut().map(|f| f.poll()) {
-                Some(Ok(Async::NotReady)) | None => {}
-                Some(Err(e)) => {
-                    error!("discover background task failed: {:?}", e);
-                    self.discover_bg = None;
-                }
-                Some(Ok(Async::Ready(()))) => {
-                    debug!("discover background task finished");
-                    self.discover_bg = None;
-                }
-            }
-
             while let Async::Ready(r) = self.route_stream.poll().unwrap() {
                 let routes = r.expect("profile stream must be infinite");
                 self.update_routes(routes);

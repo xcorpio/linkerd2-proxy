@@ -1,5 +1,7 @@
 use futures::{Async, Future, Poll, Stream};
 use regex::Regex;
+use std::time::Duration;
+use tokio_timer::{clock, Delay};
 use tower_grpc as grpc;
 use tower_h2::{Body, BoxBody, Data, HttpService};
 
@@ -7,7 +9,42 @@ use api::destination as api;
 
 use proxy::http::profiles;
 
-impl<T> profiles::GetRoutes for Option<T>
+#[derive(Clone, Debug)]
+pub struct Client<T> {
+    service: Option<T>,
+    backoff: Duration,
+}
+
+pub struct Rx<T: HttpService> {
+    dst: String,
+    backoff: Duration,
+    service: Option<T>,
+    state: State<T>,
+}
+
+enum State<T: HttpService> {
+    Disconnected,
+    Backoff(Delay),
+    Waiting(grpc::client::server_streaming::ResponseFuture<api::DestinationProfile, T::Future>),
+    Streaming(grpc::Streaming<api::DestinationProfile, T::ResponseBody>),
+}
+
+// === impl Client ===
+
+impl<T> Client<T>
+where
+    T: HttpService<RequestBody = BoxBody> + Clone,
+    T::ResponseBody: Body<Data = Data>,
+{
+    pub fn new(service: Option<T>, backoff: Duration) -> Self {
+        Self {
+            service,
+            backoff,
+        }
+    }
+}
+
+impl<T> profiles::GetRoutes for Client<T>
 where
     T: HttpService<RequestBody = BoxBody> + Clone,
     T::ResponseBody: Body<Data = Data>,
@@ -15,25 +52,16 @@ where
     type Stream = Rx<T>;
 
     fn get_routes(&self, dst: String) -> Self::Stream {
-       Rx {
+        Rx {
             state: State::Disconnected,
-            service: self.clone(),
+            service: self.service.clone(),
             dst,
+            backoff: self.backoff,
         }
     }
 }
 
-pub struct Rx<T: HttpService> {
-    dst: String,
-    service: Option<T>,
-    state: State<T>,
-}
-
-enum State<T: HttpService> {
-    Disconnected,
-    Waiting(grpc::client::server_streaming::ResponseFuture<api::DestinationProfile, T::Future>),
-    Streaming(grpc::Streaming<api::DestinationProfile, T::ResponseBody>),
-}
+// === impl Rx ===
 
 impl<T> Stream for Rx<T>
 where
@@ -44,8 +72,8 @@ where
     type Error = profiles::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        match self.service {
-            Some(ref service) => loop {
+        if let Some(ref service) = self.service {
+            loop {
                 self.state = match self.state {
                     State::Disconnected => {
                         let mut client = api::client::Destination::new(service.clone());
@@ -55,22 +83,30 @@ where
                         }));
                         State::Waiting(rspf)
                     }
-                    State::Waiting(ref mut f) => match f.poll() {
+                    State::Backoff(ref mut f) => match f.poll() {
                         Ok(Async::NotReady) => return Ok(Async::NotReady),
-                        Ok(Async::Ready(s)) => State::Streaming(s.into_inner()),
-                        Err(_) => State::Disconnected,
+                        Err(_) | Ok(Async::Ready(())) => State::Disconnected,
+                    }
+                   State::Waiting(ref mut f) => match f.poll() {
+                        Ok(Async::NotReady) => return Ok(Async::NotReady),
+                        Ok(Async::Ready(rsp)) => State::Streaming(rsp.into_inner()),
+                        Err(_) => State::Backoff(Delay::new(clock::now() + self.backoff)),
                     },
-                    State::Streaming(ref mut stream) => match stream.poll() {
+                    State::Streaming(ref mut s) => match s.poll() {
                         Ok(Async::NotReady) => return Ok(Async::NotReady),
-                        Ok(Async::Ready(Some(p))) => {
-                            return Ok(Async::Ready(Some(Self::convert_routes(p))));
+                        Ok(Async::Ready(Some(profile))) => {
+                            let routes = Self::convert_routes(profile);
+                            return Ok(Async::Ready(Some(routes)));
                         }
-                        Ok(Async::Ready(None)) | Err(_) => State::Disconnected,
+                        Ok(Async::Ready(None)) | Err(_) => {
+                            State::Backoff(Delay::new(clock::now() + self.backoff))
+                        }
                     },
                 };
             }
-            None => Ok(Async::Ready(Some(Vec::new()))),
         }
+
+        Ok(Async::Ready(Some(Vec::new())))
     }
 }
 

@@ -5,7 +5,7 @@ use http;
 use indexmap::IndexSet;
 use std::net::SocketAddr;
 use std::thread;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 use std::{error, fmt, io};
 use tokio::executor::{self, DefaultExecutor, Executor};
 use tokio::runtime::current_thread;
@@ -273,6 +273,7 @@ where
                 use super::outbound::{
                     discovery::Resolve, orig_proto_upgrade, Endpoint, Recognize,
                 };
+                use super::profiles::Client as ProfilesClient;
                 use proxy::{
                     http::{balance, metrics, profiles},
                     resolve,
@@ -311,11 +312,11 @@ where
 
                 let dst_route_stack = endpoint_stack
                     .push(resolve::layer(Resolve::new(resolver)))
-                    balance::layer()
+                    .push(balance::layer())
+                    .push(buffer::layer("outbound dst"))
                     .push(profiles::router::layer(
-                        controller,
-                            .push(metrics::Layer::new(route_http_metrics, classify::Classify))
-                            .push(buffer::layer("outbound route"))
+                        ProfilesClient::new(controller, Duration::from_secs(3)),
+                        metrics::Layer::new(route_http_metrics, classify::Classify),
                     ))
                     .push(buffer::layer("outbound dst"))
                     .push(timeout::Layer::new(config.bind_timeout))
