@@ -89,7 +89,7 @@ where
                 State::Disconnected => {
                     let mut client = api::client::Destination::new(service.clone());
                     let req = api::GetDestination {
-                        scheme: "http".to_owned(),
+                        scheme: "k8s".to_owned(),
                         path: self.dst.clone(),
                     };
                     debug!("disconnected; getting profile: {:?}", req);
