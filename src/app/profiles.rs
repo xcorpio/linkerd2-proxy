@@ -8,11 +8,14 @@ use tower_h2::{Body, BoxBody, Data, HttpService};
 
 use api::destination as api;
 
+use control::NameNormalizer;
 use proxy::http::profiles;
+use transport::DnsNameAndPort;
 
 #[derive(Clone, Debug)]
-pub struct Client<T> {
+pub struct Client<T, N> {
     service: Option<T>,
+    normalizer: N,
     backoff: Duration,
 }
 
@@ -32,32 +35,35 @@ enum State<T: HttpService> {
 
 // === impl Client ===
 
-impl<T> Client<T>
+impl<T, N> Client<T, N>
 where
     T: HttpService<RequestBody = BoxBody> + Clone,
     T::ResponseBody: Body<Data = Data>,
     T::Error: fmt::Debug,
+    N: NameNormalizer,
 {
-    pub fn new(service: Option<T>, backoff: Duration) -> Self {
-        Self { service, backoff }
+    pub fn new(service: Option<T>, backoff: Duration, normalizer: N) -> Self {
+        Self { service, backoff, normalizer }
     }
 }
 
-impl<T> profiles::GetRoutes for Client<T>
+impl<T, N> profiles::GetRoutes for Client<T, N>
 where
     T: HttpService<RequestBody = BoxBody> + Clone,
     T::ResponseBody: Body<Data = Data>,
     T::Error: fmt::Debug,
+    N: NameNormalizer,
 {
     type Stream = Rx<T>;
 
-    fn get_routes(&self, dst: String) -> Self::Stream {
-        Rx {
+    fn get_routes(&self, dst: &DnsNameAndPort) -> Option<Self::Stream> {
+        let fqa = self.normalizer.normalize(dst)?;
+        Some(Rx {
+            dst: fqa.without_trailing_dot().to_owned(),
             state: State::Disconnected,
             service: self.service.clone(),
-            dst,
             backoff: self.backoff,
-        }
+        })
     }
 }
 

@@ -149,8 +149,11 @@ impl Destination {
 }
 
 impl CanGetDestination for Destination {
-    fn get_destination(&self) -> String {
-        format!("{}", self.name_or_addr)
+    fn get_destination(&self) -> Option<&DnsNameAndPort> {
+        match self.name_or_addr {
+            NameOrAddr::Name(ref dst) => Some(dst),
+            _ => None,
+        }
     }
 }
 

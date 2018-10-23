@@ -274,6 +274,7 @@ where
                     discovery::Resolve, orig_proto_upgrade, Endpoint, Recognize,
                 };
                 use super::profiles::Client as ProfilesClient;
+                use control::KubernetesNormalizer;
                 use proxy::{
                     http::{balance, metrics, profiles},
                     resolve,
@@ -315,7 +316,11 @@ where
                     .push(balance::layer())
                     .push(buffer::layer("outbound dst"))
                     .push(profiles::router::layer(
-                        ProfilesClient::new(controller, Duration::from_secs(3)),
+                        ProfilesClient::new(
+                            controller,
+                            Duration::from_secs(3),
+                            KubernetesNormalizer::new(config.namespaces.pod.clone()),
+                        ),
                         metrics::Layer::new(route_http_metrics, classify::Classify),
                     ))
                     .push(buffer::layer("outbound dst"))

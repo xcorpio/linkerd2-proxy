@@ -10,8 +10,10 @@ use std::iter::FromIterator;
 use std::sync::Arc;
 use std::{error, fmt};
 
+use transport::DnsNameAndPort;
+
 pub trait CanGetDestination {
-    fn get_destination(&self) -> String;
+    fn get_destination(&self) -> Option<&DnsNameAndPort>;
 }
 
 pub type Routes = Vec<(RequestMatch, Route)>;
@@ -19,7 +21,7 @@ pub type Routes = Vec<(RequestMatch, Route)>;
 pub trait GetRoutes {
     type Stream: Stream<Item = Routes, Error = Error>;
 
-    fn get_routes(&self, dst: String) -> Self::Stream;
+    fn get_routes(&self, dst: &DnsNameAndPort) -> Option<Self::Stream>;
 }
 
 pub trait WithRoute {
@@ -159,7 +161,7 @@ pub mod router {
     {
         target: T,
         stack: R,
-        route_stream: G,
+        route_stream: Option<G>,
         routes: Vec<(RequestMatch, R::Value)>,
         default_route: R::Value,
     }
@@ -229,7 +231,8 @@ pub mod router {
                 stack.make(&t).map_err(Error::Route)?
             };
 
-            let route_stream = self.get_routes.get_routes(target.get_destination());
+            let route_stream = target.get_destination()
+                .and_then(|d| self.get_routes.get_routes(&d));
 
             Ok(Service {
                 target: target.clone(),
@@ -243,6 +246,7 @@ pub mod router {
 
     impl<G, T, R> Service<G, T, R>
     where
+        G: Stream<Item = Routes, Error = super::Error>,
         T: WithRoute + Clone,
         R: svc::Stack<T::Output> + Clone,
         R::Value: svc::Service,
@@ -259,6 +263,11 @@ pub mod router {
                 }
             }
         }
+
+        fn poll_route_stream(&mut self) -> Option<Async<Option<Routes>>> {
+            self.route_stream.as_mut()
+                .and_then(|ref mut s| s.poll().ok())
+        }
     }
 
     impl<G, T, R, B> svc::Service for Service<G, T, R>
@@ -274,8 +283,7 @@ pub mod router {
         type Future = <R::Value as svc::Service>::Future;
 
         fn poll_ready(&mut self) -> Poll<(), Self::Error> {
-            while let Async::Ready(r) = self.route_stream.poll().unwrap() {
-                let routes = r.expect("profile stream must be infinite");
+            while let Some(Async::Ready(Some(routes))) = self.poll_route_stream() {
                 self.update_routes(routes);
             }
 
