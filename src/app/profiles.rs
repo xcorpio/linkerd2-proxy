@@ -73,55 +73,56 @@ where
     type Error = profiles::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        if let Some(ref service) = self.service {
-            loop {
-                self.state = match self.state {
-                    State::Disconnected => {
-                        let mut client = api::client::Destination::new(service.clone());
-                        let req = api::GetDestination {
-                            scheme: "http".to_owned(),
-                            path: self.dst.clone(),
-                        };
-                        debug!("disconnected; getting profile: {:?}", req);
-                        let rspf = client.get_profile(grpc::Request::new(req));
-                        State::Waiting(rspf)
-                    }
-                    State::Waiting(ref mut f) => match f.poll() {
-                        Ok(Async::NotReady) => return Ok(Async::NotReady),
-                        Ok(Async::Ready(rsp)) => {
-                            debug!("response received");
-                            State::Streaming(rsp.into_inner())
-                        }
-                        Err(e) => {
-                            warn!("error fetching profile for {}: {:?}", self.dst, e);
-                            State::Backoff(Delay::new(clock::now() + self.backoff))
-                        }
-                    },
-                    State::Streaming(ref mut s) => match s.poll() {
-                        Ok(Async::NotReady) => return Ok(Async::NotReady),
-                        Ok(Async::Ready(Some(profile))) => {
-                            debug!("profile received: {:?}", profile);
-                            let routes = Self::convert_routes(profile);
-                            return Ok(Async::Ready(Some(routes)));
-                        }
-                        Ok(Async::Ready(None)) => {
-                            debug!("profile stream ended");
-                            State::Backoff(Delay::new(clock::now() + self.backoff))
-                        }
-                        Err(e) => {
-                            warn!("profile stream failed: {:?}", e);
-                            State::Backoff(Delay::new(clock::now() + self.backoff))
-                        }
-                    },
-                    State::Backoff(ref mut f) => match f.poll() {
-                        Ok(Async::NotReady) => return Ok(Async::NotReady),
-                        Err(_) | Ok(Async::Ready(())) => State::Disconnected,
-                    },
-                };
-            }
-        }
+        let service = match self.service {
+            Some(ref s) => s,
+            None => return Ok(Async::Ready(Some(Vec::new()))),
+        };
 
-        Ok(Async::Ready(Some(Vec::new())))
+        loop {
+            self.state = match self.state {
+                State::Disconnected => {
+                    let mut client = api::client::Destination::new(service.clone());
+                    let req = api::GetDestination {
+                        scheme: "http".to_owned(),
+                        path: self.dst.clone(),
+                    };
+                    debug!("disconnected; getting profile: {:?}", req);
+                    let rspf = client.get_profile(grpc::Request::new(req));
+                    State::Waiting(rspf)
+                }
+                State::Waiting(ref mut f) => match f.poll() {
+                    Ok(Async::NotReady) => return Ok(Async::NotReady),
+                    Ok(Async::Ready(rsp)) => {
+                        debug!("response received");
+                        State::Streaming(rsp.into_inner())
+                    }
+                    Err(e) => {
+                        warn!("error fetching profile for {}: {:?}", self.dst, e);
+                        State::Backoff(Delay::new(clock::now() + self.backoff))
+                    }
+                },
+                State::Streaming(ref mut s) => match s.poll() {
+                    Ok(Async::NotReady) => return Ok(Async::NotReady),
+                    Ok(Async::Ready(Some(profile))) => {
+                        debug!("profile received: {:?}", profile);
+                        let routes = Self::convert_routes(profile);
+                        return Ok(Async::Ready(Some(routes)));
+                    }
+                    Ok(Async::Ready(None)) => {
+                        debug!("profile stream ended");
+                        State::Backoff(Delay::new(clock::now() + self.backoff))
+                    }
+                    Err(e) => {
+                        warn!("profile stream failed: {:?}", e);
+                        State::Backoff(Delay::new(clock::now() + self.backoff))
+                    }
+                },
+                State::Backoff(ref mut f) => match f.poll() {
+                    Ok(Async::NotReady) => return Ok(Async::NotReady),
+                    Err(_) | Ok(Async::Ready(())) => State::Disconnected,
+                },
+            };
+        }
     }
 }
 
