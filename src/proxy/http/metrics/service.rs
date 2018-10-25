@@ -415,6 +415,7 @@ where
 
         if let c @ Some(_) = self.class_at_first_byte.take() {
             self.record_class(c);
+            self.classify = None;
         }
 
         Ok(Async::Ready(frame))
