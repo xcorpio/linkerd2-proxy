@@ -12,7 +12,7 @@ use tokio::runtime::current_thread;
 use tower_h2;
 
 use app::{
-    classify,
+    classify::{Class, ClassifyResponse},
     metric_labels::{EndpointLabels, RouteLabels},
 };
 use control;
@@ -185,14 +185,12 @@ where
         let tap_next_id = tap::NextId::default();
         let (taps, observe) = control::Observe::new(100);
 
-        let (endpoint_http_metrics, endpoint_http_report) = {
-            proxy::http::metrics::new::<EndpointLabels, classify::Class>(config.metrics_retain_idle)
-        };
+        let (endpoint_http_metrics, endpoint_http_report) =
+            proxy::http::metrics::new::<EndpointLabels, Class>(config.metrics_retain_idle);
 
         let (route_http_metrics, route_http_report) = {
-            let (m, r) = proxy::http::metrics::new::<RouteLabels, classify::Class>(
-                config.metrics_retain_idle,
-            );
+            let (m, r) =
+                proxy::http::metrics::new::<RouteLabels, Class>(config.metrics_retain_idle);
             (m, r.with_prefix("route"))
         };
 
@@ -304,9 +302,7 @@ where
                     .push(normalize_uri::Layer::new())
                     .push(orig_proto_upgrade::layer())
                     .push(tap::Layer::new(tap_next_id.clone(), taps.clone()))
-                    .push(metrics::layer::<_, classify::ClassifyResponse>(
-                        endpoint_http_metrics,
-                    ))
+                    .push(metrics::layer::<_, ClassifyResponse>(endpoint_http_metrics))
                     .push(svc::watch::layer(tls_client_config))
                     .push(buffer::layer("outbound endpoint"));
 
@@ -321,9 +317,7 @@ where
                             KubernetesNormalizer::new(config.namespaces.pod.clone()),
                         ),
                         svc::stack::phantom_data::layer()
-                            .push(metrics::layer::<_, classify::ClassifyResponse>(
-                                route_http_metrics,
-                            ))
+                            .push(metrics::layer::<_, ClassifyResponse>(route_http_metrics))
                             .push(insert_classify::layer()),
                     ))
                     .push(buffer::layer("outbound dst"))
@@ -388,11 +382,9 @@ where
                     .push(svc::stack_per_request::layer())
                     .push(normalize_uri::Layer::new())
                     .push(tap::Layer::new(tap_next_id, taps))
-                    .push(
-                        proxy::http::metrics::layer::<_, classify::ClassifyResponse>(
-                            endpoint_http_metrics,
-                        ),
-                    )
+                    .push(proxy::http::metrics::layer::<_, ClassifyResponse>(
+                        endpoint_http_metrics,
+                    ))
                     .push(buffer::layer("inbound"))
                     .push(limit::Layer::new(MAX_IN_FLIGHT))
                     .push(router::Layer::new(inbound::Recognize::new(
