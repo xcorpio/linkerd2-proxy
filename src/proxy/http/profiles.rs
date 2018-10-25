@@ -177,6 +177,16 @@ impl fmt::Display for Error {
 
 impl error::Error for Error {}
 
+/// A stack module that produces a Service that routes requests through alternate
+/// middleware configurations
+///
+/// As the router's Stack is built, a destination is extracted from the stack's
+/// target and it is used to get route profiles from ` GetRoutes` implemetnation.
+///
+/// Each route uses a shared underlying stack. As such, it assumed that the
+/// underlying stack is buffered, and so `poll_ready` is NOT called on the routes
+/// before requests are dispatched. If an individual route wishes to apply
+/// backpressure, it must implement its own buffer/limit strategy.
 pub mod router {
     use futures::{Async, Poll, Stream};
     use http;
