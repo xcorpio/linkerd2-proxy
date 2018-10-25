@@ -1,13 +1,17 @@
 use h2;
 use http;
+use std::sync::Arc;
 
-use proxy::http::classify;
+use proxy::http::{classify, profiles};
 
-#[derive(Clone, Debug)]
-pub struct Classify;
+#[derive(Clone, Debug, Default)]
+pub struct Classify {
+    classes: Arc<Vec<profiles::ResponseClass>>,
+}
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct ClassifyResponse {
+    classes: Arc<Vec<profiles::ResponseClass>>,
     status: Option<http::StatusCode>,
 }
 
@@ -19,7 +23,20 @@ pub enum Class {
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub enum SuccessOrFailure { Success, Failure }
+pub enum SuccessOrFailure {
+    Success,
+    Failure,
+}
+
+// === impl Classify ===
+
+impl Classify {
+    pub fn new(classes: Vec<profiles::ResponseClass>) -> Self {
+        Self {
+            classes: Arc::new(classes),
+        }
+    }
+}
 
 impl classify::Classify for Classify {
     type Class = Class;
@@ -27,16 +44,32 @@ impl classify::Classify for Classify {
     type ClassifyResponse = ClassifyResponse;
 
     fn classify<B>(&self, _: &http::Request<B>) -> Self::ClassifyResponse {
-        ClassifyResponse { status: None }
+        ClassifyResponse {
+            classes: self.classes.clone(),
+            status: None,
+        }
     }
 }
+
+// === impl ClassifyResponse ===
 
 impl classify::ClassifyResponse for ClassifyResponse {
     type Class = Class;
     type Error = h2::Error;
 
     fn start<B>(&mut self, rsp: &http::Response<B>) -> Option<Self::Class> {
-        self.status = Some(rsp.status().clone());
+        for class in self.classes.as_ref() {
+            if class.is_match(rsp) {
+                let result = if class.is_failure() {
+                    SuccessOrFailure::Failure
+                } else {
+                    SuccessOrFailure::Success
+                };
+                return Some(Class::Http(result, rsp.status()));
+            }
+        }
+
+        self.status = Some(rsp.status());
         None
     }
 
@@ -51,7 +84,7 @@ impl classify::ClassifyResponse for ClassifyResponse {
                     Class::Grpc(SuccessOrFailure::Success, grpc_status)
                 } else {
                     Class::Grpc(SuccessOrFailure::Failure, grpc_status)
-                }
+                };
             }
         }
 
@@ -68,4 +101,3 @@ impl classify::ClassifyResponse for ClassifyResponse {
         Class::Stream(SuccessOrFailure::Failure, format!("{}", err))
     }
 }
-

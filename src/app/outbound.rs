@@ -350,7 +350,7 @@ pub mod orig_proto_upgrade {
     use svc;
 
     #[derive(Debug, Clone)]
-    pub struct Layer;
+    pub struct Layer();
 
     #[derive(Clone, Debug)]
     pub struct Stack<M>
@@ -360,10 +360,10 @@ pub mod orig_proto_upgrade {
         inner: M,
     }
 
-    impl Layer {
-        pub fn new() -> Self {
-            Layer
-        }
+    // === impl Layer ===
+
+    pub fn layer() -> Layer {
+        Layer()
     }
 
     impl<M, A, B> svc::Layer<Endpoint, Endpoint, M> for Layer
@@ -379,6 +379,8 @@ pub mod orig_proto_upgrade {
             Stack { inner }
         }
     }
+
+    // === impl Stack ===
 
     impl<M, A, B> svc::Stack<Endpoint> for Stack<M>
     where
@@ -399,6 +401,87 @@ pub mod orig_proto_upgrade {
             } else {
                 self.inner.make(&endpoint).map(svc::Either::B)
             }
+        }
+    }
+}
+
+pub mod insert_classify {
+    use futures::Poll;
+    use http;
+
+    use app::classify::Classify;
+    use proxy::http::Classify as _Classify;
+    use super::Route;
+    use svc;
+
+    #[derive(Debug, Clone)]
+    pub struct Layer;
+
+    #[derive(Clone, Debug)]
+    pub struct Stack<M>
+    where
+        M: svc::Stack<Route>,
+    {
+        inner: M,
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct Service<S: svc::Service> {
+        inner: S,
+        classify: Classify,
+    }
+
+    pub fn layer() -> Layer {
+            Layer
+    }
+
+    impl<M, A, B> svc::Layer<Route, Route, M> for Layer
+    where
+        M: svc::Stack<Route>,
+        M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
+    {
+        type Value = <Stack<M> as svc::Stack<Route>>::Value;
+        type Error = <Stack<M> as svc::Stack<Route>>::Error;
+        type Stack = Stack<M>;
+
+        fn bind(&self, inner: M) -> Self::Stack {
+            Stack { inner }
+        }
+    }
+
+    impl<M, A, B> svc::Stack<Route> for Stack<M>
+    where
+        M: svc::Stack<Route>,
+        M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
+    {
+        type Value = Service<M::Value>;
+        type Error = M::Error;
+
+        fn make(&self, target: &Route) -> Result<Self::Value, Self::Error> {
+            let inner = self.inner.make(target)?;
+            let classify = Classify::new(target.route.response_classes().clone());
+            Ok(Service { inner, classify })
+        }
+    }
+
+    impl<S, A, B> svc::Service for Service<S>
+    where
+        S: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
+    {
+        type Request = S::Request;
+        type Response = S::Response;
+        type Error = S::Error;
+        type Future = S::Future;
+
+        fn poll_ready(&mut self) -> Poll<(), Self::Error> {
+            self.inner.poll_ready()
+        }
+
+        fn call(&mut self, mut req: http::Request<A>) -> Self::Future {
+            let classify_rsp = self.classify.classify(&req);
+            let _ = req.extensions_mut().insert(classify_rsp);
+
+            self.inner.call(req)
         }
     }
 }

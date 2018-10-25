@@ -271,7 +271,7 @@ where
 
             let outbound = {
                 use super::outbound::{
-                    discovery::Resolve, orig_proto_upgrade, Endpoint, Recognize,
+                    discovery::Resolve, insert_classify, orig_proto_upgrade, Endpoint, Recognize,
                 };
                 use super::profiles::Client as ProfilesClient;
                 use control::KubernetesNormalizer;
@@ -302,11 +302,10 @@ where
                 let endpoint_stack = client_stack
                     .push(svc::stack_per_request::layer())
                     .push(normalize_uri::Layer::new())
-                    .push(orig_proto_upgrade::Layer::new())
+                    .push(orig_proto_upgrade::layer())
                     .push(tap::Layer::new(tap_next_id.clone(), taps.clone()))
-                    .push(metrics::Layer::new(
+                    .push(metrics::layer::<_, classify::ClassifyResponse>(
                         endpoint_http_metrics,
-                        classify::Classify,
                     ))
                     .push(svc::watch::layer(tls_client_config))
                     .push(buffer::layer("outbound endpoint"));
@@ -321,7 +320,11 @@ where
                             Duration::from_secs(3),
                             KubernetesNormalizer::new(config.namespaces.pod.clone()),
                         ),
-                        metrics::Layer::new(route_http_metrics, classify::Classify),
+                        svc::stack::phantom_data::layer()
+                            .push(metrics::layer::<_, classify::ClassifyResponse>(
+                                route_http_metrics,
+                            ))
+                            .push(insert_classify::layer()),
                     ))
                     .push(buffer::layer("outbound dst"))
                     .push(timeout::Layer::new(config.bind_timeout))
@@ -385,10 +388,11 @@ where
                     .push(svc::stack_per_request::layer())
                     .push(normalize_uri::Layer::new())
                     .push(tap::Layer::new(tap_next_id, taps))
-                    .push(proxy::http::metrics::Layer::new(
-                        endpoint_http_metrics,
-                        classify::Classify,
-                    ))
+                    .push(
+                        proxy::http::metrics::layer::<_, classify::ClassifyResponse>(
+                            endpoint_http_metrics,
+                        ),
+                    )
                     .push(buffer::layer("inbound"))
                     .push(limit::Layer::new(MAX_IN_FLIGHT))
                     .push(router::Layer::new(inbound::Recognize::new(

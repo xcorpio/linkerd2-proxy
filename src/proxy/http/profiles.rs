@@ -33,7 +33,14 @@ pub trait WithRoute {
 #[derive(Debug)]
 pub enum Error {}
 
-#[derive(Debug, Clone)]
+// TODO provide a `Classify` implementation derived from api::destination::ResponseClass,
+#[derive(Clone, Debug, Default)]
+pub struct Route {
+    labels: Arc<IndexMap<String, String>>,
+    response_classes: Vec<ResponseClass>,
+}
+
+#[derive(Clone, Debug)]
 pub enum RequestMatch {
     All(Vec<RequestMatch>),
     Any(Vec<RequestMatch>),
@@ -42,14 +49,27 @@ pub enum RequestMatch {
     Method(http::Method),
 }
 
-// TODO provide a `Classify` implementation derived from api::destination::ResponseClass,
-#[derive(Clone, Debug, Default)]
-pub struct Route {
-    labels: Arc<IndexMap<String, String>>,
+#[derive(Clone, Debug)]
+pub struct ResponseClass {
+    is_failure: bool,
+    match_: ResponseMatch,
 }
 
+#[derive(Clone, Debug)]
+pub enum ResponseMatch {
+    All(Vec<ResponseMatch>),
+    Any(Vec<ResponseMatch>),
+    Not(Box<ResponseMatch>),
+    Status {
+        min: http::StatusCode,
+        max: http::StatusCode,
+    },
+}
+
+// === impl Route ===
+
 impl Route {
-    pub fn new<'i, I>(label_iter: I) -> Self
+    pub fn new<I>(label_iter: I, response_classes: Vec<ResponseClass>) -> Self
     where
         I: Iterator<Item = (String, String)>,
     {
@@ -58,13 +78,23 @@ impl Route {
             pairs.sort_by(|(k0, _), (k1, _)| k0.cmp(k1));
             Arc::new(IndexMap::from_iter(pairs))
         };
-        Self { labels }
+
+        Self {
+            labels,
+            response_classes,
+        }
     }
 
     pub fn labels(&self) -> &IndexMap<String, String> {
         self.labels.as_ref()
     }
+
+    pub fn response_classes(&self) -> &Vec<ResponseClass> {
+        &self.response_classes
+    }
 }
+
+// === impl RequestMatch ===
 
 impl RequestMatch {
     fn is_match<B>(&self, req: &http::Request<B>) -> bool {
@@ -91,6 +121,53 @@ impl RequestMatch {
         }
     }
 }
+
+// === impl ResponseClass ===
+
+impl ResponseClass {
+    pub fn new(is_failure: bool, match_: ResponseMatch) -> Self {
+        Self { is_failure, match_ }
+    }
+
+    pub fn is_failure(&self) -> bool {
+        self.is_failure
+    }
+
+    pub fn is_match<B>(&self, req: &http::Response<B>) -> bool {
+        self.match_.is_match(req)
+    }
+}
+
+// === impl ResponseMatch ===
+
+impl ResponseMatch {
+    fn is_match<B>(&self, req: &http::Response<B>) -> bool {
+        match self {
+            ResponseMatch::Status { ref min, ref max } => {
+                *min <= req.status() && req.status() <= *max
+            }
+            ResponseMatch::Not(ref m) => !m.is_match(req),
+            ResponseMatch::All(ref matches) => {
+                for ref m in matches {
+                    if !m.is_match(req) {
+                        return false;
+                    }
+                }
+                true
+            }
+            ResponseMatch::Any(ref matches) => {
+                for ref m in matches {
+                    if m.is_match(req) {
+                        return true;
+                    }
+                }
+                false
+            }
+        }
+    }
+}
+
+// === impl Error ===
 
 impl fmt::Display for Error {
     fn fmt(&self, _: &mut fmt::Formatter) -> fmt::Result {
@@ -231,7 +308,8 @@ pub mod router {
                 stack.make(&t).map_err(Error::Route)?
             };
 
-            let route_stream = target.get_destination()
+            let route_stream = target
+                .get_destination()
                 .and_then(|d| self.get_routes.get_routes(&d));
 
             Ok(Service {
@@ -254,10 +332,8 @@ pub mod router {
         fn update_routes(&mut self, mut routes: Routes) {
             self.routes = Vec::with_capacity(routes.len());
             for (req_match, route) in routes.drain(..) {
-                match self
-                    .stack
-                    .make(&self.target.clone().with_route(route.clone()))
-                {
+                let target = self.target.clone().with_route(route.clone());
+                match self.stack.make(&target) {
                     Ok(svc) => self.routes.push((req_match, svc)),
                     Err(_) => error!("failed to build service for route: route={:?}", route),
                 }
@@ -265,7 +341,8 @@ pub mod router {
         }
 
         fn poll_route_stream(&mut self) -> Option<Async<Option<Routes>>> {
-            self.route_stream.as_mut()
+            self.route_stream
+                .as_mut()
                 .and_then(|ref mut s| s.poll().ok())
         }
     }
@@ -300,380 +377,4 @@ pub mod router {
             self.default_route.call(req)
         }
     }
-}
-
-// pub mod per_endpoint {
-//     use futures::Poll;
-//     use std::{error, fmt};
-//
-//     use proxy::resolve::HasEndpoint;
-//     use svc::{self, Stack as _Stack};
-//
-//     use super::tower_discover::{Change, Discover};
-//     use super::Route;
-//
-//     pub fn layer<S, E>(endpoint_layer: E) -> Layer<E>
-//     where
-//         S: svc::Service + Clone + HasEndpoint,
-//         <S as HasEndpoint>::Endpoint: WithRoute,
-//         E: svc::Layer<
-//                 <<S as HasEndpoint>::Endpoint as WithRoute>::Output,
-//                 <<S as HasEndpoint>::Endpoint as WithRoute>::Output,
-//                 svc::shared::Stack<S>,
-//             >
-//             + Clone,
-//     {
-//         Layer { endpoint_layer }
-//     }
-//
-//     pub trait WithRoute {
-//         type Output;
-//
-//         fn with_route(&self, route: Route) -> Self::Output;
-//     }
-//
-//     #[derive(Clone, Debug)]
-//     pub struct Layer<E = ()> {
-//         endpoint_layer: E,
-//     }
-//
-//     #[derive(Clone, Debug)]
-//     pub struct Stack<D, E = ()> {
-//         discover: D,
-//         endpoint_layer: E,
-//     }
-//
-//     pub struct PerEndpoint<D, E = ()> {
-//         discover: D,
-//         route: Route,
-//         endpoint_layer: E,
-//     }
-//
-//     #[derive(Debug)]
-//     pub enum Error<D, E> {
-//         Discover(D),
-//         Endpoint(E),
-//     }
-//
-//     impl<D, E> svc::Layer<Route, Route, D> for Layer<E>
-//     where
-//         D: svc::Stack<Route>,
-//         D::Value: Discover,
-//         <D::Value as Discover>::Service: HasEndpoint + Clone,
-//         <<D::Value as Discover>::Service as HasEndpoint>::Endpoint: WithRoute + Clone,
-//         E: svc::Layer<
-//                 <<<D::Value as Discover>::Service as HasEndpoint>::Endpoint as WithRoute>::Output,
-//                 <<<D::Value as Discover>::Service as HasEndpoint>::Endpoint as WithRoute>::Output,
-//                 svc::shared::Stack<<D::Value as Discover>::Service>,
-//             >
-//             + Clone,
-//         E::Value: svc::Service + Clone,
-//     {
-//         type Value = <Stack<D, E> as svc::Stack<Route>>::Value;
-//         type Error = <Stack<D, E> as svc::Stack<Route>>::Error;
-//         type Stack = Stack<D, E>;
-//
-//         fn bind(&self, discover: D) -> Self::Stack {
-//             Stack {
-//                 discover,
-//                 endpoint_layer: self.endpoint_layer.clone(),
-//             }
-//         }
-//     }
-//
-//     impl<D, E> svc::Stack<Route> for Stack<D, E>
-//     where
-//         D: svc::Stack<Route>,
-//         D::Value: Discover,
-//         <D::Value as Discover>::Service: HasEndpoint + Clone,
-//         <<D::Value as Discover>::Service as HasEndpoint>::Endpoint: WithRoute + Clone,
-//         E: svc::Layer<
-//                 <<<D::Value as Discover>::Service as HasEndpoint>::Endpoint as WithRoute>::Output,
-//                 <<<D::Value as Discover>::Service as HasEndpoint>::Endpoint as WithRoute>::Output,
-//                 svc::shared::Stack<<D::Value as Discover>::Service>,
-//             >
-//             + Clone,
-//         E::Value: svc::Service + Clone,
-//     {
-//         type Value = PerEndpoint<D::Value, E>;
-//         type Error = D::Error;
-//
-//         fn make(&self, route: &Route) -> Result<Self::Value, Self::Error> {
-//             let discover = self.discover.make(&route)?;
-//             Ok(PerEndpoint {
-//                 discover,
-//                 route: route.clone(),
-//                 endpoint_layer: self.endpoint_layer.clone(),
-//             })
-//         }
-//     }
-//
-//     impl<D, E> Discover for PerEndpoint<D, E>
-//     where
-//         D: Discover,
-//         D::Service: HasEndpoint + Clone,
-//         <D::Service as HasEndpoint>::Endpoint: WithRoute + Clone,
-//         E: svc::Layer<
-//                 <<D::Service as HasEndpoint>::Endpoint as WithRoute>::Output,
-//                 <<D::Service as HasEndpoint>::Endpoint as WithRoute>::Output,
-//                 svc::shared::Stack<D::Service>,
-//             >
-//             + Clone,
-//         E::Value: svc::Service + Clone,
-//     {
-//         type Key = D::Key;
-//         type Request = <E::Value as svc::Service>::Request;
-//         type Response = <E::Value as svc::Service>::Response;
-//         type Error = <E::Value as svc::Service>::Error;
-//         type Service = E::Value;
-//         type DiscoverError = Error<D::DiscoverError, E::Error>;
-//
-//         fn poll(&mut self) -> Poll<Change<Self::Key, Self::Service>, Self::DiscoverError> {
-//             match try_ready!(self.discover.poll().map_err(Error::Discover)) {
-//                 Change::Insert(key, svc) => {
-//                     let endpoint = svc.endpoint().with_route(self.route.clone());
-//                     let svc = self
-//                         .endpoint_layer
-//                         .bind(svc::shared::stack(svc))
-//                         .make(&endpoint)
-//                         .map_err(Error::Endpoint)?;
-//                     Ok(Change::Insert(key, svc).into())
-//                 }
-//                 Change::Remove(key) => Ok(Change::Remove(key).into()),
-//             }
-//         }
-//     }
-//
-//     // === impl Error ===
-//
-//     impl<D: fmt::Display, E: fmt::Display> fmt::Display for Error<D, E> {
-//         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-//             match self {
-//                 Error::Discover(d) => fmt::Display::fmt(d, f),
-//                 Error::Endpoint(e) => fmt::Display::fmt(e, f),
-//             }
-//         }
-//     }
-//
-//     impl<D: error::Error, E: error::Error> error::Error for Error<D, E> {
-//         fn cause(&self) -> Option<&error::Error> {
-//             match self {
-//                 Error::Discover(d) => error::Error::cause(d),
-//                 Error::Endpoint(e) => error::Error::cause(e),
-//             }
-//         }
-//     }
-// }
-
-pub mod shared_discover {
-    use futures::{sync::mpsc, Async, Future, Poll, Stream};
-    use indexmap::IndexMap;
-    use std::collections::VecDeque;
-    use std::{error, fmt};
-
-    use svc;
-
-    use super::tower_discover::{Change, Discover};
-
-    pub(super) fn new<D>(discover: D) -> (Stack<D>, Background<D>)
-    where
-        D: Discover,
-        D::Key: Clone,
-        D::Service: Clone,
-    {
-        let (notify_tx, notify_rx) = mpsc::unbounded();
-        let stack = Stack { notify_tx };
-        let bg = Background {
-            discover,
-            notify_rx: Some(notify_rx),
-            notify_txs: VecDeque::new(),
-            cache: IndexMap::new(),
-        };
-        (stack, bg)
-    }
-
-    pub struct Stack<D: Discover> {
-        notify_tx: mpsc::UnboundedSender<Notify<D>>,
-    }
-
-    pub struct SharedDiscover<D: Discover> {
-        rx: mpsc::UnboundedReceiver<Change<D::Key, D::Service>>,
-    }
-
-    pub struct Background<D: Discover> {
-        discover: D,
-        notify_rx: Option<mpsc::UnboundedReceiver<Notify<D>>>,
-        notify_txs: VecDeque<Notify<D>>,
-        cache: IndexMap<D::Key, D::Service>,
-    }
-
-    struct Notify<D: Discover> {
-        tx: mpsc::UnboundedSender<Change<D::Key, D::Service>>,
-    }
-
-    #[derive(Copy, Clone, Debug)]
-    pub struct LostBackground;
-
-    // === impl Stack ===
-
-    impl<T, D> svc::Stack<T> for Stack<D>
-    where
-        D: Discover,
-        D::Key: Clone,
-        D::Service: Clone,
-    {
-        type Value = SharedDiscover<D>;
-        type Error = super::Error;
-
-        fn make(&self, _: &T) -> Result<Self::Value, Self::Error> {
-            let (tx, rx) = mpsc::unbounded();
-            let _ = self.notify_tx.unbounded_send(Notify { tx });
-
-            Ok(SharedDiscover { rx })
-        }
-    }
-
-    impl<D: Discover> Clone for Stack<D> {
-        fn clone(&self) -> Self {
-            Self {
-                notify_tx: self.notify_tx.clone(),
-            }
-        }
-    }
-
-    impl<D: Discover> fmt::Debug for Stack<D> {
-        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            f.debug_struct("profiles::Stack").finish()
-        }
-    }
-
-    // === impl SharedDiscovery ===
-
-    impl<D: Discover> Discover for SharedDiscover<D>
-    where
-        D: Discover,
-        D::Service: Clone,
-    {
-        type Key = D::Key;
-        type Request = D::Request;
-        type Response = D::Response;
-        type Error = D::Error;
-        type Service = D::Service;
-        type DiscoverError = LostBackground;
-
-        fn poll(&mut self) -> Poll<Change<Self::Key, Self::Service>, Self::DiscoverError> {
-            match self.rx.poll() {
-                Ok(Async::NotReady) => Ok(Async::NotReady),
-                Ok(Async::Ready(Some(c))) => {
-                    debug!("SharedDiscover: ready");
-                    Ok(Async::Ready(c))
-                }
-                Err(_) | Ok(Async::Ready(None)) => Err(LostBackground)
-            }
-        }
-    }
-
-    // === impl Background ===
-
-    impl<D> Background<D>
-    where
-        D: Discover,
-        D::Key: Clone,
-        D::Service: Clone,
-    {
-
-        fn poll_notify_rx(&mut self) {
-            loop {
-                match self
-                    .notify_rx
-                    .as_mut()
-                    .map(|ref mut notify_rx| notify_rx.poll())
-                {
-                    Some(Ok(Async::NotReady)) => return,
-                    None | Some(Err(_)) | Some(Ok(Async::Ready(None))) => {
-                        debug!("Background: no more notifiers");
-                        self.notify_rx = None;
-                        return;
-                    }
-                    Some(Ok(Async::Ready(Some(tx)))) => {
-                        debug!("Background: new notifier");
-                        if self.update_from_cache(&tx).is_ok() {
-                            self.notify_txs.push_back(tx);
-                        }
-                    }
-                }
-            }
-        }
-
-        fn update_from_cache(&self, tx: &Notify<D>) -> Result<(), ()> {
-            if !self.cache.is_empty() {
-                debug!("Background: notifying from cache");
-            }
-            for (key, svc) in self.cache.iter() {
-                tx.tx
-                    .unbounded_send(Change::Insert(key.clone(), svc.clone()))
-                    .map_err(|_| {})?;
-            }
-
-            Ok(())
-        }
-
-        fn notify_notify_txs(&mut self, change: &Change<D::Key, D::Service>) {
-            for _ in 0..self.notify_txs.len() {
-                let tx = self.notify_txs.pop_front().unwrap();
-                let c = match change {
-                    Change::Insert(ref k, ref s) => Change::Insert(k.clone(), s.clone()),
-                    Change::Remove(ref k) => Change::Remove(k.clone()),
-                };
-                if tx.tx.unbounded_send(c).is_ok() {
-                    self.notify_txs.push_back(tx);
-                }
-            }
-        }
-    }
-
-    impl<D> Future for Background<D>
-    where
-        D: Discover,
-        D::Key: Clone,
-        D::Service: Clone,
-    {
-        type Item = ();
-        type Error = D::DiscoverError;
-
-        fn poll(&mut self) -> Poll<(), Self::Error> {
-            loop {
-                self.poll_notify_rx();
-
-                if self.notify_rx.is_none() && self.notify_txs.is_empty() {
-                    debug!("Backgroud: complete");
-                    return Ok(Async::Ready(()));
-                }
-
-                debug!("polling discover");
-                let change = try_ready!(self.discover.poll());
-                self.notify_notify_txs(&change);
-                match change {
-                    Change::Insert(key, svc) => {
-                        debug!("Background: adding to cache");
-                        self.cache.insert(key, svc);
-                    }
-                    Change::Remove(key) => {
-                        debug!("Background: removing from cache");
-                        self.cache.remove(&key);
-                    }
-                }
-            }
-        }
-    }
-
-    // === impl Error ===
-
-    impl fmt::Display for LostBackground {
-        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            write!(f, "Lost background discovery task")
-        }
-    }
-
-    impl error::Error for LostBackground {}
 }

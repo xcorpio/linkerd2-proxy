@@ -1,4 +1,5 @@
 use futures::{Async, Future, Poll, Stream};
+use http;
 use regex::Regex;
 use std::fmt;
 use std::time::Duration;
@@ -43,7 +44,11 @@ where
     N: NameNormalizer,
 {
     pub fn new(service: Option<T>, backoff: Duration, normalizer: N) -> Self {
-        Self { service, backoff, normalizer }
+        Self {
+            service,
+            backoff,
+            normalizer,
+        }
     }
 }
 
@@ -134,11 +139,11 @@ where
 
 impl<T: HttpService> Rx<T> {
     fn convert_routes(
-        mut profile: api::DestinationProfile,
+        profile: api::DestinationProfile,
     ) -> Vec<(profiles::RequestMatch, profiles::Route)> {
         let mut routes = Vec::with_capacity(profile.routes.len());
 
-        for r in profile.routes.drain(..) {
+        for r in profile.routes.into_iter() {
             if let Some(r) = Self::convert_route(r) {
                 routes.push(r);
             }
@@ -149,18 +154,23 @@ impl<T: HttpService> Rx<T> {
 
     fn convert_route(orig: api::Route) -> Option<(profiles::RequestMatch, profiles::Route)> {
         let req_match = orig.condition.and_then(Self::convert_req_match)?;
-        let route = profiles::Route::new(orig.metrics_labels.into_iter());
+        let rsp_classes = orig
+            .response_classes
+            .into_iter()
+            .filter_map(Self::convert_rsp_class)
+            .collect();
+        let route = profiles::Route::new(orig.metrics_labels.into_iter(), rsp_classes);
         Some((req_match, route))
     }
 
     fn convert_req_match(orig: api::RequestMatch) -> Option<profiles::RequestMatch> {
         let m = match orig.match_? {
-            api::request_match::Match::All(mut ms) => {
-                let ms = ms.matches.drain(..).filter_map(Self::convert_req_match);
+            api::request_match::Match::All(ms) => {
+                let ms = ms.matches.into_iter().filter_map(Self::convert_req_match);
                 profiles::RequestMatch::All(ms.collect())
             }
-            api::request_match::Match::Any(mut ms) => {
-                let ms = ms.matches.drain(..).filter_map(Self::convert_req_match);
+            api::request_match::Match::Any(ms) => {
+                let ms = ms.matches.into_iter().filter_map(Self::convert_req_match);
                 profiles::RequestMatch::Any(ms.collect())
             }
             api::request_match::Match::Not(m) => {
@@ -174,6 +184,49 @@ impl<T: HttpService> Rx<T> {
             api::request_match::Match::Method(mm) => {
                 let m = mm.type_.and_then(|m| m.try_as_http().ok())?;
                 profiles::RequestMatch::Method(m)
+            }
+        };
+
+        Some(m)
+    }
+
+    fn convert_rsp_class(orig: api::ResponseClass) -> Option<profiles::ResponseClass> {
+       let c = orig.condition.and_then(Self::convert_rsp_match)?;
+       Some(profiles::ResponseClass::new(orig.is_failure, c))
+    }
+
+    fn convert_rsp_match(orig: api::ResponseMatch) -> Option<profiles::ResponseMatch> {
+        let m = match orig.match_? {
+            api::response_match::Match::All(ms) => {
+                let ms = ms
+                    .matches
+                    .into_iter()
+                    .filter_map(Self::convert_rsp_match)
+                    .collect::<Vec<_>>();
+                if ms.is_empty() {
+                    return None;
+                }
+                profiles::ResponseMatch::All(ms)
+            }
+            api::response_match::Match::Any(ms) => {
+                let ms = ms
+                    .matches
+                    .into_iter()
+                    .filter_map(Self::convert_rsp_match)
+                    .collect::<Vec<_>>();
+                if ms.is_empty() {
+                    return None;
+                }
+                profiles::ResponseMatch::Any(ms)
+            }
+            api::response_match::Match::Not(m) => {
+                let m = Self::convert_rsp_match(*m)?;
+                profiles::ResponseMatch::Not(Box::new(m))
+            }
+            api::response_match::Match::Status(range) => {
+                let min = http::StatusCode::from_u16(range.min as u16).ok()?;
+                let max = http::StatusCode::from_u16(range.max as u16).ok()?;
+                profiles::ResponseMatch::Status { min, max }
             }
         };
 
