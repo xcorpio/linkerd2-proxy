@@ -9,7 +9,7 @@ use std::time::Instant;
 use tokio_timer::clock;
 use tower_h2;
 
-use proxy::http::classify::{ClassOrEos, ClassifyEos, ClassifyResponse};
+use proxy::http::classify::{ClassifyEos, ClassifyResponse};
 use proxy::http::metrics::{ClassMetrics, Metrics, Registry};
 use svc;
 
@@ -284,11 +284,11 @@ where
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         let rsp = try_ready!(self.inner.poll());
 
-        let (class_at_first_byte, classify) = match self.classify.take() {
-            Some(c) => match c.start(&rsp) {
-                ClassOrEos::Class(c) => (Some(c), None),
-                ClassOrEos::Eos(e) => (None, Some(e)),
-            },
+        let (classify, class_at_first_byte) = match self.classify.take() {
+            Some(c) => {
+                let (eos, class) = c.start(&rsp);
+                (Some(eos), class)
+            }
             None => (None, None),
         };
 

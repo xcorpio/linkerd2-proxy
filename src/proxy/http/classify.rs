@@ -32,44 +32,28 @@ pub trait ClassifyResponse {
     type Error;
     type ClassifyEos: ClassifyEos<Class = Self::Class, Error = Self::Error>;
 
-    /// Update the classifier with the response headers.
+    /// Produce a stream classifier for this response.
     ///
     /// If this is enough data to classify a response, a classification may be
-    /// returned. Implementations should expect that `end` or `error` may be
-    /// called even when a class is returned.
-    fn start<B>(self, headers: &http::Response<B>) -> ClassOrEos<Self::Class, Self::ClassifyEos>;
-
-    /// Update the classifier with an underlying error.
-    ///
-    /// Because errors indicate an end-of-stream, a classification must be
     /// returned.
+    fn start<B>(self, headers: &http::Response<B>) -> (Self::ClassifyEos, Option<Self::Class>);
+
+    /// Classifies the given error.
     fn error(self, error: &Self::Error) -> Self::Class;
 }
 
-/// Classifies a single response end
 pub trait ClassifyEos {
-    /// A response classification.
     type Class;
     type Error;
 
     /// Update the classifier with an EOS.
     ///
     /// Because trailers indicate an EOS, a classification must be returned.
-    ///
-    /// This is expected to be called only once.
     fn eos(self, trailers: Option<&http::HeaderMap>) -> Self::Class;
 
     /// Update the classifier with an underlying error.
     ///
     /// Because errors indicate an end-of-stream, a classification must be
     /// returned.
-    ///
-    /// This is expected to be called only once.
     fn error(self, error: &Self::Error) -> Self::Class;
-}
-
-
-pub enum ClassOrEos<C, E> {
-    Class(C),
-    Eos(E),
 }

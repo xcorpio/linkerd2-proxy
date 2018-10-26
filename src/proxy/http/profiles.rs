@@ -33,7 +33,6 @@ pub trait WithRoute {
 #[derive(Debug)]
 pub enum Error {}
 
-// TODO provide a `Classify` implementation derived from api::destination::ResponseClass,
 #[derive(Clone, Debug, Default)]
 pub struct Route {
     labels: Arc<IndexMap<String, String>>,

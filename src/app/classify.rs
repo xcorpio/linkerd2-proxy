@@ -16,6 +16,7 @@ pub struct ClassifyResponse {
 
 #[derive(Clone, Debug, Default)]
 pub struct ClassifyEos {
+    class: Option<Class>,
     status: http::StatusCode,
 }
 
@@ -57,12 +58,8 @@ impl classify::Classify for Classify {
 
 // === impl ClassifyResponse ===
 
-impl classify::ClassifyResponse for ClassifyResponse {
-    type Class = Class;
-    type Error = h2::Error;
-    type ClassifyEos = ClassifyEos;
-
-    fn start<B>(self, rsp: &http::Response<B>) -> classify::ClassOrEos<Class, ClassifyEos> {
+impl ClassifyResponse {
+    fn match_class<B>(&self, rsp: &http::Response<B>) -> Option<Class> {
         for class in self.classes.as_ref() {
             if class.is_match(rsp) {
                 let result = if class.is_failure() {
@@ -70,14 +67,26 @@ impl classify::ClassifyResponse for ClassifyResponse {
                 } else {
                     SuccessOrFailure::Success
                 };
-                let c = Class::Http(result, rsp.status());
-                return classify::ClassOrEos::Class(c);
+                return Some(Class::Http(result, rsp.status()));
             }
         }
 
-        classify::ClassOrEos::Eos(ClassifyEos {
+        None
+    }
+}
+
+impl classify::ClassifyResponse for ClassifyResponse {
+    type Class = Class;
+    type Error = h2::Error;
+    type ClassifyEos = ClassifyEos;
+
+    fn start<B>(self, rsp: &http::Response<B>) -> (ClassifyEos, Option<Class>) {
+        let class = self.match_class(rsp);
+        let eos = ClassifyEos {
+            class: class.clone(),
             status: rsp.status(),
-        })
+        };
+        (eos, class)
     }
 
     fn error(self, err: &h2::Error) -> Self::Class {
@@ -89,7 +98,13 @@ impl classify::ClassifyEos for ClassifyEos {
     type Class = Class;
     type Error = h2::Error;
 
-    fn eos(self, trailers: Option<&http::HeaderMap>) -> Self::Class {
+    fn eos(mut self, trailers: Option<&http::HeaderMap>) -> Self::Class {
+        // If the response headers already classified this stream, use that.
+        if let Some(class) = self.class.take() {
+            return class;
+        }
+
+        // Otherwise, fall-back to the default classification logic.
         if let Some(ref trailers) = trailers {
             let mut grpc_status = trailers
                 .get("grpc-status")
@@ -113,6 +128,7 @@ impl classify::ClassifyEos for ClassifyEos {
     }
 
     fn error(self, err: &h2::Error) -> Self::Class {
+        // Ignore the original classification when an error is encountered.
         Class::Stream(SuccessOrFailure::Failure, format!("{}", err))
     }
 }
