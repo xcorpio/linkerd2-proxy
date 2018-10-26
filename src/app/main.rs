@@ -231,6 +231,7 @@ where
                 .push(reconnect::Layer::new().with_fixed_backoff(config.control_backoff_delay))
                 .push(proxy::timeout::Layer::new(config.control_connect_timeout))
                 .push(svc::watch::layer(tls_client_config.clone()))
+                .push(svc::stack::phantom_data::layer())
                 .push(control::add_origin::Layer::new())
                 .push(buffer::layer("control"))
                 .push(limit::Layer::new(config.destination_concurrency_limit));
