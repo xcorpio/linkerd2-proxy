@@ -12,7 +12,11 @@ pub struct Classify {
 #[derive(Clone, Debug, Default)]
 pub struct ClassifyResponse {
     classes: Arc<Vec<profiles::ResponseClass>>,
-    status: Option<http::StatusCode>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ClassifyEos {
+    status: http::StatusCode,
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -42,11 +46,11 @@ impl classify::Classify for Classify {
     type Class = Class;
     type Error = h2::Error;
     type ClassifyResponse = ClassifyResponse;
+    type ClassifyEos = ClassifyEos;
 
     fn classify<B>(&self, _: &http::Request<B>) -> Self::ClassifyResponse {
         ClassifyResponse {
             classes: self.classes.clone(),
-            status: None,
         }
     }
 }
@@ -56,8 +60,9 @@ impl classify::Classify for Classify {
 impl classify::ClassifyResponse for ClassifyResponse {
     type Class = Class;
     type Error = h2::Error;
+    type ClassifyEos = ClassifyEos;
 
-    fn start<B>(&mut self, rsp: &http::Response<B>) -> Option<Self::Class> {
+    fn start<B>(self, rsp: &http::Response<B>) -> classify::ClassOrEos<Class, ClassifyEos> {
         for class in self.classes.as_ref() {
             if class.is_match(rsp) {
                 let result = if class.is_failure() {
@@ -65,15 +70,26 @@ impl classify::ClassifyResponse for ClassifyResponse {
                 } else {
                     SuccessOrFailure::Success
                 };
-                return Some(Class::Http(result, rsp.status()));
+                let c = Class::Http(result, rsp.status());
+                return classify::ClassOrEos::Class(c);
             }
         }
 
-        self.status = Some(rsp.status());
-        None
+        classify::ClassOrEos::Eos(ClassifyEos {
+            status: rsp.status(),
+        })
     }
 
-    fn eos(&mut self, trailers: Option<&http::HeaderMap>) -> Self::Class {
+    fn error(self, err: &h2::Error) -> Self::Class {
+        Class::Stream(SuccessOrFailure::Failure, format!("{}", err))
+    }
+}
+
+impl classify::ClassifyEos for ClassifyEos {
+    type Class = Class;
+    type Error = h2::Error;
+
+    fn eos(self, trailers: Option<&http::HeaderMap>) -> Self::Class {
         if let Some(ref trailers) = trailers {
             let mut grpc_status = trailers
                 .get("grpc-status")
@@ -88,16 +104,15 @@ impl classify::ClassifyResponse for ClassifyResponse {
             }
         }
 
-        let status = self.status.take().expect("response closed more than once");
-        let result = if status.is_server_error() {
+        let result = if self.status.is_server_error() {
             SuccessOrFailure::Failure
         } else {
             SuccessOrFailure::Success
         };
-        Class::Http(result, status)
+        Class::Http(result, self.status)
     }
 
-    fn error(&mut self, err: &h2::Error) -> Self::Class {
+    fn error(self, err: &h2::Error) -> Self::Class {
         Class::Stream(SuccessOrFailure::Failure, format!("{}", err))
     }
 }

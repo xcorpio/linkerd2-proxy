@@ -9,8 +9,8 @@ use std::time::Instant;
 use tokio_timer::clock;
 use tower_h2;
 
-use super::super::ClassifyResponse;
-use super::{ClassMetrics, Metrics, Registry};
+use proxy::http::classify::{ClassOrEos, ClassifyEos, ClassifyResponse};
+use proxy::http::metrics::{ClassMetrics, Metrics, Registry};
 use svc;
 
 /// A stack module that wraps services to record metrics.
@@ -77,7 +77,7 @@ where
 pub struct ResponseBody<B, C>
 where
     B: tower_h2::Body,
-    C: ClassifyResponse<Error = h2::Error>,
+    C: ClassifyEos<Error = h2::Error>,
     C::Class: Hash + Eq,
 {
     class_at_first_byte: Option<C::Class>,
@@ -230,7 +230,7 @@ where
     C::Class: Hash + Eq,
 {
     type Request = http::Request<A>;
-    type Response = http::Response<ResponseBody<B, C>>;
+    type Response = http::Response<ResponseBody<B, C::ClassifyEos>>;
     type Error = S::Error;
     type Future = ResponseFuture<S, C>;
 
@@ -278,14 +278,19 @@ where
     C: ClassifyResponse<Error = h2::Error> + Send + Sync + 'static,
     C::Class: Hash + Eq,
 {
-    type Item = http::Response<ResponseBody<B, C>>;
+    type Item = http::Response<ResponseBody<B, C::ClassifyEos>>;
     type Error = S::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         let rsp = try_ready!(self.inner.poll());
 
-        let mut classify = self.classify.take();
-        let class_at_first_byte = classify.as_mut().and_then(|c| c.start(&rsp));
+        let (class_at_first_byte, classify) = match self.classify.take() {
+            Some(c) => match c.start(&rsp) {
+                ClassOrEos::Class(c) => (Some(c), None),
+                ClassOrEos::Eos(e) => (None, Some(e)),
+            },
+            None => (None, None),
+        };
 
         let rsp = {
             let (head, inner) = rsp.into_parts();
@@ -337,7 +342,7 @@ where
 impl<B, C> Default for ResponseBody<B, C>
 where
     B: tower_h2::Body + Default,
-    C: ClassifyResponse<Error = h2::Error>,
+    C: ClassifyEos<Error = h2::Error>,
     C::Class: Hash + Eq,
 {
     fn default() -> Self {
@@ -355,7 +360,7 @@ where
 impl<B, C> ResponseBody<B, C>
 where
     B: tower_h2::Body,
-    C: ClassifyResponse<Error = h2::Error>,
+    C: ClassifyEos<Error = h2::Error>,
     C::Class: Hash + Eq,
 {
     fn record_class(&mut self, class: Option<C::Class>) {
@@ -386,8 +391,10 @@ where
     }
 
     fn measure_err(&mut self, err: C::Error) -> C::Error {
-        self.class_at_first_byte = None;
-        let c = self.classify.take().map(|mut c| c.error(&err));
+        let c = self
+            .class_at_first_byte
+            .take()
+            .or_else(|| self.classify.take().map(|c| c.error(&err)));
         self.record_class(c);
         err
     }
@@ -396,7 +403,7 @@ where
 impl<B, C> tower_h2::Body for ResponseBody<B, C>
 where
     B: tower_h2::Body,
-    C: ClassifyResponse<Error = h2::Error>,
+    C: ClassifyEos<Error = h2::Error>,
     C::Class: Hash + Eq,
 {
     type Data = B::Data;
@@ -424,7 +431,7 @@ where
     fn poll_trailers(&mut self) -> Poll<Option<http::HeaderMap>, h2::Error> {
         let trls = try_ready!(self.inner.poll_trailers().map_err(|e| self.measure_err(e)));
 
-        let c = self.classify.take().map(|mut c| c.eos(trls.as_ref()));
+        let c = self.classify.take().map(|c| c.eos(trls.as_ref()));
         self.record_class(c);
 
         Ok(Async::Ready(trls))
@@ -434,11 +441,11 @@ where
 impl<B, C> Drop for ResponseBody<B, C>
 where
     B: tower_h2::Body,
-    C: ClassifyResponse<Error = h2::Error>,
+    C: ClassifyEos<Error = h2::Error>,
     C::Class: Hash + Eq,
 {
     fn drop(&mut self) {
-        let c = self.classify.take().map(|mut c| c.eos(None));
+        let c = self.classify.take().map(|c| c.eos(None));
         self.record_class(c);
     }
 }
