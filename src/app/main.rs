@@ -236,8 +236,8 @@ where
                 .push(limit::Layer::new(config.destination_concurrency_limit));
 
             // Because the control client is buffered, we need to be able to
-            // spawn a task on the default executor. An executor is only
-            // available in the context of a running task,
+            // spawn a task on an executor. An executor is only available in the
+            // context of a running task, however, we the stack is instantiated lazily.
             future::poll_fn(move || {
                 let svc = control_config
                     .as_ref()
