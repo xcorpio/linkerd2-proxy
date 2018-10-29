@@ -154,16 +154,14 @@ impl Config {
 
 // === impl Layer ===
 
-impl<B> Layer<B>
+pub fn layer<B>(proxy_name: &'static str) -> Layer<B>
 where
     B: tower_h2::Body + Send + 'static,
     <B::Data as IntoBuf>::Buf: Send + 'static,
 {
-    pub fn new(proxy_name: &'static str) -> Self {
-        Self {
-            proxy_name,
-            _p: PhantomData,
-        }
+    Layer {
+        proxy_name,
+        _p: PhantomData,
     }
 }
 

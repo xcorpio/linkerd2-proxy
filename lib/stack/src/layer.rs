@@ -15,10 +15,10 @@ pub trait Layer<T, U, S: super::Stack<U>> {
     type Error;
     type Stack: super::Stack<T, Value = Self::Value, Error = Self::Error>;
 
-    /// Produce a `Stack` value from a `M` value.
+    /// Produces a `Stack` value from a `M` value.
     fn bind(&self, next: S) -> Self::Stack;
 
-    /// Compose this `Layer` with another.
+    /// Produces a new Layer with this layer wrapping the provided inner layer.
     fn and_then<V, N, L>(self, inner: L)
         -> AndThen<U, Self, L>
     where
@@ -33,7 +33,7 @@ pub trait Layer<T, U, S: super::Stack<U>> {
         }
     }
 
-    /// Compose this `Layer` with another.
+    /// Produces a new Layer with another layer wrapping this one.
     fn push<R, L>(self, outer: L)
         -> AndThen<T, L, Self>
     where
@@ -47,7 +47,7 @@ pub trait Layer<T, U, S: super::Stack<U>> {
         }
     }
 
-
+    /// Wraps this layer such that stack errors are modified by `map_err`.
     fn map_err<M>(self, map_err: M)
         -> AndThen<T, super::map_err::Layer<M>, Self>
     where

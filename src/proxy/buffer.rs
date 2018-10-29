@@ -9,15 +9,12 @@ use svc;
 
 /// Wraps `Service` stacks with a `Buffer`.
 #[derive(Debug, Clone)]
-pub struct Layer {
-    name: &'static str,
-}
+pub struct Layer();
 
 /// Produces `Service`s wrapped with a `Buffer`
 #[derive(Debug, Clone)]
 pub struct Stack<M> {
     inner: M,
-    name: &'static str,
 }
 
 pub enum Error<M, S> {
@@ -27,12 +24,13 @@ pub enum Error<M, S> {
 
 // === impl Layer ===
 
-pub fn layer(name: &'static str) -> Layer {
-    Layer { name }
+pub fn layer() -> Layer {
+    Layer()
 }
 
 impl<T, M> svc::Layer<T, T, M> for Layer
 where
+    T: fmt::Display + Clone + Send + Sync + 'static,
     M: svc::Stack<T>,
     M::Value: svc::Service + Send + 'static,
     <M::Value as svc::Service>::Request: Send,
@@ -43,18 +41,15 @@ where
     type Stack = Stack<M>;
 
     fn bind(&self, inner: M) -> Self::Stack {
-        Stack {
-            inner,
-            name: self.name.clone(),
-        }
+        Stack { inner }
     }
 }
 
 // === impl Stack ===
 
-
 impl<T, M> svc::Stack<T> for Stack<M>
 where
+    T: fmt::Display + Clone + Send + Sync + 'static,
     M: svc::Stack<T>,
     M::Value: svc::Service + Send + 'static,
     <M::Value as svc::Service>::Request: Send,
@@ -65,7 +60,7 @@ where
 
     fn make(&self, target: &T) -> Result<Self::Value, Self::Error> {
         let inner = self.inner.make(&target).map_err(Error::Stack)?;
-        let executor = logging::context_executor(self.name.clone());
+        let executor = logging::context_executor(target.clone());
         Buffer::new(inner, &executor).map_err(Error::Spawn)
     }
 }
