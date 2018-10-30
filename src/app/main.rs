@@ -11,7 +11,7 @@ use tokio::executor::{self, DefaultExecutor, Executor};
 use tokio::runtime::current_thread;
 use tower_h2;
 
-use app::classify::{Class, ClassifyResponse};
+use app::classify::{self, Class};
 use app::metric_labels::{EndpointLabels, RouteLabels};
 use control;
 use dns;
@@ -301,7 +301,9 @@ where
                     .push(normalize_uri::layer())
                     .push(orig_proto_upgrade::layer())
                     .push(tap::layer(tap_next_id.clone(), taps.clone()))
-                    .push(metrics::layer::<_, ClassifyResponse>(endpoint_http_metrics))
+                    .push(metrics::layer::<_, classify::Response>(
+                        endpoint_http_metrics,
+                    ))
                     .push(svc::watch::layer(tls_client_config))
                     .push(buffer::layer());
 
@@ -316,7 +318,7 @@ where
                             KubernetesNormalizer::new(config.namespaces.pod.clone()),
                         ),
                         svc::stack::phantom_data::layer()
-                            .push(metrics::layer::<_, ClassifyResponse>(route_http_metrics))
+                            .push(metrics::layer::<_, classify::Response>(route_http_metrics))
                             .push(insert_classify::layer()),
                     ))
                     .push(buffer::layer())
@@ -381,14 +383,12 @@ where
                     .push(svc::stack_per_request::layer())
                     .push(normalize_uri::layer())
                     .push(tap::layer(tap_next_id, taps))
-                    .push(proxy::http::metrics::layer::<_, ClassifyResponse>(
+                    .push(proxy::http::metrics::layer::<_, classify::Response>(
                         endpoint_http_metrics,
                     ))
                     .push(buffer::layer())
                     .push(limit::layer(MAX_IN_FLIGHT))
-                    .push(router::layer(inbound::Recognize::new(
-                        default_fwd_addr,
-                    )));
+                    .push(router::layer(inbound::Recognize::new(default_fwd_addr)));
 
                 // Build a router using the above policy
                 let capacity = config.inbound_router_capacity;

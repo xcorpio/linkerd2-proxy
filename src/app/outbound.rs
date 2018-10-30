@@ -407,7 +407,7 @@ pub mod insert_classify {
     use futures::Poll;
     use http;
 
-    use app::classify::Classify;
+    use app::classify;
     use proxy::http::Classify as _Classify;
     use super::Route;
     use svc;
@@ -426,7 +426,7 @@ pub mod insert_classify {
     #[derive(Clone, Debug)]
     pub struct Service<S: svc::Service> {
         inner: S,
-        classify: Classify,
+        classify: classify::Request,
     }
 
     pub fn layer() -> Layer {
@@ -457,7 +457,7 @@ pub mod insert_classify {
 
         fn make(&self, target: &Route) -> Result<Self::Value, Self::Error> {
             let inner = self.inner.make(target)?;
-            let classify = Classify::new(target.route.response_classes().clone());
+            let classify = classify::Request::new(target.route.response_classes().clone());
             Ok(Service { inner, classify })
         }
     }
