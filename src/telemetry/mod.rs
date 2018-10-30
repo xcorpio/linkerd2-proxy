@@ -5,5 +5,3 @@ pub mod process;
 pub mod tls_config_reload;
 
 pub use self::errno::Errno;
-
-pub type ServeMetrics<R> = metrics::Serve<R>;

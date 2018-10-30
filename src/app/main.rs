@@ -11,10 +11,8 @@ use tokio::executor::{self, DefaultExecutor, Executor};
 use tokio::runtime::current_thread;
 use tower_h2;
 
-use app::{
-    classify::{Class, ClassifyResponse},
-    metric_labels::{EndpointLabels, RouteLabels},
-};
+use app::classify::{Class, ClassifyResponse};
+use app::metric_labels::{EndpointLabels, RouteLabels};
 use control;
 use dns;
 use drain;
