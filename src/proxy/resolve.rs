@@ -7,7 +7,11 @@ use std::{error, fmt};
 pub use self::tower_discover::Change;
 use svc;
 
-pub type Update<E> = Change<SocketAddr, E>;
+#[derive(Clone, Debug)]
+pub enum Update<T> {
+    Add(SocketAddr, T),
+    Remove(SocketAddr),
+}
 
 /// Resolves `T`-typed names/addresses as a `Resolution`.
 pub trait Resolve<T> {
@@ -23,12 +27,6 @@ pub trait Resolution {
     type Error;
 
     fn poll(&mut self) -> Poll<Update<Self::Endpoint>, Self::Error>;
-}
-
-pub trait HasEndpoint {
-    type Endpoint;
-
-    fn endpoint(&self) -> &Self::Endpoint;
 }
 
 #[derive(Clone, Debug)]
@@ -54,12 +52,6 @@ pub enum Error<R, M> {
 pub struct Discover<R: Resolution, M: svc::Stack<R::Endpoint>> {
     resolution: R,
     make: M,
-}
-
-#[derive(Clone, Debug)]
-pub struct EndpointService<E, S> {
-    endpoint: E,
-    service: S,
 }
 
 // === impl Layer ===
@@ -125,52 +117,23 @@ where
     type Request = <M::Value as svc::Service>::Request;
     type Response = <M::Value as svc::Service>::Response;
     type Error = <M::Value as svc::Service>::Error;
-    type Service = EndpointService<R::Endpoint, M::Value>;
+    type Service = M::Value;
     type DiscoverError = Error<R::Error, M::Error>;
 
     fn poll(&mut self) -> Poll<Change<SocketAddr, Self::Service>, Self::DiscoverError> {
         loop {
             match try_ready!(self.resolution.poll().map_err(Error::Resolve)) {
-                Change::Insert(addr, endpoint) => {
+                Update::Add(addr, endpoint) => {
                     trace!("discover: insert: addr={}; endpoint={:?}", addr, endpoint);
-                    let service = self.make.make(&endpoint).map_err(Error::Stack)?;
-                    let svc = EndpointService { endpoint, service };
+                    let svc = self.make.make(&endpoint).map_err(Error::Stack)?;
                     return Ok(Async::Ready(Change::Insert(addr, svc)));
                 }
-                Change::Remove(addr) => {
+                Update::Remove(addr) => {
                     trace!("discover: remove: addr={}", addr);
                     return Ok(Async::Ready(Change::Remove(addr)));
                 }
             }
         }
-    }
-}
-
-// === impl EndpointService ===
-
-impl<E, S> HasEndpoint for EndpointService<E, S> {
-    type Endpoint = E;
-
-    fn endpoint(&self) -> &Self::Endpoint {
-        &self.endpoint
-    }
-}
-
-impl<E, S> svc::Service for EndpointService<E, S>
-where
-    S: svc::Service,
-{
-    type Request = S::Request;
-    type Response = S::Response;
-    type Error = S::Error;
-    type Future = S::Future;
-
-    fn poll_ready(&mut self) -> Poll<(), Self::Error> {
-        self.service.poll_ready()
-    }
-
-    fn call(&mut self, req: Self::Request) -> Self::Future {
-        self.service.call(req)
     }
 }
 

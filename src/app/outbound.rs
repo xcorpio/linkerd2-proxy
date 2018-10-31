@@ -302,10 +302,10 @@ pub mod discovery {
         fn poll(&mut self) -> Poll<resolve::Update<Self::Endpoint>, Self::Error> {
             match self {
                 Resolution::Name(ref dst, ref mut res) => match try_ready!(res.poll()) {
-                    resolve::Change::Remove(addr) => {
-                        Ok(Async::Ready(resolve::Change::Remove(addr)))
+                    resolve::Update::Remove(addr) => {
+                        Ok(Async::Ready(resolve::Update::Remove(addr)))
                     }
-                    resolve::Change::Insert(addr, metadata) => {
+                    resolve::Update::Add(addr, metadata) => {
                         // If the endpoint does not have TLS, note the reason.
                         // Otherwise, indicate that we don't (yet) have a TLS
                         // config. This value may be changed by a stack layer that
@@ -320,7 +320,7 @@ pub mod discovery {
                             metadata,
                             _p: (),
                         };
-                        Ok(Async::Ready(resolve::Change::Insert(addr, ep)))
+                        Ok(Async::Ready(resolve::Update::Add(addr, ep)))
                     }
                 },
                 Resolution::Addr(ref dst, ref mut addr) => match addr.take() {
@@ -332,7 +332,7 @@ pub mod discovery {
                             metadata: Metadata::none(tls),
                             _p: (),
                         };
-                        let up = resolve::Change::Insert(addr, ep);
+                        let up = resolve::Update::Add(addr, ep);
                         Ok(Async::Ready(up))
                     }
                     None => Ok(Async::NotReady),

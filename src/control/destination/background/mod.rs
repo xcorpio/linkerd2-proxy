@@ -21,7 +21,7 @@ use api::destination::{
     Update as PbUpdate,
 };
 
-use super::ResolveRequest;
+use super::{ResolveRequest, Update};
 use app::config::Namespaces;
 use control::{
     cache::Exists,
@@ -29,7 +29,6 @@ use control::{
     remote_stream::{Receiver, Remote},
 };
 use dns;
-use proxy::resolve::Change;
 use transport::DnsNameAndPort;
 
 mod destination_set;
@@ -174,7 +173,7 @@ where
                             // them onto the new watch first
                             match occ.get().addrs {
                                 Exists::Yes(ref cache) => for (&addr, meta) in cache {
-                                    let update = Change::Insert(addr, meta.clone());
+                                    let update = Update::Add(addr, meta.clone());
                                     resolve.responder.update_tx
                                         .unbounded_send(update)
                                         .expect("unbounded_send does not fail");
