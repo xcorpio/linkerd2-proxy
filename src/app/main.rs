@@ -176,7 +176,7 @@ where
 
         let (dns_resolver, dns_bg) = dns::Resolver::from_system_config_and_env(&config)
             .unwrap_or_else(|e| {
-                // TODO: Stack DNS configuration infallible.
+                // FIXME: DNS configuration should be infallible.
                 panic!("invalid DNS configuration: {:?}", e);
             });
 
@@ -235,22 +235,23 @@ where
                 .push(limit::layer(config.destination_concurrency_limit));
 
             // Because the control client is buffered, we need to be able to
-            // spawn a task on an executor. An executor is only available in the
-            // context of a running task, however, we the stack is instantiated lazily.
-            future::poll_fn(move || {
-                let svc = control_config
-                    .as_ref()
-                    .and_then(|ref c| match stack.make(c) {
-                        Ok(svc) => Some(svc),
-                        Err(e) => {
-                            error!("ignoring invalid controller configuration: {:?}", e);
-                            None
-                        }
-                    });
-                Ok(svc.into())
+            // spawn a task on an executor when `make` is called. This is done
+            // lazily so that a default executor is available to spawn the
+            // background buffering task.
+            future::lazy(move || match control_config {
+                None => future::ok(None),
+                Some(config) => match stack.make(&config) {
+                    Ok(svc) => future::ok(Some(svc)),
+                    Err(e) => {
+                        error!("failed to build controller: {}", e);
+                        future::err(())
+                    }
+                },
             })
         };
 
+        // The resolver is created in the proxy core but runs on the admin core.
+        // This channel is used to move the task.
         let (resolver_bg_tx, resolver_bg_rx) = futures::sync::oneshot::channel();
 
         // Build the outbound and inbound proxies using the controller client.
