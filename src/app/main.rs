@@ -239,14 +239,11 @@ where
             // lazily so that a default executor is available to spawn the
             // background buffering task.
             future::lazy(move || match control_config {
-                None => future::ok(None),
-                Some(config) => match stack.make(&config) {
-                    Ok(svc) => future::ok(Some(svc)),
-                    Err(e) => {
-                        error!("failed to build controller: {}", e);
-                        future::err(())
-                    }
-                },
+                None => Ok(None),
+                Some(config) => stack
+                    .make(&config)
+                    .map(Some)
+                    .map_err(|e| error!("failed to build controller: {}", e)),
             })
         };
 
@@ -306,16 +303,18 @@ where
                     .push(svc::watch::layer(tls_client_config))
                     .push(buffer::layer());
 
+                let profiles_client = ProfilesClient::new(
+                    controller,
+                    Duration::from_secs(3),
+                    KubernetesNormalizer::new(config.namespaces.pod.clone()),
+                );
+
                 let dst_route_stack = endpoint_stack
                     .push(resolve::layer(Resolve::new(resolver)))
                     .push(balance::layer())
                     .push(buffer::layer())
                     .push(profiles::router::layer(
-                        ProfilesClient::new(
-                            controller,
-                            Duration::from_secs(3),
-                            KubernetesNormalizer::new(config.namespaces.pod.clone()),
-                        ),
+                        profiles_client,
                         svc::stack::phantom_data::layer()
                             .push(metrics::layer::<_, classify::Response>(route_http_metrics))
                             .push(classify::layer()),
