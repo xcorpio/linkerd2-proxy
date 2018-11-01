@@ -25,7 +25,7 @@ pub struct TimestampRequestOpen<S> {
 
 /// Layers a `TimestampRequestOpen` middleware on an HTTP client.
 #[derive(Clone, Debug)]
-pub struct Layer;
+pub struct Layer();
 
 /// Uses an `M`-typed `Stack` to build a `TimestampRequestOpen` service.
 #[derive(Clone, Debug)]
@@ -55,7 +55,7 @@ where
 // === impl Layer ===
 
 pub fn layer() -> Layer {
-    Layer
+    Layer()
 }
 
 impl<T, B, M> svc::Layer<T, T, M> for Layer

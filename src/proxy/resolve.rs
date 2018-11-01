@@ -7,12 +7,6 @@ use std::{error, fmt};
 pub use self::tower_discover::Change;
 use svc;
 
-#[derive(Clone, Debug)]
-pub enum Update<T> {
-    Add(SocketAddr, T),
-    Remove(SocketAddr),
-}
-
 /// Resolves `T`-typed names/addresses as a `Resolution`.
 pub trait Resolve<T> {
     type Endpoint;
@@ -27,6 +21,12 @@ pub trait Resolution {
     type Error;
 
     fn poll(&mut self) -> Poll<Update<Self::Endpoint>, Self::Error>;
+}
+
+#[derive(Clone, Debug)]
+pub enum Update<T> {
+    Add(SocketAddr, T),
+    Remove(SocketAddr),
 }
 
 #[derive(Clone, Debug)]
