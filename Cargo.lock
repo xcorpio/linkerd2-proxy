@@ -560,7 +560,6 @@ dependencies = [
  "trust-dns-resolver 0.10.0-alpha.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "try-lock 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "untrusted 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "void 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "webpki 0.18.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
