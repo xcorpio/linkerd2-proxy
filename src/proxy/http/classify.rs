@@ -66,7 +66,7 @@ pub trait CanClassify {
 }
 
 #[derive(Debug, Clone)]
-pub struct Layer;
+pub struct Layer();
 
 #[derive(Clone, Debug)]
 pub struct Stack<M> {
@@ -80,7 +80,7 @@ pub struct Service<C, S: svc::Service> {
 }
 
 pub fn layer() -> Layer {
-    Layer
+    Layer()
 }
 
 impl<T, M, A, B> svc::Layer<T, T, M> for Layer
