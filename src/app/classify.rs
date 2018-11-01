@@ -152,7 +152,9 @@ impl classify::ClassifyEos for Eos {
     fn eos(self, trailers: Option<&http::HeaderMap>) -> Self::Class {
         match self {
             Eos::Http(status) if status.is_server_error() => Class::Http(SuccessOrFailure::Failure),
-            Eos::Http(_) => Class::Http(SuccessOrFailure::Success),
+            Eos::Http(_) => trailers
+                .and_then(grpc_class)
+                .unwrap_or_else(|| Class::Http(SuccessOrFailure::Success)),
             Eos::Grpc(GrpcEos::NoBody(class)) => class,
             Eos::Grpc(GrpcEos::Open) => trailers
                 .and_then(grpc_class)
