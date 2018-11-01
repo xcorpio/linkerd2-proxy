@@ -12,7 +12,7 @@ pub trait ShouldStackPerRequest {
 /// A `Layer` produces a `Service` `Stack` that creates a new service for each
 /// request.
 #[derive(Clone, Debug)]
-pub struct Layer();
+pub struct Layer;
 
 /// A `Stack` that builds a new `Service` for each request it serves.
 #[derive(Clone, Debug)]
@@ -43,7 +43,7 @@ struct StackValid<T, M: super::Stack<T>> {
 // === Layer ===
 
 pub fn layer() -> Layer {
-    Layer()
+    Layer
 }
 
 impl<T, N> super::Layer<T, T, N> for Layer

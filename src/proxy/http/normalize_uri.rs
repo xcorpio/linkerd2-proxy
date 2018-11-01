@@ -9,7 +9,7 @@ pub trait ShouldNormalizeUri {
 }
 
 #[derive(Clone, Debug)]
-pub struct Layer();
+pub struct Layer;
 
 #[derive(Clone, Debug)]
 pub struct Stack<N> {
@@ -24,7 +24,7 @@ pub struct Service<S> {
 // === impl Layer ===
 
 pub fn layer() -> Layer {
-    Layer()
+    Layer
 }
 
 impl<T, B, M> svc::Layer<T, T, M> for Layer

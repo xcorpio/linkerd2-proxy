@@ -9,7 +9,7 @@ use svc;
 
 /// Wraps `Service` stacks with a `Buffer`.
 #[derive(Debug, Clone)]
-pub struct Layer();
+pub struct Layer;
 
 /// Produces `Service`s wrapped with a `Buffer`
 #[derive(Debug, Clone)]
@@ -25,7 +25,7 @@ pub enum Error<M, S> {
 // === impl Layer ===
 
 pub fn layer() -> Layer {
-    Layer()
+    Layer
 }
 
 impl<T, M> svc::Layer<T, T, M> for Layer

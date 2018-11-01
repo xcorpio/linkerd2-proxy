@@ -359,7 +359,7 @@ pub mod orig_proto_upgrade {
     use svc;
 
     #[derive(Debug, Clone)]
-    pub struct Layer();
+    pub struct Layer;
 
     #[derive(Clone, Debug)]
     pub struct Stack<M>
@@ -370,7 +370,7 @@ pub mod orig_proto_upgrade {
     }
 
     pub fn layer() -> Layer {
-        Layer()
+        Layer
     }
 
     impl<M, A, B> svc::Layer<Endpoint, Endpoint, M> for Layer
