@@ -3,7 +3,7 @@ pub mod destination;
 mod fully_qualified_authority;
 mod observe;
 pub mod pb;
-pub mod remote_stream;
+mod remote_stream;
 mod serve_http;
 
 pub use self::fully_qualified_authority::{NameNormalizer, KubernetesNormalizer, FullyQualifiedAuthority};
