@@ -302,9 +302,8 @@ where
                     .push(normalize_uri::layer())
                     .push(orig_proto_upgrade::layer())
                     .push(tap::layer(tap_next_id.clone(), taps.clone()))
-                    .push(metrics::layer::<_, classify::Response>(
-                        endpoint_http_metrics,
-                    ))
+                    .push(metrics::layer::<_, classify::Response>(endpoint_http_metrics))
+                    .push(classify::insert::layer())
                     .push(svc::watch::layer(tls_client_config))
                     .push(buffer::layer());
 
@@ -354,6 +353,7 @@ where
 
             let inbound = {
                 use super::inbound::{self, Endpoint};
+                use proxy::http::metrics;
 
                 // As the inbound proxy accepts connections, we don't do any
                 // special transport-level handling.
@@ -384,9 +384,8 @@ where
                     .push(svc::stack_per_request::layer())
                     .push(normalize_uri::layer())
                     .push(tap::layer(tap_next_id, taps))
-                    .push(proxy::http::metrics::layer::<_, classify::Response>(
-                        endpoint_http_metrics,
-                    ))
+                    .push(metrics::layer::<_, classify::Response>(endpoint_http_metrics))
+                    .push(classify::insert::layer())
                     .push(buffer::layer())
                     .push(limit::layer(MAX_IN_FLIGHT))
                     .push(router::layer(inbound::Recognize::new(default_fwd_addr)));

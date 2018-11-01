@@ -184,15 +184,10 @@ impl FmtLabels for classify::Class {
         match self {
             Class::Grpc(result, status) => write!(
                 f,
-                "classification=\"{}\",status_code=\"200\",grpc_status=\"{}\"",
+                "classification=\"{}\",grpc_status=\"{}\"",
                 result, status
             ),
-            Class::Http(result, status) => write!(
-                f,
-                "classification=\"{}\",status_code=\"{}\"",
-                result,
-                status.as_str()
-            ),
+            Class::Http(result) => write!(f, "classification=\"{}\"", result),
             Class::Stream(result, status) => {
                 write!(f, "classification=\"{}\",h2_err=\"{}\"", result, status)
             }

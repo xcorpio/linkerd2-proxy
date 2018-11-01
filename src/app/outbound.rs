@@ -3,17 +3,18 @@ use std::fmt;
 use std::net::SocketAddr;
 
 use control::destination::{Metadata, ProtocolHint};
-use svc::{self, stack_per_request::ShouldStackPerRequest};
-use tap;
 use proxy::{
     http::{
-        client, normalize_uri::ShouldNormalizeUri, router,
-        h1,
+        classify::CanClassify,
+        client, h1,
+        normalize_uri::ShouldNormalizeUri,
         profiles::{self, CanGetDestination},
-        Settings,
+        router, Settings,
     },
     Source,
 };
+use svc::{self, stack_per_request::ShouldStackPerRequest};
+use tap;
 use transport::{connect, tls, DnsNameAndPort, Host, HostAndPort};
 
 #[derive(Clone, Debug)]
@@ -76,6 +77,14 @@ impl ShouldStackPerRequest for Endpoint {
 impl fmt::Display for Endpoint {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.connect.addr.fmt(f)
+    }
+}
+
+impl CanClassify for Endpoint {
+    type Classify = super::classify::Request;
+
+    fn classify(&self) -> super::classify::Request {
+        super::classify::Request::default()
     }
 }
 
@@ -238,10 +247,7 @@ impl profiles::WithRoute for Destination {
     type Output = Route;
 
     fn with_route(self, route: profiles::Route) -> Self::Output {
-        Route {
-            dst: self,
-            route,
-        }
+        Route { dst: self, route }
     }
 }
 
@@ -407,9 +413,9 @@ pub mod insert_classify {
     use futures::Poll;
     use http;
 
+    use super::Route;
     use app::classify;
     use proxy::http::Classify as _Classify;
-    use super::Route;
     use svc;
 
     #[derive(Debug, Clone)]
@@ -430,7 +436,7 @@ pub mod insert_classify {
     }
 
     pub fn layer() -> Layer {
-            Layer
+        Layer
     }
 
     impl<M, A, B> svc::Layer<Route, Route, M> for Layer
