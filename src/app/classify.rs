@@ -2,7 +2,7 @@ use h2;
 use http;
 use std::sync::Arc;
 
-pub use proxy::http::classify::insert;
+pub use proxy::http::classify::{CanClassify, layer};
 use proxy::http::{classify, profiles};
 
 #[derive(Clone, Debug)]
@@ -46,12 +46,12 @@ pub enum SuccessOrFailure {
 
 // === impl Request ===
 
-impl Request {
-    pub fn new(classes: Vec<profiles::ResponseClass>) -> Self {
+impl From<Arc<Vec<profiles::ResponseClass>>> for Request {
+    fn from(classes: Arc<Vec<profiles::ResponseClass>>) -> Self {
         if classes.is_empty() {
             Request::Default
         } else {
-            Request::Profile(classes.into())
+            Request::Profile(classes)
         }
     }
 }

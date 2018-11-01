@@ -269,7 +269,7 @@ where
 
             let outbound = {
                 use super::outbound::{
-                    discovery::Resolve, insert_classify, orig_proto_upgrade, Endpoint, Recognize,
+                    discovery::Resolve, orig_proto_upgrade, Endpoint, Recognize,
                 };
                 use super::profiles::Client as ProfilesClient;
                 use control::KubernetesNormalizer;
@@ -303,7 +303,6 @@ where
                     .push(orig_proto_upgrade::layer())
                     .push(tap::layer(tap_next_id.clone(), taps.clone()))
                     .push(metrics::layer::<_, classify::Response>(endpoint_http_metrics))
-                    .push(classify::insert::layer())
                     .push(svc::watch::layer(tls_client_config))
                     .push(buffer::layer());
 
@@ -319,7 +318,7 @@ where
                         ),
                         svc::stack::phantom_data::layer()
                             .push(metrics::layer::<_, classify::Response>(route_http_metrics))
-                            .push(insert_classify::layer()),
+                            .push(classify::layer()),
                     ))
                     .push(buffer::layer())
                     .push(timeout::layer(config.bind_timeout))
@@ -385,7 +384,7 @@ where
                     .push(normalize_uri::layer())
                     .push(tap::layer(tap_next_id, taps))
                     .push(metrics::layer::<_, classify::Response>(endpoint_http_metrics))
-                    .push(classify::insert::layer())
+                    .push(classify::layer())
                     .push(buffer::layer())
                     .push(limit::layer(MAX_IN_FLIGHT))
                     .push(router::layer(inbound::Recognize::new(default_fwd_addr)));

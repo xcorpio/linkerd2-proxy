@@ -43,7 +43,7 @@ struct Dst(outbound::Destination);
 
 impl From<outbound::Route> for RouteLabels {
     fn from(r: outbound::Route) -> Self {
-        let mut label_iter = r.route.labels().into_iter();
+        let mut label_iter = r.route.labels().as_ref().into_iter();
         let labels = if let Some((k0, v0)) = label_iter.next() {
             let mut s = format!("rt_{}=\"{}\"", k0, v0);
             for (k, v) in label_iter {

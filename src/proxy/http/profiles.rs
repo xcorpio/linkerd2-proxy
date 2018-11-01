@@ -36,7 +36,7 @@ pub enum Error {}
 #[derive(Clone, Debug, Default)]
 pub struct Route {
     labels: Arc<IndexMap<String, String>>,
-    response_classes: Vec<ResponseClass>,
+    response_classes: Arc<Vec<ResponseClass>>,
 }
 
 #[derive(Clone, Debug)]
@@ -80,15 +80,15 @@ impl Route {
 
         Self {
             labels,
-            response_classes,
+            response_classes: response_classes.into(),
         }
     }
 
-    pub fn labels(&self) -> &IndexMap<String, String> {
-        self.labels.as_ref()
+    pub fn labels(&self) -> &Arc<IndexMap<String, String>> {
+        &self.labels
     }
 
-    pub fn response_classes(&self) -> &Vec<ResponseClass> {
+    pub fn response_classes(&self) -> &Arc<Vec<ResponseClass>> {
         &self.response_classes
     }
 }
