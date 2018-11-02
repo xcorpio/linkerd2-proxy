@@ -10,10 +10,10 @@ use std::iter::FromIterator;
 use std::sync::Arc;
 use std::{error, fmt};
 
-use transport::DnsNameAndPort;
+use NamePort;
 
 pub trait CanGetDestination {
-    fn get_destination(&self) -> Option<&DnsNameAndPort>;
+    fn get_destination(&self) -> Option<&NamePort>;
 }
 
 pub type Routes = Vec<(RequestMatch, Route)>;
@@ -21,7 +21,7 @@ pub type Routes = Vec<(RequestMatch, Route)>;
 pub trait GetRoutes {
     type Stream: Stream<Item = Routes, Error = Error>;
 
-    fn get_routes(&self, dst: &DnsNameAndPort) -> Option<Self::Stream>;
+    fn get_routes(&self, dst: &NamePort) -> Option<Self::Stream>;
 }
 
 pub trait WithRoute {

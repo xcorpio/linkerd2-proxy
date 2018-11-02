@@ -90,8 +90,7 @@ impl From<inbound::Endpoint> for EndpointLabels {
 
 impl From<outbound::Endpoint> for EndpointLabels {
     fn from(ep: outbound::Endpoint) -> Self {
-        use self::outbound::NameOrAddr;
-        use transport::DnsNameAndPort;
+        use HostPort;
 
         let mut label_iter = ep.metadata.labels().into_iter();
         let labels = if let Some((k0, v0)) = label_iter.next() {
@@ -105,15 +104,12 @@ impl From<outbound::Endpoint> for EndpointLabels {
         };
 
         let authority = {
-            let a = match ep.dst.name_or_addr {
-                NameOrAddr::Name(DnsNameAndPort { ref host, ref port }) => {
-                    if *port == 80 {
-                        format!("{}", host)
-                    } else {
-                        format!("{}:{}", host, port)
-                    }
+            let a = match ep.dst.host_port {
+                HostPort::Name(n) => match n.port() {
+                    80 => format!("{}", n.name()),
+                    port => format!("{}:{}", n.name(), port),
                 }
-                NameOrAddr::Addr(addr) => format!("{}", addr),
+                HostPort::Addr(addr) => format!("{}", addr),
             };
             Authority(uri::Authority::from_shared(a.into()).ok())
         };
@@ -163,7 +159,7 @@ impl FmtLabels for Authority {
 
 impl FmtLabels for Dst {
     fn fmt_labels(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "dst=\"{}\"", self.0.name_or_addr)?;
+        write!(f, "dst=\"{}\"", self.0.host_port)?;
         write!(
             f,
             ",dst_protocol=\"{}\"",

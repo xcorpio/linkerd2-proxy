@@ -1,6 +1,5 @@
 use http;
 use std::fmt;
-use std::net::SocketAddr;
 
 use app::classify;
 use control::destination::{Metadata, ProtocolHint};
@@ -16,7 +15,8 @@ use proxy::{
 };
 use svc::{self, stack_per_request::ShouldStackPerRequest};
 use tap;
-use transport::{connect, tls, DnsNameAndPort, Host, HostAndPort};
+use transport::{connect, tls};
+use {HostPort, NamePort};
 
 #[derive(Clone, Debug)]
 pub struct Endpoint {
@@ -28,20 +28,11 @@ pub struct Endpoint {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Destination {
-    pub name_or_addr: NameOrAddr,
+    pub host_port: HostPort,
     pub settings: Settings,
     _p: (),
 }
 
-/// Describes a destination for HTTP requests.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum NameOrAddr {
-    /// A logical, lazily-bound endpoint.
-    Name(DnsNameAndPort),
-
-    /// A single, bound endpoint.
-    Addr(SocketAddr),
-}
 
 #[derive(Clone, Debug)]
 pub struct Route {
@@ -136,115 +127,55 @@ impl<B> router::Recognize<http::Request<B>> for Recognize {
     type Target = Destination;
 
     fn recognize(&self, req: &http::Request<B>) -> Option<Self::Target> {
-        let dst = Destination::from_request(req);
+        const DEFAULT_PORT: u16 = 80;
+
+        let host_port = req.uri()
+            .authority_part()
+            .and_then(|a| HostPort::from_authority_with_default_port(a, DEFAULT_PORT).ok())
+            .or_else(|| {
+                h1::authority_from_host(req)
+                    .and_then(|a| HostPort::from_authority_with_default_port(&a, DEFAULT_PORT).ok())
+            })
+            .or_else(|| {
+                req.extensions()
+                    .get::<Source>()
+                    .and_then(|src| src.orig_dst_if_not_local())
+                    .map(HostPort::Addr)
+            })?;
+
+        let dst = Destination::new(host_port, Settings::detect(req));
         debug!("recognize: dst={:?}", dst);
-        dst
+        Some(dst)
     }
 }
 
 // === impl Destination ===
 
 impl Destination {
-    pub fn new(name_or_addr: NameOrAddr, settings: Settings) -> Self {
+    pub fn new(host_port: HostPort, settings: Settings) -> Self {
         Self {
-            name_or_addr,
+            host_port,
             settings,
             _p: (),
         }
     }
-
-    pub fn from_request<A>(req: &http::Request<A>) -> Option<Self> {
-        let name_or_addr = NameOrAddr::from_request(req)?;
-        let settings = Settings::detect(req);
-        Some(Self::new(name_or_addr, settings))
-    }
 }
 
 impl CanGetDestination for Destination {
-    fn get_destination(&self) -> Option<&DnsNameAndPort> {
-        match self.name_or_addr {
-            NameOrAddr::Name(ref dst) => Some(dst),
-            _ => None,
+    fn get_destination(&self) -> Option<&NamePort> {
+        match self.host_port {
+            HostPort::Name(ref name) => Some(name),
+            HostPort::Addr(_) => None,
         }
     }
 }
 
 impl fmt::Display for Destination {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.name_or_addr.fmt(f)
+        self.host_port.fmt(f)
     }
 }
 
-impl fmt::Display for NameOrAddr {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            NameOrAddr::Name(ref name) => write!(f, "{}:{}", name.host, name.port),
-            NameOrAddr::Addr(ref addr) => addr.fmt(f),
-        }
-    }
-}
-
-impl NameOrAddr {
-    /// Determines the destination for a request.
-    ///
-    /// Typically, a request's authority is used to produce a `NameOrAddr`. If the
-    /// authority addresses a DNS name, a `NameOrAddr::Name` is returned; and, otherwise,
-    /// it addresses a fixed IP address and a `NameOrAddr::Addr` is returned. The port is
-    /// inferred if not specified in the authority.
-    ///
-    /// If no authority is available, the `SO_ORIGINAL_DST` socket option is checked. If
-    /// it's available, it is used to return a `NameOrAddr::Addr`. This socket option is
-    /// typically set by `iptables(8)` in containerized environments like Kubernetes (as
-    /// configured by the `proxy-init` program).
-    ///
-    /// If none of this information is available, no `NameOrAddr` is returned.
-    pub fn from_request<B>(req: &http::Request<B>) -> Option<NameOrAddr> {
-        match Self::host_port(req) {
-            Some(HostAndPort {
-                host: Host::DnsName(host),
-                port,
-            }) => {
-                let name_or_addr = DnsNameAndPort { host, port };
-                Some(NameOrAddr::Name(name_or_addr))
-            }
-
-            Some(HostAndPort {
-                host: Host::Ip(ip),
-                port,
-            }) => {
-                let name_or_addr = SocketAddr::from((ip, port));
-                Some(NameOrAddr::Addr(name_or_addr))
-            }
-
-            None => req
-                .extensions()
-                .get::<Source>()
-                .and_then(|src| src.orig_dst_if_not_local())
-                .map(NameOrAddr::Addr),
-        }
-    }
-
-    /// Determines the logical host:port of the request.
-    ///
-    /// If the parsed URI includes an authority, use that. Otherwise, try to load the
-    /// authority from the `Host` header.
-    ///
-    /// The port is either parsed from the authority or a default of 80 is used.
-    fn host_port<B>(req: &http::Request<B>) -> Option<HostAndPort> {
-        // Note: Calls to `normalize` cannot be deduped without cloning `authority`.
-        req.uri()
-            .authority_part()
-            .and_then(Self::normalize)
-            .or_else(|| h1::authority_from_host(req).and_then(|h| Self::normalize(&h)))
-    }
-
-    /// TODO: Return error when `HostAndPort::normalize()` fails.
-    /// TODO: Use scheme-appropriate default port.
-    fn normalize(authority: &http::uri::Authority) -> Option<HostAndPort> {
-        const DEFAULT_PORT: Option<u16> = Some(80);
-        HostAndPort::normalize(authority, DEFAULT_PORT).ok()
-    }
-}
 
 impl profiles::WithRoute for Destination {
     type Output = Route;
@@ -258,14 +189,14 @@ pub mod discovery {
     use futures::{Async, Poll};
     use std::net::SocketAddr;
 
-    use super::{Destination, Endpoint, NameOrAddr};
+    use super::{Destination, Endpoint};
     use control::destination::Metadata;
     use proxy::resolve;
-    use transport::{connect, tls, DnsNameAndPort};
-    use Conditional;
+    use transport::{connect, tls};
+    use {Conditional, HostPort, NamePort};
 
     #[derive(Clone, Debug)]
-    pub struct Resolve<R: resolve::Resolve<DnsNameAndPort>>(R);
+    pub struct Resolve<R: resolve::Resolve<NamePort>>(R);
 
     #[derive(Debug)]
     pub enum Resolution<R: resolve::Resolution> {
@@ -277,7 +208,7 @@ pub mod discovery {
 
     impl<R> Resolve<R>
     where
-        R: resolve::Resolve<DnsNameAndPort, Endpoint = Metadata>,
+        R: resolve::Resolve<NamePort, Endpoint = Metadata>,
     {
         pub fn new(resolve: R) -> Self {
             Resolve(resolve)
@@ -286,15 +217,15 @@ pub mod discovery {
 
     impl<R> resolve::Resolve<Destination> for Resolve<R>
     where
-        R: resolve::Resolve<DnsNameAndPort, Endpoint = Metadata>,
+        R: resolve::Resolve<NamePort, Endpoint = Metadata>,
     {
         type Endpoint = Endpoint;
         type Resolution = Resolution<R::Resolution>;
 
         fn resolve(&self, dst: &Destination) -> Self::Resolution {
-            match dst.name_or_addr {
-                NameOrAddr::Name(ref name) => Resolution::Name(dst.clone(), self.0.resolve(&name)),
-                NameOrAddr::Addr(ref addr) => Resolution::Addr(dst.clone(), Some(*addr)),
+            match dst.host_port {
+                HostPort::Name(ref name) => Resolution::Name(dst.clone(), self.0.resolve(&name)),
+                HostPort::Addr(ref addr) => Resolution::Addr(dst.clone(), Some(*addr)),
             }
         }
     }
