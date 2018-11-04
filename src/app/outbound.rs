@@ -20,28 +20,27 @@ use {HostPort, NamePort};
 
 #[derive(Clone, Debug)]
 pub struct Endpoint {
-    pub dst: Destination,
+    pub destination: HostPort,
+    pub settings: Settings,
     pub connect: connect::Target,
     pub metadata: Metadata,
     _p: (),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Destination {
-    pub host_port: HostPort,
-    pub settings: Settings,
-    _p: (),
-}
-
-
 #[derive(Clone, Debug)]
 pub struct Route {
-    pub dst: Destination,
+    pub destination: HostPort,
     pub route: profiles::Route,
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct Recognize {}
+#[derive(Copy, Clone, Debug)]
+pub struct RecognizeUnbound;
+
+#[derive(Copy, Clone, Debug)]
+pub struct RecognizeSettings;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Unbound(pub HostPort);
 
 // === impl Endpoint ===
 
@@ -56,13 +55,13 @@ impl Endpoint {
 
 impl ShouldNormalizeUri for Endpoint {
     fn should_normalize_uri(&self) -> bool {
-        !self.dst.settings.is_http2() && !self.dst.settings.was_absolute_form()
+        !self.settings.is_http2() && !self.dst.settings.was_absolute_form()
     }
 }
 
 impl ShouldStackPerRequest for Endpoint {
     fn should_stack_per_request(&self) -> bool {
-        !self.dst.settings.is_http2() && !self.dst.settings.can_reuse_clients()
+        !self.settings.is_http2() && !self.dst.settings.can_reuse_clients()
     }
 }
 
@@ -90,7 +89,7 @@ impl svc::watch::WithUpdate<tls::ConditionalClientConfig> for Endpoint {
 // Makes it possible to build a client::Stack<Endpoint>.
 impl From<Endpoint> for client::Config {
     fn from(ep: Endpoint) -> Self {
-        client::Config::new(ep.connect, ep.dst.settings)
+        client::Config::new(ep.connect, ep.settings)
     }
 }
 
@@ -115,16 +114,10 @@ impl CanClassify for Route {
     }
 }
 
-// === impl Recognize ===
+// === impl RecognizeUnbound ===
 
-impl Recognize {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
-
-impl<B> router::Recognize<http::Request<B>> for Recognize {
-    type Target = Destination;
+impl<B> router::Recognize<http::Request<B>> for RecognizeUnbound {
+    type Target = Unbound;
 
     fn recognize(&self, req: &http::Request<B>) -> Option<Self::Target> {
         const DEFAULT_PORT: u16 = 80;
@@ -142,46 +135,45 @@ impl<B> router::Recognize<http::Request<B>> for Recognize {
                     .and_then(|src| src.orig_dst_if_not_local())
                     .map(HostPort::Addr)
             })?;
+        debug!("recognize: unbound={:?}", host_port);
 
-        let dst = Destination::new(host_port, Settings::detect(req));
-        debug!("recognize: dst={:?}", dst);
-        Some(dst)
+        Some(Unbound(host_port))
     }
 }
 
-// === impl Destination ===
+// === impl RecognizeSettings ===
 
-impl Destination {
-    pub fn new(host_port: HostPort, settings: Settings) -> Self {
-        Self {
-            host_port,
-            settings,
-            _p: (),
-        }
+impl<B> router::Recognize<http::Request<B>> for RecognizeSettings {
+    type Target = Settings;
+
+    fn recognize(&self, req: &http::Request<B>) -> Option<Self::Target> {
+        Some(Settings::detect(req))
     }
 }
 
-impl CanGetDestination for Destination {
+// === impl Unbound ===
+
+impl CanGetDestination for Unbound {
     fn get_destination(&self) -> Option<&NamePort> {
-        match self.host_port {
+        match self.0 {
             HostPort::Name(ref name) => Some(name),
             HostPort::Addr(_) => None,
         }
     }
 }
 
-impl fmt::Display for Destination {
+impl fmt::Display for Unbound {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.host_port.fmt(f)
+        self.0.fmt(f)
     }
 }
 
-
-impl profiles::WithRoute for Destination {
+// TODO this should only work with Bound destinations
+impl profiles::WithRoute for Unbound {
     type Output = Route;
 
     fn with_route(self, route: profiles::Route) -> Self::Output {
-        Route { dst: self, route }
+        Route { destination: self.0, route }
     }
 }
 

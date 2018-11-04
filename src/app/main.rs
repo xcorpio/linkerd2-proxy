@@ -289,10 +289,10 @@ where
                 let client_stack = connect
                     .clone()
                     .push(client::layer("out"))
+                    .push(reconnect::layer())
                     .push(svc::stack::map_target::layer(|ep: &Endpoint| {
                         client::Config::from(ep.clone())
-                    }))
-                    .push(reconnect::layer());
+                    }));
 
                 let endpoint_stack = client_stack
                     .push(svc::stack_per_request::layer())
@@ -309,16 +309,15 @@ where
                     KubernetesNormalizer::new(config.namespaces.pod.clone()),
                 );
 
+                let profile_route_stack = svc::stack::phantom_data::layer()
+                    .push(metrics::layer::<_, classify::Response>(route_http_metrics))
+                    .push(classify::layer()),
+
                 let dst_route_stack = endpoint_stack
                     .push(resolve::layer(Resolve::new(resolver)))
                     .push(balance::layer())
                     .push(buffer::layer())
-                    .push(profiles::router::layer(
-                        profiles_client,
-                        svc::stack::phantom_data::layer()
-                            .push(metrics::layer::<_, classify::Response>(route_http_metrics))
-                            .push(classify::layer()),
-                    ))
+                    .push(profiles::router::layer(profiles_client, profile_route_stack))
                     .push(buffer::layer())
                     .push(timeout::layer(config.bind_timeout))
                     .push(limit::layer(MAX_IN_FLIGHT))
