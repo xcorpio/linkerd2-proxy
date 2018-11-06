@@ -291,10 +291,11 @@ where
                     .push(reconnect::layer())
                     .push(svc::stack_per_request::layer())
                     .push(normalize_uri::layer())
+                    .push(buffer::layer())
+                    .push(settings::router::layer::<Endpoint>())
                     ;
 
                 let endpoint_stack = client_stack
-                    .push(settings::router::layer::<Endpoint>())
                     .push(orig_proto_upgrade::layer())
                     .push(tap::layer(tap_next_id.clone(), taps.clone()))
                     .push(metrics::layer::<_, classify::Response>(endpoint_http_metrics))

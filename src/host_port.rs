@@ -83,6 +83,10 @@ impl fmt::Display for HostPort {
 
 impl NamePort {
     pub fn new(host: &str, port: u16) -> Result<Self, Error> {
+        if host.is_empty() {
+            return Err(Error::InvalidHost);
+        }
+
         dns::Name::try_from(host.as_bytes())
             .map(|name| NamePort { name, port })
             .map_err(|_| Error::InvalidHost)

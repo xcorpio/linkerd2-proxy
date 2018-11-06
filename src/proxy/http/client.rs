@@ -165,6 +165,13 @@ impl ShouldStackPerRequest for Config {
     }
 }
 
+impl fmt::Display for Config {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.target.addr.fmt(f)
+    }
+}
+
+
 // === impl Layer ===
 
 pub fn layer<B>(proxy_name: &'static str) -> Layer<B>

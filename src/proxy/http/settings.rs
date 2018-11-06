@@ -41,7 +41,7 @@ impl Settings {
                 req.headers()
                     .get(HOST)
                     .and_then(|h| h.to_str().ok())
-                    .map(|_| false)
+                    .map(|h| h.is_empty())
             })
             .unwrap_or(true);
 
