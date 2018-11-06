@@ -20,14 +20,14 @@ use {HostPort, NamePort};
 
 #[derive(Clone, Debug)]
 pub struct Endpoint {
-    pub destination: HostPort,
+    pub dst_name: Option<NamePort>,
     pub connect: connect::Target,
     pub metadata: Metadata,
 }
 
 #[derive(Clone, Debug)]
 pub struct Route {
-    pub destination: HostPort,
+    pub dst_name: Option<NamePort>,
     pub route: profiles::Route,
 }
 
@@ -123,16 +123,6 @@ impl<B> router::Recognize<http::Request<B>> for RecognizeUnbound {
     }
 }
 
-// === impl RecognizeSettings ===
-
-impl<B> router::Recognize<http::Request<B>> for RecognizeSettings {
-    type Target = Settings;
-
-    fn recognize(&self, req: &http::Request<B>) -> Option<Self::Target> {
-        Some(Settings::detect(req))
-    }
-}
-
 // === impl Unbound ===
 
 impl CanGetDestination for Unbound {
@@ -155,7 +145,11 @@ impl profiles::WithRoute for Unbound {
     type Output = Route;
 
     fn with_route(self, route: profiles::Route) -> Self::Output {
-        Route { destination: self.0, route }
+        let dst_name = match self.0 {
+            HostPort::Name(n) => Some(n),
+            HostPort::Addr(..) => None,
+        };
+        Route { dst_name, route }
     }
 }
 
@@ -163,7 +157,7 @@ pub mod discovery {
     use futures::{Async, Poll};
     use std::net::SocketAddr;
 
-    use super::Endpoint;
+    use super::{Endpoint, Unbound};
     use control::destination::Metadata;
     use proxy::resolve;
     use transport::{connect, tls};
@@ -189,17 +183,18 @@ pub mod discovery {
         }
     }
 
-    impl<R> resolve::Resolve<HostPort> for Resolve<R>
+    impl<R> resolve::Resolve<Unbound> for Resolve<R>
     where
         R: resolve::Resolve<NamePort, Endpoint = Metadata>,
     {
         type Endpoint = Endpoint;
         type Resolution = Resolution<R::Resolution>;
 
-        fn resolve(&self, dst: &HostPort) -> Self::Resolution {
+        fn resolve(&self, dst: &Unbound) -> Self::Resolution {
             match dst {
-                HostPort::Name(ref name) => Resolution::Name(name.clone(), self.0.resolve(&name)),
-                HostPort::Addr(ref addr) => Resolution::Addr(Some(*addr)),
+                Unbound(HostPort::Name(ref name)) =>
+                    Resolution::Name(name.clone(), self.0.resolve(&name)),
+                Unbound(HostPort::Addr(ref addr)) => Resolution::Addr(Some(*addr)),
             }
         }
     }
@@ -215,7 +210,7 @@ pub mod discovery {
 
         fn poll(&mut self) -> Poll<resolve::Update<Self::Endpoint>, Self::Error> {
             match self {
-                Resolution::Name(ref dst, ref mut res) => match try_ready!(res.poll()) {
+                Resolution::Name(ref name, ref mut res) => match try_ready!(res.poll()) {
                     resolve::Update::Remove(addr) => {
                         Ok(Async::Ready(resolve::Update::Remove(addr)))
                     }
@@ -229,7 +224,7 @@ pub mod discovery {
                             Conditional::Some(_) => tls::ReasonForNoTls::NoConfig,
                         };
                         let ep = Endpoint {
-                            destination: HostPort::Name(dst.clone()),
+                            dst_name: Some(name.clone()),
                             connect: connect::Target::new(addr, Conditional::None(tls)),
                             metadata,
                         };
@@ -240,7 +235,7 @@ pub mod discovery {
                     Some(addr) => {
                         let tls = tls::ReasonForNoIdentity::NoAuthorityInHttpRequest;
                         let ep = Endpoint {
-                            destination: HostPort::Addr(addr),
+                            dst_name: None,
                             connect: connect::Target::new(addr, Conditional::None(tls.into())),
                             metadata: Metadata::none(tls),
                         };

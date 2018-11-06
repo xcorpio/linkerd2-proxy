@@ -67,5 +67,5 @@ pub mod telemetry;
 pub mod transport;
 
 use self::conditional::Conditional;
-use self::host_port::{HostPort, NamePort, HostPortError};
+use self::host_port::{HostPort, NamePort};
 pub use self::transport::SoOriginalDst;

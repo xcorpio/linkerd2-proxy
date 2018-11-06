@@ -1,4 +1,3 @@
-use http::uri;
 use std::{
     fmt::{self, Write},
     net,
@@ -7,7 +6,7 @@ use std::{
 use metrics::FmtLabels;
 
 use transport::tls;
-use {Conditional, HostPort};
+use {Conditional, NamePort};
 
 use super::{classify, inbound, outbound};
 
@@ -34,17 +33,17 @@ enum Direction {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct Authority(HostPort);
+struct Authority(Option<NamePort>);
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct Dst(HostPort);
+struct Dst(Option<NamePort>);
 
 // === impl RouteLabels ===
 
 impl From<outbound::Route> for RouteLabels {
     fn from(r: outbound::Route) -> Self {
         RouteLabels {
-            dst: Dst(r.dst.clone()),
+            dst: Dst(r.dst_name.clone()),
             direction: Direction::Out,
             labels: prefix_labels("rt", r.route.labels().as_ref().into_iter()),
         }
@@ -69,7 +68,7 @@ impl From<inbound::Endpoint> for EndpointLabels {
     fn from(ep: inbound::Endpoint) -> Self {
         Self {
             addr: ep.addr,
-            authority: Authority(Some(ep.authority)),
+            authority: Authority(ep.name_port().cloned()),
             direction: Direction::In,
             tls_status: ep.source_tls_status,
             labels: None,
@@ -94,7 +93,7 @@ impl From<outbound::Endpoint> for EndpointLabels {
     fn from(ep: outbound::Endpoint) -> Self {
         Self {
             addr: ep.connect.addr,
-            authority: Authority(ep.destination.clone()),
+            authority: Authority(ep.dst_name.clone()),
             direction: Direction::Out,
             tls_status: ep.connect.tls_status(),
             labels: prefix_labels("dst", ep.metadata.labels().into_iter()),
@@ -129,18 +128,22 @@ impl FmtLabels for Direction {
 impl FmtLabels for Authority {
     fn fmt_labels(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self.0 {
-            HostPort::Name(ref n) => match n.port() {
+            Some(ref n) => match n.port() {
                 80 => write!(f, "authority=\"{}\"", n.name()),
                 _ => write!(f, "authority=\"{}\"", n),
             },
-            HostPort::Addr(_) => write!(f, "authority=\"\""),
+            None => write!(f, "authority=\"\""),
         }
     }
 }
 
 impl FmtLabels for Dst {
     fn fmt_labels(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "dst=\"{}\"", self.0)
+        match self.0.as_ref() {
+            Some(n) => write!(f, "dst=\"{}\"", n),
+            None => write!(f, "dst=\"\""),
+        }
+
     }
 }
 

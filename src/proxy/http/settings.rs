@@ -1,7 +1,5 @@
 use http::{self, header::HOST};
 
-pub struct Layer;
-
 /// Settings portion of the `Recognize` key for a request.
 ///
 /// This marks whether to use HTTP/2 or HTTP/1.x for a request. In
@@ -47,8 +45,10 @@ impl Settings {
             })
             .unwrap_or(true);
 
+        let was_absolute_form = super::h1::is_absolute_form(req.uri());
+
         Settings::Http1 {
-            was_absolute_form: h1::is_absolute_form(req.uri()),
+            was_absolute_form,
             stack_per_request,
         }
     }
@@ -233,8 +233,6 @@ pub mod router {
 
     impl<E: fmt::Display, M: fmt::Display> fmt::Display for Error<E, M> {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            use std::fmt::Display as _Display;
-
             match self {
                 Error::Service(e) => e.fmt(f),
                 Error::Stack(e) => e.fmt(f),
@@ -244,8 +242,6 @@ pub mod router {
 
     impl<E: error::Error, M: error::Error> error::Error for Error<E, M> {
         fn cause(&self) -> Option<&error::Error> {
-            use std::error::Error as _Error;
-
             match self {
                 Error::Service(e) => e.cause(),
                 Error::Stack(e) => e.cause(),

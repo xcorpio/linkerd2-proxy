@@ -19,7 +19,7 @@ pub struct NamePort {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum HostPortError {
+pub enum Error {
     /// The host is not a valid DNS name or IP address.
     InvalidHost,
 
@@ -30,26 +30,23 @@ pub enum HostPortError {
 // === impl HostAndPort ===
 
 impl HostPort {
-    pub fn new(host: &str, port: u16) -> Result<Self, HostPortError> {
+    pub fn new(host: &str, port: u16) -> Result<Self, Error> {
         match IpAddr::from_str(host) {
             Ok(ip) => Ok(HostPort::Addr((ip, port).into())),
-            Err(_) => match dns::Name::try_from(host.as_bytes()) {
-                Ok(name) => Ok(HostPort::Name(NamePort { name, port })),
-                Err(_) => Err(HostPortError::InvalidHost),
-            },
+            Err(_) => NamePort::new(host, port).map(HostPort::Name),
         }
     }
 
     pub fn from_authority_with_default_port(
         a: &http::uri::Authority,
         default_port: u16,
-    ) -> Result<Self, HostPortError> {
+    ) -> Result<Self, Error> {
         Self::new(a.host(), a.port().unwrap_or(default_port))
     }
 
-    pub fn from_authority_with_port(a: &http::uri::Authority) -> Result<Self, HostPortError> {
+    pub fn from_authority_with_port(a: &http::uri::Authority) -> Result<Self, Error> {
         a.port()
-            .ok_or(HostPortError::MissingPort)
+            .ok_or(Error::MissingPort)
             .and_then(|p| Self::new(a.host(), p))
     }
 
@@ -82,10 +79,27 @@ impl fmt::Display for HostPort {
     }
 }
 
-
 // === impl NamePort ===
 
 impl NamePort {
+    pub fn new(host: &str, port: u16) -> Result<Self, Error> {
+        dns::Name::try_from(host.as_bytes())
+            .map(|name| NamePort { name, port })
+            .map_err(|_| Error::InvalidHost)
+    }
+
+    pub fn from_authority_with_default_port(
+        a: &http::uri::Authority,
+        default_port: u16,
+    ) -> Result<Self, Error> {
+        Self::new(a.host(), a.port().unwrap_or(default_port))
+    }
+
+    pub fn from_authority_with_port(a: &http::uri::Authority) -> Result<Self, Error> {
+        a.port()
+            .ok_or(Error::MissingPort)
+            .and_then(|p| Self::new(a.host(), p))
+    }
 
     pub fn name(&self) -> &dns::Name {
         &self.name
@@ -106,22 +120,21 @@ impl fmt::Display for NamePort {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
-    use http::uri::Authority;
     use super::*;
+    use http::uri::Authority;
 
     #[test]
     fn test_is_loopback() {
         let cases = &[
             ("localhost", false), // Not absolute
             ("localhost.", true),
-            ("LocalhOsT.", true), // Case-insensitive
+            ("LocalhOsT.", true),   // Case-insensitive
             ("mlocalhost.", false), // prefixed
             ("localhost1.", false), // suffixed
-            ("127.0.0.1", true), // IPv4
-            ("[::1]", true), // IPv6
+            ("127.0.0.1", true),    // IPv4
+            ("[::1]", true),        // IPv6
         ];
         for (host, expected_result) in cases {
             let authority = Authority::from_static(host);

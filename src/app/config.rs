@@ -12,7 +12,8 @@ use trust_dns_resolver::config::ResolverOpts;
 
 use convert::TryFrom;
 use transport::tls;
-use {Conditional, HostPort, HostPortError};
+use host_port::Error as HostPortError;
+use {Conditional, HostPort};
 
 // TODO:
 //

@@ -2,17 +2,8 @@ use bytes::{BytesMut};
 
 use NamePort;
 
-pub trait NameNormalizer {
-    fn normalize(&self, authority: &NamePort) -> Option<FullyQualifiedAuthority>;
-}
-
-#[derive(Clone, Debug)]
-pub struct KubernetesNormalizer {
-    default_namespace: String,
-}
-
 pub trait Normalize {
-    fn normalize(&self, authority: &DnsNameAndPort) -> Option<FullyQualifiedAuthority>;
+    fn normalize(&self, authority: &NamePort) -> Option<FullyQualifiedAuthority>;
 }
 
 #[derive(Clone, Debug)]
@@ -33,8 +24,8 @@ impl KubernetesNormalize {
 impl Normalize for KubernetesNormalize {
     /// Normalizes the name according to Kubernetes service naming conventions.
     /// Case folding is not done; that is done internally inside `Authority`.
-    fn normalize(&self, authority: &DnsNameAndPort) -> Option<FullyQualifiedAuthority> {
-        let name: &str = authority.host.as_ref();
+    fn normalize(&self, authority: &NamePort) -> Option<FullyQualifiedAuthority> {
+        let name: &str = authority.name().as_ref();
 
         // parts should have a maximum 4 of pieces (name, namespace, svc, zone)
         let mut parts = name.splitn(4, '.');
@@ -155,7 +146,7 @@ mod tests {
     use std::str::FromStr;
 
     use {HostPort, NamePort};
-    use super::NameNormalizer;
+    use super::Normalize;
 
     #[test]
     fn test_normalized_authority() {

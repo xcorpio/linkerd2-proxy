@@ -2,19 +2,17 @@ use http;
 use std::fmt;
 use std::net::SocketAddr;
 
-use proxy::http::{
-    client, h1, router, Settings,
-};
+use super::classify;
+use proxy::http::{client, h1, router, Settings};
 use proxy::server::Source;
 use tap;
-use super::classify;
 use transport::{connect, tls};
-use Conditional;
+use {Conditional, NamePort};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Endpoint {
     pub addr: SocketAddr,
-    pub authority: http::uri::Authority,
+    pub name_port: Option<NamePort>,
     pub settings: Settings,
     pub source_tls_status: tls::Status,
 }
@@ -37,6 +35,10 @@ impl classify::CanClassify for Endpoint {
 }
 
 impl Endpoint {
+    pub fn name_port(&self) -> Option<&NamePort> {
+        self.name_port.as_ref()
+    }
+
     fn target(&self) -> connect::Target {
         let tls = Conditional::None(tls::ReasonForNoTls::InternalTraffic);
         connect::Target::new(self.addr, tls)
@@ -85,20 +87,19 @@ impl<A> router::Recognize<http::Request<A>> for Recognize {
             .and_then(|s| s.orig_dst_if_not_local())
             .or(self.default_addr)?;
 
-        let authority = req
+        let name_port = req
             .uri()
             .authority_part()
-            .cloned()
-            .or_else(|| h1::authority_from_host(req))
+            .and_then(|a| NamePort::from_authority_with_default_port(a, 80).ok())
             .or_else(|| {
-                let a = format!("{}", addr);
-                http::uri::Authority::from_shared(a.into()).ok()
-            })?;
+                h1::authority_from_host(req)
+                    .and_then(|a| NamePort::from_authority_with_default_port(&a, 80).ok())
+            });
         let settings = Settings::from_request(req);
 
         let ep = Endpoint {
             addr,
-            authority,
+            name_port,
             settings,
             source_tls_status,
         };
@@ -176,24 +177,20 @@ mod tests {
 
     use super::{Endpoint, Recognize};
     use proxy::http::router::Recognize as _Recognize;
-    use proxy::http::settings::{Host, Settings};
+    use proxy::http::settings::Settings;
     use proxy::server::Source;
     use transport::tls;
     use Conditional;
 
     fn make_h1_endpoint(addr: net::SocketAddr) -> Endpoint {
-        let settings = Settings::Http1 {
-            host: Host::NoAuthority,
-            is_h1_upgrade: false,
-            was_absolute_form: false,
-        };
-        let authority = http::uri::Authority::from_shared(format!("{}", addr).into()).unwrap();
-        let source_tls_status = TLS_DISABLED;
         Endpoint {
             addr,
-            authority,
-            settings,
-            source_tls_status,
+            name_port: None,
+            source_tls_status: TLS_DISABLED,
+            settings: Settings::Http1 {
+                was_absolute_form: false,
+                stack_per_request: true,
+            },
         }
     }
 
