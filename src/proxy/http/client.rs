@@ -3,7 +3,7 @@ use futures::{future, Async, Future, Poll};
 use h2;
 use http;
 use hyper;
-use std::{self, error, fmt, net};
+use std::{error, fmt, net};
 use std::marker::PhantomData;
 use tokio::executor::Executor;
 use tower_h2;
@@ -19,7 +19,7 @@ use transport::connect;
 /// Configurs an HTTP Client `Service` `Stack`.
 ///
 /// `settings` determines whether an HTTP/1 or HTTP/2 client is used.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Config {
     pub target: connect::Target,
     pub settings: Settings,
@@ -473,8 +473,8 @@ impl fmt::Display for Error {
     }
 }
 
-impl std::error::Error for Error {
-    fn cause(&self) -> Option<&std::error::Error> {
+impl error::Error for Error {
+    fn cause(&self) -> Option<&error::Error> {
         match self {
             Error::Http1(e) => e.cause(),
             Error::Http2(e) => e.cause(),

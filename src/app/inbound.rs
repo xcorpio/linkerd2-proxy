@@ -94,7 +94,7 @@ impl<A> router::Recognize<http::Request<A>> for Recognize {
                 let a = format!("{}", addr);
                 http::uri::Authority::from_shared(a.into()).ok()
             })?;
-        let settings = Settings::detect(req);
+        let settings = Settings::from_request(req);
 
         let ep = Endpoint {
             addr,

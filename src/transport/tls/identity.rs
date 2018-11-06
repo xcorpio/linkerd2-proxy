@@ -4,7 +4,7 @@ use super::{DnsName, InvalidDnsName, webpki};
 use std::sync::Arc;
 
 /// An endpoint's identity.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Identity(pub(super) Arc<DnsName>);
 
 impl Identity {

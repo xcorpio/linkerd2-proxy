@@ -1,4 +1,4 @@
-use http::{self, uri};
+use http::{self, header::HOST};
 
 use super::h1;
 
@@ -10,14 +10,6 @@ use super::h1;
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Settings {
     Http1 {
-        host: Host,
-        /// Whether the request wants to use HTTP/1.1's Upgrade mechanism.
-        ///
-        /// Since these cannot be translated into orig-proto, it must be
-        /// tracked here so as to allow those with `is_h1_upgrade: true` to
-        /// use an explicitly HTTP/1 service, instead of one that might
-        /// utilize orig-proto.
-        is_h1_upgrade: bool,
         /// Whether or not the request URI was in absolute form.
         ///
         /// This is used to configure Hyper's behaviour at the connection
@@ -25,80 +17,249 @@ pub enum Settings {
         /// absolute URIs be bound to separate service stacks. It is also
         /// used to determine what URI normalization will be necessary.
         was_absolute_form: bool,
+
+        /// Indicates whhether a new service must be created for each request.
+        stack_per_request: bool,
     },
-    Http2
+    Http2,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum Host {
-    Authority(uri::Authority),
-    NoAuthority,
-}
+// The router need only have enough capacity for each `Settings` variant.
+const SETTINGS_ROUTER_CAPACITY: usize = 3;
 
 // ===== impl Settings =====
 
 impl Settings {
-    pub fn detect<B>(req: &http::Request<B>) -> Self {
+    pub fn from_request<B>(req: &http::Request<B>) -> Self {
         if req.version() == http::Version::HTTP_2 {
             return Settings::Http2;
         }
 
-        let was_absolute_form = super::h1::is_absolute_form(req.uri());
-        trace!(
-            "Settings::detect(); req.uri='{:?}'; was_absolute_form={:?};",
-            req.uri(), was_absolute_form
-        );
-        // If the request has an authority part, use that as the host part of
-        // the key for an HTTP/1.x request.
-        let host = Host::detect(req);
-
-        let is_h1_upgrade = super::h1::wants_upgrade(req);
+        let stack_per_request = req
+            .uri()
+            .authority_part()
+            .map(|_| false)
+            .or_else(|| {
+                req.headers()
+                    .get(HOST)
+                    .and_then(|h| h.to_str().ok())
+                    .map(|_| false)
+            })
+            .unwrap_or(true);
 
         Settings::Http1 {
-            host,
-            is_h1_upgrade,
-            was_absolute_form,
+            was_absolute_form: h1::is_absolute_form(req.uri()),
+            stack_per_request,
         }
     }
 
     /// Returns true if the request was originally received in absolute form.
     pub fn was_absolute_form(&self) -> bool {
         match self {
-            &Settings::Http1 { was_absolute_form, .. } => was_absolute_form,
+            Settings::Http1 { ref was_absolute_form, .. } => *was_absolute_form,
             _ => false,
         }
     }
 
     pub fn can_reuse_clients(&self) -> bool {
-        match *self {
-            Settings::Http2 | Settings::Http1 { host: Host::Authority(_), .. } => true,
-            _ => false,
+        match self {
+            Settings::Http1 { ref stack_per_request, .. } => !stack_per_request,
+            Settings::Http2 => true,
         }
     }
 
-    pub fn is_h1_upgrade(&self) -> bool {
-        match *self {
-            Settings::Http1 { is_h1_upgrade: true, .. } => true,
-            _ => false,
+    pub fn is_http1(&self) -> bool {
+        match self {
+            Settings::Http1 { .. } => true,
+            Settings::Http2 => false,
         }
     }
 
     pub fn is_http2(&self) -> bool {
-        match *self {
+        match self {
+            Settings::Http1 { .. } => false,
             Settings::Http2 => true,
-            _ => false,
         }
     }
 }
 
-impl Host {
-    pub fn detect<B>(req: &http::Request<B>) -> Host {
-        req
-            .uri()
-            .authority_part()
-            .cloned()
-            .or_else(|| h1::authority_from_host(req))
-            .map(Host::Authority)
-            .unwrap_or_else(|| Host::NoAuthority)
+#[allow(dead_code, unused_imports)]
+pub mod router {
+    extern crate linkerd2_router as rt;
+
+    use futures::{Future, Poll};
+    use http;
+    use std::{error, fmt};
+    use std::marker::PhantomData;
+
+    use super::Settings;
+    use proxy::http::client::Config;
+    use proxy::http::HasH2Reason;
+    use svc;
+    use transport::connect;
+
+    pub trait HasConnect {
+        fn connect(&self) -> connect::Target;
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct Layer<T>(PhantomData<T>);
+
+    #[derive(Clone, Debug)]
+    pub struct Stack<M>(M);
+
+    pub struct Service<B, M>
+    where
+        M: svc::Stack<Config>,
+        M::Value: svc::Service<Request = http::Request<B>>,
+    {
+        router: Router<B, M>,
+    }
+
+    pub struct ResponseFuture<B, M>
+    where
+        M: svc::Stack<Config>,
+        M::Value: svc::Service<Request = http::Request<B>>,
+    {
+        inner: <Router<B, M> as svc::Service>::Future
+    }
+
+    #[derive(Debug)]
+    pub enum Error<E, M> {
+        Service(E),
+        Stack(M),
+    }
+
+    pub struct Recognize(connect::Target);
+
+    type Router<B, M> = rt::Router<http::Request<B>, Recognize, M>;
+
+    pub fn layer<T: HasConnect>() -> Layer<T> {
+        Layer(PhantomData)
+    }
+
+    impl<B, T, M> svc::Layer<T, Config, M> for Layer<T>
+    where
+        T: HasConnect,
+        M: svc::Stack<Config> + Clone,
+        M::Value: svc::Service<Request = http::Request<B>>,
+    {
+        type Value = <Stack<M> as svc::Stack<T>>::Value;
+        type Error = <Stack<M> as svc::Stack<T>>::Error;
+        type Stack = Stack<M>;
+
+        fn bind(&self, inner: M) -> Self::Stack {
+            Stack(inner)
+        }
+    }
+
+    impl<B, T, M> svc::Stack<T> for Stack<M>
+    where
+        T: HasConnect,
+        M: svc::Stack<Config> + Clone,
+        M::Value: svc::Service<Request = http::Request<B>>,
+    {
+        type Value = Service<B, M>;
+        type Error = M::Error;
+
+        fn make(&self, target: &T) -> Result<Self::Value, Self::Error> {
+            use std::time::Duration;
+
+            let router = Router::new(
+                Recognize(target.connect()),
+                self.0.clone(),
+                super::SETTINGS_ROUTER_CAPACITY,
+                // Doesn't matter, since we are guaranteed to have enough capacity.
+                Duration::from_secs(0),
+            );
+
+            Ok(Service { router })
+        }
+    }
+
+    impl<B> rt::Recognize<http::Request<B>> for Recognize {
+        type Target = Config;
+
+        fn recognize(&self, req: &http::Request<B>) -> Option<Self::Target> {
+            let settings = Settings::from_request(req);
+            Some(Config::new(self.0.clone(), settings))
+        }
+    }
+
+    impl<B, M> svc::Service for Service<B, M>
+    where
+        M: svc::Stack<Config>,
+        M::Value: svc::Service<Request = http::Request<B>>,
+    {
+        type Request = <Router<B, M> as svc::Service>::Request;
+        type Response = <Router<B, M> as svc::Service>::Response;
+        type Error = Error<<M::Value as svc::Service>::Error, M::Error>;
+        type Future = ResponseFuture<B, M>;
+
+        fn poll_ready(&mut self) -> Poll<(), Self::Error> {
+            match self.router.poll_ready() {
+                Ok(async) => Ok(async),
+                Err(rt::Error::Inner(e)) => Err(Error::Service(e)),
+                Err(rt::Error::Route(e)) => Err(Error::Stack(e)),
+                Err(rt::Error::NoCapacity(_)) | Err(rt::Error::NotRecognized) => {
+                    unreachable!("router must reliably dispatch");
+                }
+            }
+        }
+
+        fn call(&mut self, req: Self::Request) -> Self::Future {
+            ResponseFuture { inner: self.router.call(req) }
+        }
+    }
+
+    impl<B, M> Future for ResponseFuture<B, M>
+    where
+        M: svc::Stack<Config>,
+        M::Value: svc::Service<Request = http::Request<B>>,
+    {
+        type Item = <Router<B, M> as svc::Service>::Response;
+        type Error = Error<<M::Value as svc::Service>::Error, M::Error>;
+
+        fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+            match self.inner.poll() {
+                Ok(async) => Ok(async),
+                Err(rt::Error::Inner(e)) => Err(Error::Service(e)),
+                Err(rt::Error::Route(e)) => Err(Error::Stack(e)),
+                Err(rt::Error::NoCapacity(_)) | Err(rt::Error::NotRecognized) => {
+                    unreachable!("router must reliably dispatch");
+                }
+            }
+        }
+    }
+
+    impl<E: fmt::Display, M: fmt::Display> fmt::Display for Error<E, M> {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            use std::fmt::Display as _Display;
+
+            match self {
+                Error::Service(e) => e.fmt(f),
+                Error::Stack(e) => e.fmt(f),
+            }
+        }
+    }
+
+    impl<E: error::Error, M: error::Error> error::Error for Error<E, M> {
+        fn cause(&self) -> Option<&error::Error> {
+            use std::error::Error as _Error;
+
+            match self {
+                Error::Service(e) => e.cause(),
+                Error::Stack(e) => e.cause(),
+            }
+        }
+    }
+
+    impl<E: HasH2Reason, M> HasH2Reason for Error<E, M> {
+        fn h2_reason(&self) -> Option<::h2::Reason> {
+            match self {
+                Error::Service(e) => e.h2_reason(),
+                Error::Stack(_) => None,
+            }
+        }
     }
 }

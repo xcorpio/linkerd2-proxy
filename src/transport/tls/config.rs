@@ -90,7 +90,7 @@ pub type ServerConfigWatch = Watch<ServerConfig>;
 
 /// The configuration in effect for a client (`ClientConfig`) or server
 /// (`ServerConfig`) TLS connection.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ConnectionConfig<C> where C: Clone {
     pub server_identity: Identity,
     pub config: C,

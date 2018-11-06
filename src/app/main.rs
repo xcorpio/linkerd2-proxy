@@ -270,7 +270,7 @@ where
                 };
                 use super::profiles::Client as ProfilesClient;
                 use proxy::{
-                    http::{balance, metrics, profiles},
+                    http::{balance, metrics, profiles, settings},
                     resolve,
                 };
 
@@ -291,12 +291,10 @@ where
                     .push(reconnect::layer())
                     .push(svc::stack_per_request::layer())
                     .push(normalize_uri::layer())
-                    .push(svc::stack::map_target::layer(|ep: &Endpoint| {
-                        client::Config::from(ep.clone())
-                    }))
                     ;
 
                 let endpoint_stack = client_stack
+                    .push(settings::router::layer::<Endpoint>())
                     .push(orig_proto_upgrade::layer())
                     .push(tap::layer(tap_next_id.clone(), taps.clone()))
                     .push(metrics::layer::<_, classify::Response>(endpoint_http_metrics))

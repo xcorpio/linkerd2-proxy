@@ -3,7 +3,7 @@ extern crate tokio_connect;
 pub use self::tokio_connect::Connect;
 
 use http;
-use std::{error, fmt, io};
+use std::{error, fmt, hash, io};
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 
@@ -130,6 +130,21 @@ impl Connect for Target {
         connection::connect(&self.addr, self.tls.clone())
     }
 }
+
+impl hash::Hash for Target {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        self.addr.hash(state);
+        self.tls_status().hash(state);
+    }
+}
+
+impl PartialEq for Target {
+    fn eq(&self, other: &Target) -> bool {
+        self.addr.eq(&other.addr) && self.tls_status().eq(&other.tls_status())
+    }
+}
+
+impl Eq for Target {}
 
 // ===== impl Stack =====
 

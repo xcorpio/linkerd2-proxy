@@ -10,6 +10,7 @@ use proxy::{
         h1,
         profiles::{self, CanGetDestination},
         router,
+        settings,
     },
     Source,
 };
@@ -56,6 +57,12 @@ impl Endpoint {
             ProtocolHint::Unknown => false,
             ProtocolHint::Http2 => true,
         }
+    }
+}
+
+impl settings::router::HasConnect for Endpoint {
+    fn connect(&self) -> connect::Target {
+        self.connect.clone()
     }
 }
 
@@ -113,26 +120,13 @@ impl<B> router::Recognize<http::Request<B>> for Recognize {
     type Target = Destination;
 
     fn recognize(&self, req: &http::Request<B>) -> Option<Self::Target> {
-        let dst = Destination::from_request(req);
-        debug!("recognize: dst={:?}", dst);
-        dst
+        let name_or_addr = NameOrAddr::from_request(req)?;
+        debug!("recognize: dst={:?}", name_or_addr);
+        Some(Destination { name_or_addr })
     }
 }
 
 // === impl Destination ===
-
-impl Destination {
-    pub fn new(name_or_addr: NameOrAddr) -> Self {
-        Self {
-            name_or_addr,
-        }
-    }
-
-    pub fn from_request<A>(req: &http::Request<A>) -> Option<Self> {
-        let name_or_addr = NameOrAddr::from_request(req)?;
-        Some(Self::new(name_or_addr))
-    }
-}
 
 impl CanGetDestination for Destination {
     fn get_destination(&self) -> Option<&DnsNameAndPort> {
@@ -313,8 +307,7 @@ pub mod discovery {
                             connect: connect::Target::new(addr, Conditional::None(tls.into())),
                             metadata: Metadata::none(tls),
                         };
-                        let up = resolve::Update::Add(addr, ep);
-                        Ok(Async::Ready(up))
+                        Ok(Async::Ready(resolve::Update::Add(addr, ep)))
                     }
                     None => Ok(Async::NotReady),
                 },
