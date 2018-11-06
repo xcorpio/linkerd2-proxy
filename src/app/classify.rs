@@ -8,14 +8,14 @@ use proxy::http::{classify, profiles};
 #[derive(Clone, Debug)]
 pub enum Request {
     Default,
-    Profile(Arc<Vec<profiles::ResponseClass>>),
+    Profile(profiles::ResponseClasses),
 }
 
 #[derive(Clone, Debug)]
 pub enum Response {
     Grpc,
     Http,
-    Profile(Arc<Vec<profiles::ResponseClass>>),
+    Profile(profiles::ResponseClasses),
 }
 
 #[derive(Clone, Debug)]
@@ -46,8 +46,8 @@ pub enum SuccessOrFailure {
 
 // === impl Request ===
 
-impl From<Arc<Vec<profiles::ResponseClass>>> for Request {
-    fn from(classes: Arc<Vec<profiles::ResponseClass>>) -> Self {
+impl From<profiles::ResponseClasses> for Request {
+    fn from(classes: profiles::ResponseClasses) -> Self {
         if classes.is_empty() {
             Request::Default
         } else {

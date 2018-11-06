@@ -269,9 +269,8 @@ where
                     discovery::Resolve, orig_proto_upgrade, Endpoint, Recognize,
                 };
                 use super::profiles::Client as ProfilesClient;
-                use control::KubernetesNormalizer;
                 use proxy::{
-                    http::{balance, metrics, profiles},
+                    http::{balance, metrics, profiles, settings},
                     resolve,
                 };
 
@@ -290,13 +289,12 @@ where
                     .clone()
                     .push(client::layer("out"))
                     .push(reconnect::layer())
-                    .push(svc::stack::map_target::layer(|ep: &Endpoint| {
-                        client::Config::from(ep.clone())
-                    }));
-
-                let endpoint_stack = client_stack
                     .push(svc::stack_per_request::layer())
                     .push(normalize_uri::layer())
+                    ;
+
+                let endpoint_stack = client_stack
+                    .push(settings::router::layer::<Endpoint>())
                     .push(orig_proto_upgrade::layer())
                     .push(tap::layer(tap_next_id.clone(), taps.clone()))
                     .push(metrics::layer::<_, classify::Response>(endpoint_http_metrics))
@@ -306,18 +304,19 @@ where
                 let profiles_client = ProfilesClient::new(
                     controller,
                     Duration::from_secs(3),
-                    KubernetesNormalizer::new(config.namespaces.pod.clone()),
+                    control::KubernetesNormalize::new(config.namespaces.pod.clone()),
                 );
-
-                let profile_route_stack = svc::stack::phantom_data::layer()
-                    .push(metrics::layer::<_, classify::Response>(route_http_metrics))
-                    .push(classify::layer()),
 
                 let dst_route_stack = endpoint_stack
                     .push(resolve::layer(Resolve::new(resolver)))
                     .push(balance::layer())
                     .push(buffer::layer())
-                    .push(profiles::router::layer(profiles_client, profile_route_stack))
+                    .push(profiles::router::layer(
+                        profiles_client,
+                        svc::stack::phantom_data::layer()
+                            .push(metrics::layer::<_, classify::Response>(route_http_metrics))
+                            .push(classify::layer()),
+                    ))
                     .push(buffer::layer())
                     .push(timeout::layer(config.bind_timeout))
                     .push(limit::layer(MAX_IN_FLIGHT))
@@ -374,12 +373,12 @@ where
                 let stack = connect
                     .clone()
                     .push(client::layer("in"))
-                    .push(svc::stack::map_target::layer(|ep: &Endpoint| {
-                        client::Config::from(ep.clone())
-                    }))
                     .push(reconnect::layer())
                     .push(svc::stack_per_request::layer())
                     .push(normalize_uri::layer())
+                    .push(svc::stack::map_target::layer(|ep: &Endpoint| {
+                        client::Config::from(ep.clone())
+                    }))
                     .push(tap::layer(tap_next_id, taps))
                     .push(metrics::layer::<_, classify::Response>(endpoint_http_metrics))
                     .push(classify::layer())
@@ -439,9 +438,9 @@ where
                         metrics::Serve::new(report),
                     );
 
-                    // tap is already pushped in a logging Future
+                    // tap is already wrapped in a logging Future.
                     rt.spawn(tap);
-                    // metrics_server is already pushped in a logging Future.
+                    // metrics_server is already wrapped in a logging Future.
                     rt.spawn(metrics);
                     rt.spawn(::logging::admin().bg("dns-resolver").future(dns_bg));
                     rt.spawn(

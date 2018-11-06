@@ -11,21 +11,30 @@ pub struct KubernetesNormalizer {
     default_namespace: String,
 }
 
+pub trait Normalize {
+    fn normalize(&self, authority: &DnsNameAndPort) -> Option<FullyQualifiedAuthority>;
+}
+
+#[derive(Clone, Debug)]
+pub struct KubernetesNormalize {
+    default_namespace: String,
+}
+
 /// A normalized `Authority`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FullyQualifiedAuthority(String);
 
-impl KubernetesNormalizer {
+impl KubernetesNormalize {
     pub fn new(default_namespace: String) -> Self {
         Self { default_namespace }
     }
 }
 
-impl NameNormalizer for KubernetesNormalizer {
+impl Normalize for KubernetesNormalize {
     /// Normalizes the name according to Kubernetes service naming conventions.
     /// Case folding is not done; that is done internally inside `Authority`.
-    fn normalize(&self, authority: &NamePort) -> Option<FullyQualifiedAuthority> {
-        let name: &str = authority.name().as_ref();
+    fn normalize(&self, authority: &DnsNameAndPort) -> Option<FullyQualifiedAuthority> {
+        let name: &str = authority.host.as_ref();
 
         // parts should have a maximum 4 of pieces (name, namespace, svc, zone)
         let mut parts = name.splitn(4, '.');
@@ -163,14 +172,14 @@ mod tests {
 
         fn local(input: &str, default_namespace: &str) -> String {
             let name = dns_name_and_port_from_str(input);
-            let output = super::KubernetesNormalizer::new(default_namespace.to_owned()).normalize(&name);
+            let output = super::KubernetesNormalize::new(default_namespace.to_owned()).normalize(&name);
             assert!(output.is_some(), "input: {}", input);
             output.unwrap().without_trailing_dot().into()
         }
 
         fn external(input: &str, default_namespace: &str) {
             let name = dns_name_and_port_from_str(input);
-            let output = super::KubernetesNormalizer::new(default_namespace.to_owned()).normalize(&name);
+            let output = super::KubernetesNormalize::new(default_namespace.to_owned()).normalize(&name);
             assert!(output.is_none(), "input: {}", input);
         }
 
