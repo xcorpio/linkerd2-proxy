@@ -83,7 +83,6 @@ impl Settings {
     }
 }
 
-#[allow(dead_code, unused_imports)]
 pub mod router {
     extern crate linkerd2_router as rt;
 

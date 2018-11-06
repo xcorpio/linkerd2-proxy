@@ -11,7 +11,6 @@ use api::destination as api;
 
 use control;
 use proxy::http::profiles;
-use transport::DnsNameAndPort;
 
 #[derive(Clone, Debug)]
 pub struct Client<T, N> {

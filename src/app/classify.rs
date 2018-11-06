@@ -1,6 +1,5 @@
 use h2;
 use http;
-use std::sync::Arc;
 
 pub use proxy::http::classify::{CanClassify, layer};
 use proxy::http::{classify, profiles};

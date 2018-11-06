@@ -7,7 +7,7 @@ use std::{
 use metrics::FmtLabels;
 
 use transport::tls;
-use Conditional;
+use {Conditional, HostPort};
 
 use super::{classify, inbound, outbound};
 
@@ -34,10 +34,10 @@ enum Direction {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct Authority(Option<uri::Authority>);
+struct Authority(HostPort);
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct Dst(outbound::Destination);
+struct Dst(HostPort);
 
 // === impl RouteLabels ===
 
@@ -92,23 +92,9 @@ where
 
 impl From<outbound::Endpoint> for EndpointLabels {
     fn from(ep: outbound::Endpoint) -> Self {
-        use self::outbound::NameOrAddr;
-        use transport::DnsNameAndPort;
-
-        let authority = {
-            let a = match ep.dst.host_port {
-                HostPort::Name(n) => match n.port() {
-                    80 => format!("{}", n.name()),
-                    port => format!("{}:{}", n.name(), port),
-                }
-                HostPort::Addr(addr) => format!("{}", addr),
-            };
-            Authority(uri::Authority::from_shared(a.into()).ok())
-        };
-
         Self {
             addr: ep.connect.addr,
-            authority,
+            authority: Authority(ep.destination.clone()),
             direction: Direction::Out,
             tls_status: ep.connect.tls_status(),
             labels: prefix_labels("dst", ep.metadata.labels().into_iter()),
@@ -143,8 +129,11 @@ impl FmtLabels for Direction {
 impl FmtLabels for Authority {
     fn fmt_labels(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self.0 {
-            Some(ref a) => write!(f, "authority=\"{}\"", a),
-            None => write!(f, "authority=\"\""),
+            HostPort::Name(ref n) => match n.port() {
+                80 => write!(f, "authority=\"{}\"", n.name()),
+                _ => write!(f, "authority=\"{}\"", n),
+            },
+            HostPort::Addr(_) => write!(f, "authority=\"\""),
         }
     }
 }

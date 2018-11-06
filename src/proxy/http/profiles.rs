@@ -10,8 +10,6 @@ use std::iter::FromIterator;
 use std::sync::Arc;
 use std::{error, fmt};
 
-use transport::DnsNameAndPort;
-
 pub type Routes = Vec<(RequestMatch, Route)>;
 
 /// Watches a destination's Routes.

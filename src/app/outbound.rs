@@ -1,20 +1,19 @@
 use http;
 use std::fmt;
-use std::net::SocketAddr;
 
 use app::classify;
 use control::destination::{Metadata, ProtocolHint};
 use proxy::{
     http::{
         classify::CanClassify,
-        client, h1,
-        normalize_uri::ShouldNormalizeUri,
+        h1,
         profiles::{self, CanGetDestination},
-        router, Settings,
+        router,
+        settings
     },
     Source,
 };
-use svc::{self, stack_per_request::ShouldStackPerRequest};
+use svc;
 use tap;
 use transport::{connect, tls};
 use {HostPort, NamePort};
@@ -22,30 +21,8 @@ use {HostPort, NamePort};
 #[derive(Clone, Debug)]
 pub struct Endpoint {
     pub destination: HostPort,
-    pub settings: Settings,
     pub connect: connect::Target,
     pub metadata: Metadata,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Destination {
-    pub name_or_addr: NameOrAddr,
-}
-
-/// Describes a destination for HTTP requests.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum NameOrAddr {
-    /// A logical, lazily-bound endpoint.
-    Name(DnsNameAndPort),
-
-    /// A single, bound endpoint.
-    Addr(SocketAddr),
-}
-
-#[derive(Clone, Debug)]
-pub struct Route {
-    pub dst: Destination,
-    pub route: profiles::Route,
 }
 
 #[derive(Clone, Debug)]
@@ -56,9 +33,6 @@ pub struct Route {
 
 #[derive(Copy, Clone, Debug)]
 pub struct RecognizeUnbound;
-
-#[derive(Copy, Clone, Debug)]
-pub struct RecognizeSettings;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Unbound(pub HostPort);
@@ -113,16 +87,6 @@ impl From<Endpoint> for tap::Endpoint {
 }
 
 // === impl Route ===
-
-impl CanClassify for Route {
-    type Classify = classify::Request;
-
-    fn classify(&self) -> classify::Request {
-        self.route.response_classes().clone().into()
-    }
-}
-
-// === impl Recognize ===
 
 impl CanClassify for Route {
     type Classify = classify::Request;
@@ -199,7 +163,7 @@ pub mod discovery {
     use futures::{Async, Poll};
     use std::net::SocketAddr;
 
-    use super::{Destination, Endpoint};
+    use super::Endpoint;
     use control::destination::Metadata;
     use proxy::resolve;
     use transport::{connect, tls};
@@ -210,8 +174,8 @@ pub mod discovery {
 
     #[derive(Debug)]
     pub enum Resolution<R: resolve::Resolution> {
-        Name(Destination, R),
-        Addr(Destination, Option<SocketAddr>),
+        Name(NamePort, R),
+        Addr(Option<SocketAddr>),
     }
 
     // === impl Resolve ===
@@ -225,17 +189,17 @@ pub mod discovery {
         }
     }
 
-    impl<R> resolve::Resolve<Destination> for Resolve<R>
+    impl<R> resolve::Resolve<HostPort> for Resolve<R>
     where
         R: resolve::Resolve<NamePort, Endpoint = Metadata>,
     {
         type Endpoint = Endpoint;
         type Resolution = Resolution<R::Resolution>;
 
-        fn resolve(&self, dst: &Destination) -> Self::Resolution {
-            match dst.host_port {
-                HostPort::Name(ref name) => Resolution::Name(dst.clone(), self.0.resolve(&name)),
-                HostPort::Addr(ref addr) => Resolution::Addr(dst.clone(), Some(*addr)),
+        fn resolve(&self, dst: &HostPort) -> Self::Resolution {
+            match dst {
+                HostPort::Name(ref name) => Resolution::Name(name.clone(), self.0.resolve(&name)),
+                HostPort::Addr(ref addr) => Resolution::Addr(Some(*addr)),
             }
         }
     }
@@ -265,18 +229,18 @@ pub mod discovery {
                             Conditional::Some(_) => tls::ReasonForNoTls::NoConfig,
                         };
                         let ep = Endpoint {
-                            dst: dst.clone(),
+                            destination: HostPort::Name(dst.clone()),
                             connect: connect::Target::new(addr, Conditional::None(tls)),
                             metadata,
                         };
                         Ok(Async::Ready(resolve::Update::Add(addr, ep)))
                     }
                 },
-                Resolution::Addr(ref dst, ref mut addr) => match addr.take() {
+                Resolution::Addr(ref mut addr) => match addr.take() {
                     Some(addr) => {
                         let tls = tls::ReasonForNoIdentity::NoAuthorityInHttpRequest;
                         let ep = Endpoint {
-                            dst: dst.clone(),
+                            destination: HostPort::Addr(addr),
                             connect: connect::Target::new(addr, Conditional::None(tls.into())),
                             metadata: Metadata::none(tls),
                         };
