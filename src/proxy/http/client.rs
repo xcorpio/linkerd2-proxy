@@ -10,8 +10,9 @@ use tower_h2;
 
 use super::{h1, Settings};
 use super::glue::{BodyPayload, HttpBody, HyperConnect};
+use super::normalize_uri::ShouldNormalizeUri;
 use super::upgrade::{HttpConnect, Http11Upgrade};
-use svc;
+use svc::{self, stack_per_request::ShouldStackPerRequest};
 use task::BoxExecutor;
 use transport::connect;
 
@@ -149,6 +150,18 @@ pub enum ClientServiceFuture {
 impl Config {
     pub fn new(target: connect::Target, settings: Settings) -> Self {
         Config { target, settings, _p: () }
+    }
+}
+
+impl ShouldNormalizeUri for Config {
+    fn should_normalize_uri(&self) -> bool {
+        !self.settings.is_http2() && !self.settings.was_absolute_form()
+    }
+}
+
+impl ShouldStackPerRequest for Config {
+    fn should_stack_per_request(&self) -> bool {
+        !self.settings.is_http2() && !self.settings.can_reuse_clients()
     }
 }
 

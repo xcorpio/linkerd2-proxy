@@ -3,10 +3,9 @@ use std::fmt;
 use std::net::SocketAddr;
 
 use proxy::http::{
-    client, h1, normalize_uri::ShouldNormalizeUri, router, Settings,
+    client, h1, router, Settings,
 };
 use proxy::server::Source;
-use svc::stack_per_request::ShouldStackPerRequest;
 use tap;
 use super::classify;
 use transport::{connect, tls};
@@ -29,18 +28,6 @@ pub struct Recognize {
 
 // === impl Endpoint ===
 
-impl ShouldNormalizeUri for Endpoint {
-    fn should_normalize_uri(&self) -> bool {
-        !self.settings.is_http2() && !self.settings.was_absolute_form()
-    }
-}
-
-impl ShouldStackPerRequest for Endpoint {
-    fn should_stack_per_request(&self) -> bool {
-        !self.settings.is_http2() && !self.settings.can_reuse_clients()
-    }
-}
-
 impl classify::CanClassify for Endpoint {
     type Classify = classify::Request;
 
@@ -49,12 +36,17 @@ impl classify::CanClassify for Endpoint {
     }
 }
 
+impl Endpoint {
+    fn target(&self) -> connect::Target {
+        let tls = Conditional::None(tls::ReasonForNoTls::InternalTraffic);
+        connect::Target::new(self.addr, tls)
+    }
+}
+
 // Makes it possible to build a client::Stack<Endpoint>.
 impl From<Endpoint> for client::Config {
     fn from(ep: Endpoint) -> Self {
-        let tls = Conditional::None(tls::ReasonForNoTls::InternalTraffic);
-        let connect = connect::Target::new(ep.addr, tls);
-        client::Config::new(connect, ep.settings)
+        client::Config::new(ep.target(), ep.settings)
     }
 }
 
@@ -62,7 +54,7 @@ impl From<Endpoint> for tap::Endpoint {
     fn from(ep: Endpoint) -> Self {
         tap::Endpoint {
             direction: tap::Direction::In,
-            client: ep.into(),
+            target: ep.target(),
             labels: Default::default(),
         }
     }

@@ -288,14 +288,15 @@ where
                 let client_stack = connect
                     .clone()
                     .push(client::layer("out"))
+                    .push(reconnect::layer())
+                    .push(svc::stack_per_request::layer())
+                    .push(normalize_uri::layer())
                     .push(svc::stack::map_target::layer(|ep: &Endpoint| {
                         client::Config::from(ep.clone())
                     }))
-                    .push(reconnect::layer());
+                    ;
 
                 let endpoint_stack = client_stack
-                    .push(svc::stack_per_request::layer())
-                    .push(normalize_uri::layer())
                     .push(orig_proto_upgrade::layer())
                     .push(tap::layer(tap_next_id.clone(), taps.clone()))
                     .push(metrics::layer::<_, classify::Response>(endpoint_http_metrics))
@@ -374,12 +375,12 @@ where
                 let stack = connect
                     .clone()
                     .push(client::layer("in"))
-                    .push(svc::stack::map_target::layer(|ep: &Endpoint| {
-                        client::Config::from(ep.clone())
-                    }))
                     .push(reconnect::layer())
                     .push(svc::stack_per_request::layer())
                     .push(normalize_uri::layer())
+                    .push(svc::stack::map_target::layer(|ep: &Endpoint| {
+                        client::Config::from(ep.clone())
+                    }))
                     .push(tap::layer(tap_next_id, taps))
                     .push(metrics::layer::<_, classify::Response>(endpoint_http_metrics))
                     .push(classify::layer())

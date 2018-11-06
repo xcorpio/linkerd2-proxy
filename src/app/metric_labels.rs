@@ -154,18 +154,7 @@ impl FmtLabels for Authority {
 
 impl FmtLabels for Dst {
     fn fmt_labels(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let proto = if self.0.settings.is_http2() {
-            "h2"
-        } else {
-            "h1"
-        };
-        write!(
-            f,
-            "dst=\"{}\",dst_protocol=\"{}\"",
-            self.0.name_or_addr, proto
-        )?;
-
-        Ok(())
+        write!(f, "dst=\"{}\"", self.0)
     }
 }
 

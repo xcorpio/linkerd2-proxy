@@ -7,14 +7,13 @@ use control::destination::{Metadata, ProtocolHint};
 use proxy::{
     http::{
         classify::CanClassify,
-        client, h1,
-        normalize_uri::ShouldNormalizeUri,
+        h1,
         profiles::{self, CanGetDestination},
-        router, Settings,
+        router,
     },
     Source,
 };
-use svc::{self, stack_per_request::ShouldStackPerRequest};
+use svc;
 use tap;
 use transport::{connect, tls, DnsNameAndPort, Host, HostAndPort};
 
@@ -23,14 +22,11 @@ pub struct Endpoint {
     pub dst: Destination,
     pub connect: connect::Target,
     pub metadata: Metadata,
-    _p: (),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Destination {
     pub name_or_addr: NameOrAddr,
-    pub settings: Settings,
-    _p: (),
 }
 
 /// Describes a destination for HTTP requests.
@@ -63,18 +59,6 @@ impl Endpoint {
     }
 }
 
-impl ShouldNormalizeUri for Endpoint {
-    fn should_normalize_uri(&self) -> bool {
-        !self.dst.settings.is_http2() && !self.dst.settings.was_absolute_form()
-    }
-}
-
-impl ShouldStackPerRequest for Endpoint {
-    fn should_stack_per_request(&self) -> bool {
-        !self.dst.settings.is_http2() && !self.dst.settings.can_reuse_clients()
-    }
-}
-
 impl fmt::Display for Endpoint {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.connect.addr.fmt(f)
@@ -96,20 +80,13 @@ impl svc::watch::WithUpdate<tls::ConditionalClientConfig> for Endpoint {
     }
 }
 
-// Makes it possible to build a client::Stack<Endpoint>.
-impl From<Endpoint> for client::Config {
-    fn from(ep: Endpoint) -> Self {
-        client::Config::new(ep.connect, ep.dst.settings)
-    }
-}
-
 impl From<Endpoint> for tap::Endpoint {
     fn from(ep: Endpoint) -> Self {
         // TODO add route labels...
         tap::Endpoint {
             direction: tap::Direction::Out,
             labels: ep.metadata.labels().clone(),
-            client: ep.into(),
+            target: ep.connect.clone(),
         }
     }
 }
@@ -145,18 +122,15 @@ impl<B> router::Recognize<http::Request<B>> for Recognize {
 // === impl Destination ===
 
 impl Destination {
-    pub fn new(name_or_addr: NameOrAddr, settings: Settings) -> Self {
+    pub fn new(name_or_addr: NameOrAddr) -> Self {
         Self {
             name_or_addr,
-            settings,
-            _p: (),
         }
     }
 
     pub fn from_request<A>(req: &http::Request<A>) -> Option<Self> {
         let name_or_addr = NameOrAddr::from_request(req)?;
-        let settings = Settings::detect(req);
-        Some(Self::new(name_or_addr, settings))
+        Some(Self::new(name_or_addr))
     }
 }
 
@@ -327,7 +301,6 @@ pub mod discovery {
                             dst: dst.clone(),
                             connect: connect::Target::new(addr, Conditional::None(tls)),
                             metadata,
-                            _p: (),
                         };
                         Ok(Async::Ready(resolve::Update::Add(addr, ep)))
                     }
@@ -339,7 +312,6 @@ pub mod discovery {
                             dst: dst.clone(),
                             connect: connect::Target::new(addr, Conditional::None(tls.into())),
                             metadata: Metadata::none(tls),
-                            _p: (),
                         };
                         let up = resolve::Update::Add(addr, ep);
                         Ok(Async::Ready(up))
@@ -355,7 +327,7 @@ pub mod orig_proto_upgrade {
     use http;
 
     use super::Endpoint;
-    use proxy::http::{orig_proto, Settings};
+    use proxy::http::orig_proto;
     use svc;
 
     #[derive(Debug, Clone)]
@@ -399,9 +371,7 @@ pub mod orig_proto_upgrade {
 
         fn make(&self, endpoint: &Endpoint) -> Result<Self::Value, Self::Error> {
             if endpoint.can_use_orig_proto() {
-                let mut upgraded = endpoint.clone();
-                upgraded.dst.settings = Settings::Http2;
-                self.inner.make(&upgraded).map(|i| svc::Either::A(i.into()))
+                self.inner.make(&endpoint).map(|i| svc::Either::A(i.into()))
             } else {
                 self.inner.make(&endpoint).map(svc::Either::B)
             }
