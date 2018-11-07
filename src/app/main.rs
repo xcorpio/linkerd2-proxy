@@ -292,8 +292,7 @@ where
                     .push(svc::stack_per_request::layer())
                     .push(normalize_uri::layer())
                     .push(buffer::layer())
-                    .push(settings::router::layer::<Endpoint>())
-                    ;
+                    .push(settings::router::layer::<Endpoint>());
 
                 let endpoint_stack = client_stack
                     .push(orig_proto_upgrade::layer())

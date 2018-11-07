@@ -33,23 +33,23 @@ impl Settings {
             return Settings::Http2;
         }
 
-        let stack_per_request = req
+        let has_name = req
             .uri()
             .authority_part()
-            .map(|_| false)
+            .map(|_| true)
             .or_else(|| {
                 req.headers()
                     .get(HOST)
                     .and_then(|h| h.to_str().ok())
-                    .map(|h| h.is_empty())
+                    .map(|h| !h.is_empty())
             })
-            .unwrap_or(true);
+            .unwrap_or(false);
 
         let was_absolute_form = super::h1::is_absolute_form(req.uri());
 
         Settings::Http1 {
             was_absolute_form,
-            stack_per_request,
+            stack_per_request: !has_name,
         }
     }
 
