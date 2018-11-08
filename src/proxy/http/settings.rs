@@ -8,6 +8,8 @@ use http::{self, header::HOST};
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Settings {
     Http1 {
+        /// Indicates whether a new service must be created for each request.
+        stack_per_request: bool,
         /// Whether or not the request URI was in absolute form.
         ///
         /// This is used to configure Hyper's behaviour at the connection
@@ -15,63 +17,55 @@ pub enum Settings {
         /// absolute URIs be bound to separate service stacks. It is also
         /// used to determine what URI normalization will be necessary.
         was_absolute_form: bool,
-
-        /// Indicates whhether a new service must be created for each request.
-        stack_per_request: bool,
     },
     Http2,
 }
 
-// The router need only have enough capacity for each `Settings` variant.
-const SETTINGS_ROUTER_CAPACITY: usize = 3;
-
 // ===== impl Settings =====
 
 impl Settings {
+    // The router need only have enough capacity for each `Settings` variant.
+    const ROUTER_CAPACITY: usize = 3;
+
     pub fn from_request<B>(req: &http::Request<B>) -> Self {
         if req.version() == http::Version::HTTP_2 {
             return Settings::Http2;
         }
 
-        let has_name = req
+        let is_missing_authority = req
             .uri()
             .authority_part()
-            .map(|_| true)
+            .map(|_| false)
             .or_else(|| {
                 req.headers()
                     .get(HOST)
                     .and_then(|h| h.to_str().ok())
-                    .map(|h| !h.is_empty())
+                    .map(|h| h.is_empty())
             })
-            .unwrap_or(false);
-
-        let was_absolute_form = super::h1::is_absolute_form(req.uri());
+            .unwrap_or(true);
 
         Settings::Http1 {
-            was_absolute_form,
-            stack_per_request: !has_name,
+            stack_per_request: is_missing_authority,
+            was_absolute_form: super::h1::is_absolute_form(req.uri()),
         }
     }
 
     /// Returns true if the request was originally received in absolute form.
     pub fn was_absolute_form(&self) -> bool {
         match self {
-            Settings::Http1 { ref was_absolute_form, .. } => *was_absolute_form,
-            _ => false,
+            Settings::Http1 {
+                was_absolute_form, ..
+            } => *was_absolute_form,
+            Settings::Http2 => false,
         }
     }
 
     pub fn can_reuse_clients(&self) -> bool {
         match self {
-            Settings::Http1 { ref stack_per_request, .. } => !stack_per_request,
+            Settings::Http1 {
+                stack_per_request, ..
+            } => !stack_per_request,
             Settings::Http2 => true,
-        }
-    }
-
-    pub fn is_http1(&self) -> bool {
-        match self {
-            Settings::Http1 { .. } => true,
-            Settings::Http2 => false,
         }
     }
 
@@ -167,7 +161,7 @@ pub mod router {
             let router = Router::new(
                 Recognize(target.connect()),
                 self.0.clone(),
-                super::SETTINGS_ROUTER_CAPACITY,
+                Settings::ROUTER_CAPACITY,
                 // Doesn't matter, since we are guaranteed to have enough capacity.
                 Duration::from_secs(0),
             );

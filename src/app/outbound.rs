@@ -3,31 +3,26 @@ use std::fmt;
 
 use app::classify;
 use control::destination::{Metadata, ProtocolHint};
-use proxy::{
-    http::{
-        classify::CanClassify,
-        h1,
-        profiles::{self, CanGetDestination},
-        router,
-        settings
-    },
-    Source,
+use proxy::http::{
+    classify::CanClassify,
+    profiles::{self, CanGetDestination},
+    router, settings,
 };
 use svc;
 use tap;
 use transport::{connect, tls};
-use {HostPort, NamePort};
+use {Addr, NameAddr};
 
 #[derive(Clone, Debug)]
 pub struct Endpoint {
-    pub dst_name: Option<NamePort>,
+    pub dst_name: Option<NameAddr>,
     pub connect: connect::Target,
     pub metadata: Metadata,
 }
 
 #[derive(Clone, Debug)]
 pub struct Route {
-    pub dst_name: Option<NamePort>,
+    pub dst_addr: Addr,
     pub route: profiles::Route,
 }
 
@@ -35,7 +30,7 @@ pub struct Route {
 pub struct RecognizeUnbound;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Unbound(pub HostPort);
+pub struct Unbound(pub Addr);
 
 // === impl Endpoint ===
 
@@ -102,34 +97,19 @@ impl<B> router::Recognize<http::Request<B>> for RecognizeUnbound {
     type Target = Unbound;
 
     fn recognize(&self, req: &http::Request<B>) -> Option<Self::Target> {
-        const DEFAULT_PORT: u16 = 80;
-
-        let host_port = req.uri()
-            .authority_part()
-            .and_then(|a| HostPort::from_authority_with_default_port(a, DEFAULT_PORT).ok())
-            .or_else(|| {
-                h1::authority_from_host(req)
-                    .and_then(|a| HostPort::from_authority_with_default_port(&a, DEFAULT_PORT).ok())
-            })
-            .or_else(|| {
-                req.extensions()
-                    .get::<Source>()
-                    .and_then(|src| src.orig_dst_if_not_local())
-                    .map(HostPort::Addr)
-            })?;
-        debug!("recognize: unbound={:?}", host_port);
-
-        Some(Unbound(host_port))
+        let addr = super::http_request_addr(req).ok().map(Unbound)?;
+        debug!("recognize: dst={:?}", addr);
+        Some(addr)
     }
 }
 
 // === impl Unbound ===
 
 impl CanGetDestination for Unbound {
-    fn get_destination(&self) -> Option<&NamePort> {
+    fn get_destination(&self) -> Option<&NameAddr> {
         match self.0 {
-            HostPort::Name(ref name) => Some(name),
-            HostPort::Addr(_) => None,
+            Addr::Name(ref name) => Some(name),
+            Addr::Socket(_) => None,
         }
     }
 }
@@ -145,11 +125,10 @@ impl profiles::WithRoute for Unbound {
     type Output = Route;
 
     fn with_route(self, route: profiles::Route) -> Self::Output {
-        let dst_name = match self.0 {
-            HostPort::Name(n) => Some(n),
-            HostPort::Addr(..) => None,
-        };
-        Route { dst_name, route }
+        Route {
+            dst_addr: self.0,
+            route,
+        }
     }
 }
 
@@ -161,14 +140,14 @@ pub mod discovery {
     use control::destination::Metadata;
     use proxy::resolve;
     use transport::{connect, tls};
-    use {Conditional, HostPort, NamePort};
+    use {Addr, Conditional, NameAddr};
 
     #[derive(Clone, Debug)]
-    pub struct Resolve<R: resolve::Resolve<NamePort>>(R);
+    pub struct Resolve<R: resolve::Resolve<NameAddr>>(R);
 
     #[derive(Debug)]
     pub enum Resolution<R: resolve::Resolution> {
-        Name(NamePort, R),
+        Name(NameAddr, R),
         Addr(Option<SocketAddr>),
     }
 
@@ -176,7 +155,7 @@ pub mod discovery {
 
     impl<R> Resolve<R>
     where
-        R: resolve::Resolve<NamePort, Endpoint = Metadata>,
+        R: resolve::Resolve<NameAddr, Endpoint = Metadata>,
     {
         pub fn new(resolve: R) -> Self {
             Resolve(resolve)
@@ -185,16 +164,17 @@ pub mod discovery {
 
     impl<R> resolve::Resolve<Unbound> for Resolve<R>
     where
-        R: resolve::Resolve<NamePort, Endpoint = Metadata>,
+        R: resolve::Resolve<NameAddr, Endpoint = Metadata>,
     {
         type Endpoint = Endpoint;
         type Resolution = Resolution<R::Resolution>;
 
         fn resolve(&self, dst: &Unbound) -> Self::Resolution {
             match dst {
-                Unbound(HostPort::Name(ref name)) =>
-                    Resolution::Name(name.clone(), self.0.resolve(&name)),
-                Unbound(HostPort::Addr(ref addr)) => Resolution::Addr(Some(*addr)),
+                Unbound(Addr::Name(ref name)) => {
+                    Resolution::Name(name.clone(), self.0.resolve(&name))
+                }
+                Unbound(Addr::Socket(ref addr)) => Resolution::Addr(Some(*addr)),
             }
         }
     }

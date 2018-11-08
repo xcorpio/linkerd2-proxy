@@ -3,16 +3,16 @@ use std::fmt;
 use std::net::SocketAddr;
 
 use super::classify;
-use proxy::http::{client, h1, router, Settings};
+use proxy::http::{client, router, Settings};
 use proxy::server::Source;
 use tap;
 use transport::{connect, tls};
-use {Conditional, NamePort};
+use {Conditional, NameAddr};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Endpoint {
     pub addr: SocketAddr,
-    pub name_port: Option<NamePort>,
+    pub dst_name: Option<NameAddr>,
     pub settings: Settings,
     pub source_tls_status: tls::Status,
 }
@@ -35,8 +35,8 @@ impl classify::CanClassify for Endpoint {
 }
 
 impl Endpoint {
-    pub fn name_port(&self) -> Option<&NamePort> {
-        self.name_port.as_ref()
+    pub fn dst_name(&self) -> Option<&NameAddr> {
+        self.dst_name.as_ref()
     }
 
     fn target(&self) -> connect::Target {
@@ -87,19 +87,14 @@ impl<A> router::Recognize<http::Request<A>> for Recognize {
             .and_then(|s| s.orig_dst_if_not_local())
             .or(self.default_addr)?;
 
-        let name_port = req
-            .uri()
-            .authority_part()
-            .and_then(|a| NamePort::from_authority_with_default_port(a, 80).ok())
-            .or_else(|| {
-                h1::authority_from_host(req)
-                    .and_then(|a| NamePort::from_authority_with_default_port(&a, 80).ok())
-            });
+        let dst_name = super::http_request_addr(req)
+            .ok()
+            .and_then(|h| h.into_name_addr());
         let settings = Settings::from_request(req);
 
         let ep = Endpoint {
             addr,
-            name_port,
+            dst_name,
             settings,
             source_tls_status,
         };
@@ -183,14 +178,16 @@ mod tests {
     use Conditional;
 
     fn make_h1_endpoint(addr: net::SocketAddr) -> Endpoint {
+        let settings = Settings::Http1 {
+            was_absolute_form: false,
+            stack_per_request: true,
+        };
+        let source_tls_status = TLS_DISABLED;
         Endpoint {
             addr,
-            name_port: None,
-            source_tls_status: TLS_DISABLED,
-            settings: Settings::Http1 {
-                was_absolute_form: false,
-                stack_per_request: true,
-            },
+            dst_name: None,
+            settings,
+            source_tls_status,
         }
     }
 

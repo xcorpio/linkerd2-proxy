@@ -6,7 +6,7 @@ use std::{
 use metrics::FmtLabels;
 
 use transport::tls;
-use {Conditional, NamePort};
+use {Conditional, Addr, NameAddr};
 
 use super::{classify, inbound, outbound};
 
@@ -15,7 +15,7 @@ pub struct EndpointLabels {
     addr: net::SocketAddr,
     direction: Direction,
     tls_status: tls::Status,
-    authority: Authority,
+    dst_name: Option<NameAddr>,
     labels: Option<String>,
 }
 
@@ -33,17 +33,17 @@ enum Direction {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct Authority(Option<NamePort>);
+struct Authority<'a>(&'a NameAddr);
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct Dst(Option<NamePort>);
+struct Dst(Addr);
 
 // === impl RouteLabels ===
 
 impl From<outbound::Route> for RouteLabels {
     fn from(r: outbound::Route) -> Self {
         RouteLabels {
-            dst: Dst(r.dst_name.clone()),
+            dst: Dst(r.dst_addr),
             direction: Direction::Out,
             labels: prefix_labels("rt", r.route.labels().as_ref().into_iter()),
         }
@@ -68,7 +68,7 @@ impl From<inbound::Endpoint> for EndpointLabels {
     fn from(ep: inbound::Endpoint) -> Self {
         Self {
             addr: ep.addr,
-            authority: Authority(ep.name_port().cloned()),
+            dst_name: ep.dst_name,
             direction: Direction::In,
             tls_status: ep.source_tls_status,
             labels: None,
@@ -93,7 +93,7 @@ impl From<outbound::Endpoint> for EndpointLabels {
     fn from(ep: outbound::Endpoint) -> Self {
         Self {
             addr: ep.connect.addr,
-            authority: Authority(ep.dst_name.clone()),
+            dst_name: ep.dst_name,
             direction: Direction::Out,
             tls_status: ep.connect.tls_status(),
             labels: prefix_labels("dst", ep.metadata.labels().into_iter()),
@@ -103,7 +103,8 @@ impl From<outbound::Endpoint> for EndpointLabels {
 
 impl FmtLabels for EndpointLabels {
     fn fmt_labels(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        (&self.authority, &self.direction).fmt_labels(f)?;
+        let authority = self.dst_name.as_ref().map(Authority);
+        (authority, &self.direction).fmt_labels(f)?;
 
         if let Some(labels) = self.labels.as_ref() {
             write!(f, ",{}", labels)?;
@@ -125,25 +126,18 @@ impl FmtLabels for Direction {
     }
 }
 
-impl FmtLabels for Authority {
+impl<'a> FmtLabels for Authority<'a> {
     fn fmt_labels(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self.0 {
-            Some(ref n) => match n.port() {
-                80 => write!(f, "authority=\"{}\"", n.name()),
-                _ => write!(f, "authority=\"{}\"", n),
-            },
-            None => write!(f, "authority=\"\""),
+        match self.0.port() {
+            80 => write!(f, "authority=\"{}\"", self.0.name()),
+            _ => write!(f, "authority=\"{}\"", self.0),
         }
     }
 }
 
 impl FmtLabels for Dst {
     fn fmt_labels(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self.0.as_ref() {
-            Some(n) => write!(f, "dst=\"{}\"", n),
-            None => write!(f, "dst=\"\""),
-        }
-
+        write!(f, "dst=\"{}\"", self.0)
     }
 }
 

@@ -4,17 +4,17 @@ use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 
 use convert::TryFrom;
-use dns;
+pub use dns::Name;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub enum HostPort {
-    Name(NamePort),
-    Addr(SocketAddr),
+pub enum Addr {
+    Name(NameAddr),
+    Socket(SocketAddr),
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct NamePort {
-    name: dns::Name,
+pub struct NameAddr {
+    name: Name,
     port: u16,
 }
 
@@ -27,17 +27,16 @@ pub enum Error {
     MissingPort,
 }
 
-// === impl HostAndPort ===
+// === impl Addr ===
 
-impl HostPort {
+impl Addr {
     pub fn new(host: &str, port: u16) -> Result<Self, Error> {
-        match IpAddr::from_str(host) {
-            Ok(ip) => Ok(HostPort::Addr((ip, port).into())),
-            Err(_) => NamePort::new(host, port).map(HostPort::Name),
-        }
+        IpAddr::from_str(host)
+            .map(|ip| Addr::Socket((ip, port).into()))
+            .or_else(|_| NameAddr::new(host, port).map(Addr::Name))
     }
 
-    pub fn from_authority_with_default_port(
+    pub fn from_authority_and_default_port(
         a: &http::uri::Authority,
         default_port: u16,
     ) -> Result<Self, Error> {
@@ -52,43 +51,67 @@ impl HostPort {
 
     pub fn port(&self) -> u16 {
         match self {
-            HostPort::Name(n) => n.port(),
-            HostPort::Addr(a) => a.port(),
+            Addr::Name(n) => n.port(),
+            Addr::Socket(a) => a.port(),
         }
     }
 
     pub fn is_loopback(&self) -> bool {
         match self {
-            HostPort::Name(n) => n.is_localhost(),
-            HostPort::Addr(a) => a.ip().is_loopback(),
+            Addr::Name(n) => n.is_localhost(),
+            Addr::Socket(a) => a.ip().is_loopback(),
         }
     }
 
     pub fn as_authority(&self) -> http::uri::Authority {
-        let s = format!("{}", self);
-        http::uri::Authority::from_str(&s).expect("HostPort must render as valid authority")
-    }
-}
-
-impl fmt::Display for HostPort {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            HostPort::Name(NamePort { ref name, port }) => write!(f, "{}:{}", name, port),
-            HostPort::Addr(addr) => write!(f, "{}", addr),
+            Addr::Name(n) => n.as_authority(),
+            Addr::Socket(a) => http::uri::Authority::from_str(&format!("{}", a))
+                .expect("SocketAddr must be valid authority"),
+        }
+    }
+
+    pub fn socket_addr(&self) -> Option<SocketAddr> {
+        match self {
+            Addr::Socket(a) => Some(*a),
+            Addr::Name(_) => None,
+        }
+    }
+
+    pub fn name_addr(&self) -> Option<&NameAddr> {
+        match self {
+            Addr::Name(ref n) => Some(n),
+            Addr::Socket(_) => None,
+        }
+    }
+
+    pub fn into_name_addr(self) -> Option<NameAddr> {
+        match self {
+            Addr::Name(n) => Some(n),
+            Addr::Socket(_) => None,
         }
     }
 }
 
-// === impl NamePort ===
+impl fmt::Display for Addr {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Addr::Name(NameAddr { ref name, port }) => write!(f, "{}:{}", name, port),
+            Addr::Socket(addr) => write!(f, "{}", addr),
+        }
+    }
+}
 
-impl NamePort {
+// === impl NameAddr ===
+
+impl NameAddr {
     pub fn new(host: &str, port: u16) -> Result<Self, Error> {
         if host.is_empty() {
             return Err(Error::InvalidHost);
         }
 
-        dns::Name::try_from(host.as_bytes())
-            .map(|name| NamePort { name, port })
+        Name::try_from(host.as_bytes())
+            .map(|name| NameAddr { name, port })
             .map_err(|_| Error::InvalidHost)
     }
 
@@ -105,7 +128,7 @@ impl NamePort {
             .and_then(|p| Self::new(a.host(), p))
     }
 
-    pub fn name(&self) -> &dns::Name {
+    pub fn name(&self) -> &Name {
         &self.name
     }
 
@@ -116,9 +139,14 @@ impl NamePort {
     pub fn is_localhost(&self) -> bool {
         self.name.is_localhost()
     }
+
+    pub fn as_authority(&self) -> http::uri::Authority {
+        http::uri::Authority::from_str(self.name.as_ref())
+            .expect("NameAddr must be valid authority")
+    }
 }
 
-impl fmt::Display for NamePort {
+impl fmt::Display for NameAddr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}:{}", self.name, self.port)
     }
@@ -142,7 +170,7 @@ mod tests {
         ];
         for (host, expected_result) in cases {
             let authority = Authority::from_static(host);
-            let hp = HostPort::from_authority_with_default_port(&authority, 80).unwrap();
+            let hp = Addr::from_authority_and_default_port(&authority, 80).unwrap();
             assert_eq!(hp.is_loopback(), *expected_result, "{:?}", host)
         }
     }
