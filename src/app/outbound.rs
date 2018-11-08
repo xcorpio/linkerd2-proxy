@@ -27,10 +27,13 @@ pub struct Route {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub struct RecognizeUnbound;
+pub struct RecognizeDstAddr;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Unbound(pub Addr);
+pub struct DstAddr(Addr);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct CanonicalDstAddr(Addr);
 
 // === impl Endpoint ===
 
@@ -91,21 +94,21 @@ impl CanClassify for Route {
     }
 }
 
-// === impl RecognizeUnbound ===
+// === impl RecognizeDstAddr ===
 
-impl<B> router::Recognize<http::Request<B>> for RecognizeUnbound {
-    type Target = Unbound;
+impl<B> router::Recognize<http::Request<B>> for RecognizeDstAddr {
+    type Target = DstAddr;
 
     fn recognize(&self, req: &http::Request<B>) -> Option<Self::Target> {
-        let addr = super::http_request_addr(req).ok().map(Unbound)?;
+        let addr = super::http_request_addr(req).ok()?;
         debug!("recognize: dst={:?}", addr);
-        Some(addr)
+        Some(DstAddr(addr))
     }
 }
 
-// === impl Unbound ===
+// === impl DstAddr ===
 
-impl CanGetDestination for Unbound {
+impl CanGetDestination for DstAddr {
     fn get_destination(&self) -> Option<&NameAddr> {
         match self.0 {
             Addr::Name(ref name) => Some(name),
@@ -114,14 +117,14 @@ impl CanGetDestination for Unbound {
     }
 }
 
-impl fmt::Display for Unbound {
+impl fmt::Display for DstAddr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.0.fmt(f)
     }
 }
 
 // TODO this should only work with Bound destinations
-impl profiles::WithRoute for Unbound {
+impl profiles::WithRoute for DstAddr {
     type Output = Route;
 
     fn with_route(self, route: profiles::Route) -> Self::Output {
@@ -136,7 +139,7 @@ pub mod discovery {
     use futures::{Async, Poll};
     use std::net::SocketAddr;
 
-    use super::{Endpoint, Unbound};
+    use super::{Endpoint, DstAddr};
     use control::destination::Metadata;
     use proxy::resolve;
     use transport::{connect, tls};
@@ -162,19 +165,19 @@ pub mod discovery {
         }
     }
 
-    impl<R> resolve::Resolve<Unbound> for Resolve<R>
+    impl<R> resolve::Resolve<DstAddr> for Resolve<R>
     where
         R: resolve::Resolve<NameAddr, Endpoint = Metadata>,
     {
         type Endpoint = Endpoint;
         type Resolution = Resolution<R::Resolution>;
 
-        fn resolve(&self, dst: &Unbound) -> Self::Resolution {
+        fn resolve(&self, dst: &DstAddr) -> Self::Resolution {
             match dst {
-                Unbound(Addr::Name(ref name)) => {
+                DstAddr(Addr::Name(ref name)) => {
                     Resolution::Name(name.clone(), self.0.resolve(&name))
                 }
-                Unbound(Addr::Socket(ref addr)) => Resolution::Addr(Some(*addr)),
+                DstAddr(Addr::Socket(ref addr)) => Resolution::Addr(Some(*addr)),
             }
         }
     }
@@ -280,6 +283,94 @@ pub mod orig_proto_upgrade {
             } else {
                 self.inner.make(&endpoint).map(svc::Either::B)
             }
+        }
+    }
+}
+
+pub mod canonicalize {
+    use futures::Poll;
+    use http;
+    use trust_dns_resolver;
+
+    use super::{DstAddr, CanonicalDstAddr};
+    use svc;
+    use {Addr, NameAddr};
+
+    #[derive(Debug, Clone)]
+    pub struct Layer;
+
+    #[derive(Clone, Debug)]
+    pub struct Stack<M: svc::Stack<CanonicalDstAddr>> {
+        inner: M,
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct Service<M: svc::Stack<CanonicalDstAddr>> {
+        name: NameAddr,
+        stack: M,
+    }
+
+    pub fn layer() -> Layer {
+        Layer
+    }
+
+    impl<M, A, B> svc::Layer<DstAddr, CanonicalDstAddr, M> for Layer
+    where
+        M: svc::Stack<CanonicalDstAddr> + Clone,
+        M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
+    {
+        type Value = <Stack<M> as svc::Stack<DstAddr>>::Value;
+        type Error = <Stack<M> as svc::Stack<DstAddr>>::Error;
+        type Stack = Stack<M>;
+
+        fn bind(&self, inner: M) -> Self::Stack {
+            Stack { inner }
+        }
+    }
+
+    // === impl Stack ===
+
+    impl<M, A, B> svc::Stack<DstAddr> for Stack<M>
+    where
+        M: svc::Stack<CanonicalDstAddr> + Clone,
+        M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
+    {
+        type Value = svc::Either<Service<M>, M::Value>;
+        type Error = M::Error;
+
+        fn make(&self, dst_addr: &DstAddr) -> Result<Self::Value, Self::Error> {
+            match dst_addr {
+                DstAddr(Addr::Name(name)) => {
+                    let svc = Service {
+                        name: name.clone(),
+                        stack: self.inner.clone(),
+                    };
+                    Ok(svc::Either::A(svc))
+                }
+                DstAddr(addr @ Addr::Socket(_)) => {
+                    let target = CanonicalDstAddr(addr.clone());
+                    self.inner.make(&target).map(svc::Either::B)
+                }
+            }
+        }
+    }
+
+    impl<M, A, B> svc::Service for Service<M>
+    where
+        M: svc::Stack<CanonicalDstAddr>,
+        M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
+    {
+        type Request = http::Request<A>;
+        type Response = http::Response<B>;
+        type Error = <M::Value as svc::Service>::Error;
+        type Future = <M::Value as svc::Service>::Future;
+
+        fn poll_ready(&mut self) -> Poll<(), Self::Error> {
+            unimplemented!("TODO: resolve name")
+        }
+
+        fn call(&mut self, _req: Self::Request) -> Self::Future {
+            unimplemented!("TODO: dispatch to inner service")
         }
     }
 }

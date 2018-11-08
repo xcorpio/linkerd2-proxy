@@ -266,7 +266,7 @@ where
 
             let outbound = {
                 use super::outbound::{
-                    discovery::Resolve, orig_proto_upgrade, Endpoint, RecognizeUnbound,
+                    discovery::Resolve, orig_proto_upgrade, Endpoint, RecognizeDstAddr,
                 };
                 use super::profiles::Client as ProfilesClient;
                 use proxy::{
@@ -320,7 +320,7 @@ where
                     .push(buffer::layer())
                     .push(timeout::layer(config.bind_timeout))
                     .push(limit::layer(MAX_IN_FLIGHT))
-                    .push(router::layer(RecognizeUnbound));
+                    .push(router::layer(RecognizeDstAddr));
 
                 let capacity = config.outbound_router_capacity;
                 let max_idle_age = config.outbound_router_max_idle_age;
