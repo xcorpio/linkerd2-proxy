@@ -147,7 +147,7 @@ pub mod discovery {
     use futures::{Async, Poll};
     use std::net::SocketAddr;
 
-    use super::{Endpoint, CanonicalDstAddr};
+    use super::{CanonicalDstAddr, Endpoint};
     use control::destination::Metadata;
     use proxy::resolve;
     use transport::{connect, tls};
@@ -296,17 +296,17 @@ pub mod orig_proto_upgrade {
 }
 
 pub mod canonicalize {
-    use futures::{Async, Future, Poll, future};
+    use futures::{future, Async, Future, Poll};
     use http;
-    use std::{error, fmt};
     use std::time::Duration;
+    use std::{error, fmt};
     use tokio_timer::{clock, Delay};
 
     use dns;
     use svc;
     use {Addr, NameAddr};
 
-    use super::{DstAddr, CanonicalDstAddr};
+    use super::{CanonicalDstAddr, DstAddr};
 
     // Duration to wait before polling DNS again after an error (or a NXDOMAIN
     // response with no TTL).
@@ -403,9 +403,11 @@ pub mod canonicalize {
                     State::Pending(ref mut fut) => match fut.poll() {
                         Ok(Async::NotReady) => return Ok(Async::NotReady),
                         Ok(Async::Ready(refine)) => {
+                            // If the resolved name is a new name, bind a
+                            // service with it and set a delay that will notify
+                            // when the resolver should be consulted again.
                             let addr = NameAddr::new(refine.name, self.original_addr.port());
                             let service_name = CanonicalDstAddr(addr.into());
-
                             if self.service_name.as_ref() != Some(&service_name) {
                                 let svc = self.stack.make(&service_name)?;
                                 self.service = Some(svc);
@@ -415,7 +417,11 @@ pub mod canonicalize {
                             State::ValidUntil(Delay::new(refine.valid_until))
                         }
                         Err(e) => {
+                            // If there was an error and there was no
+                            // previously-built service, create one using the
+                            // original name.
                             if self.service.is_none() {
+                                debug_assert!(self.service_name.is_none());
                                 let service_name = CanonicalDstAddr(self.original_addr.clone().into());
                                 let svc = self.stack.make(&service_name)?;
                                 self.service = Some(svc);
@@ -435,7 +441,9 @@ pub mod canonicalize {
                     State::ValidUntil(ref mut f) => match f.poll().expect("timer must not fail") {
                         Async::NotReady => return Ok(Async::NotReady),
                         Async::Ready(()) => {
-                            State::Pending(self.resolver.refine(self.original_addr.name()))
+                            // The last resolution's TTL expired, so issue a new DNS query.
+                            let refine = self.resolver.refine(self.original_addr.name());
+                            State::Pending(refine)
                         }
                     },
                 };
@@ -457,6 +465,7 @@ pub mod canonicalize {
         >;
 
         fn poll_ready(&mut self) -> Poll<(), Self::Error> {
+            // Try to update `service` by refining the name with a resolver.
             self.poll_state().map_err(Error::Stack)?;
 
             match self.service.as_mut() {
@@ -466,7 +475,11 @@ pub mod canonicalize {
         }
 
         fn call(&mut self, req: Self::Request) -> Self::Future {
-            let svc = self.service.as_mut().expect("poll_ready must be called first");
+            let svc = self
+                .service
+                .as_mut()
+                .expect("poll_ready must be called first");
+
             svc.call(req).map_err(Error::Service)
         }
     }
