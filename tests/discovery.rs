@@ -204,8 +204,7 @@ macro_rules! generate_tests {
             let _ = env_logger::try_init();
             let mut env = app::config::TestEnv::new();
 
-            // set the bind timeout to 100 ms.
-            env.put(app::config::ENV_BIND_TIMEOUT, "100ms".to_owned());
+            env.put(app::config::ENV_BIND_TIMEOUT, "1s".to_owned());
 
             let srv = $make_server().route("/", "hello").run();
             let ctrl = controller::new();

@@ -28,7 +28,7 @@ use tap;
 use task;
 use telemetry;
 use transport::{self, connect, tls, BoundPort, Connection, GetOriginalDst};
-use Conditional;
+use {Addr, Conditional};
 
 use super::config::Config;
 
@@ -266,14 +266,17 @@ where
 
             let outbound = {
                 use super::outbound::{
-                    canonicalize, discovery::Resolve, orig_proto_upgrade, Endpoint, RecognizeDstAddr,
+                    discovery::Resolve, orig_proto_upgrade, DstAddr, Endpoint,
                 };
                 use super::profiles::Client as ProfilesClient;
                 use proxy::{
+                    canonicalize,
                     http::{balance, metrics, profiles, settings},
                     resolve,
                 };
 
+                let router_capacity = config.outbound_router_capacity;
+                let router_max_idle_age = config.outbound_router_max_idle_age;
                 let endpoint_http_metrics = endpoint_http_metrics.clone();
 
                 // As the outbound proxy accepts connections, we don't do any
@@ -297,16 +300,15 @@ where
                 let endpoint_stack = client_stack
                     .push(orig_proto_upgrade::layer())
                     .push(tap::layer(tap_next_id.clone(), taps.clone()))
-                    .push(metrics::layer::<_, classify::Response>(endpoint_http_metrics))
+                    .push(metrics::layer::<_, classify::Response>(
+                        endpoint_http_metrics,
+                    ))
                     .push(svc::watch::layer(tls_client_config))
                     .push(buffer::layer());
 
-                let profiles_client = ProfilesClient::new(
-                    controller,
-                    Duration::from_secs(3),
-                );
+                let profiles_client = ProfilesClient::new(controller, Duration::from_secs(3));
 
-                let dst_route_stack = endpoint_stack
+                let dst_router = endpoint_stack
                     .push(resolve::layer(Resolve::new(resolver)))
                     .push(balance::layer())
                     .push(buffer::layer())
@@ -316,17 +318,39 @@ where
                             .push(metrics::layer::<_, classify::Response>(route_http_metrics))
                             .push(classify::layer()),
                     ))
+                    .push(buffer::layer())
+                    .push(router::layer(|req: &http::Request<_>| {
+                        let addr = req.extensions().get::<Addr>().cloned().map(DstAddr::from);
+                        debug!("outbonud dst={:?}", addr);
+                        addr
+                    }))
+                    .make(&router::Config::new(
+                        "out dst",
+                        router_capacity,
+                        router_max_idle_age,
+                    ))
+                    .expect("outbound dst router");
+
+                let addr_route_stack = svc::shared::stack(dst_router)
+                    .push(svc::stack::phantom_data::layer())
+                    .push(insert_target::layer())
                     .push(canonicalize::layer(dns_resolver))
                     .push(buffer::layer())
                     .push(timeout::layer(config.bind_timeout))
                     .push(limit::layer(MAX_IN_FLIGHT))
-                    .push(router::layer(RecognizeDstAddr));
+                    .push(router::layer(|req: &http::Request<_>| {
+                        let addr = super::http_request_addr(req).ok();
+                        debug!("outbound addr={:?}", addr);
+                        addr
+                    }));
 
-                let capacity = config.outbound_router_capacity;
-                let max_idle_age = config.outbound_router_max_idle_age;
-                let router = dst_route_stack
-                    .make(&router::Config::new("out", capacity, max_idle_age))
-                    .expect("outbound router");
+                let router = addr_route_stack
+                    .make(&router::Config::new(
+                        "out addr",
+                        router_capacity,
+                        router_max_idle_age,
+                    ))
+                    .expect("outbound addr router");
 
                 // As HTTP requests are accepted, we add some request extensions
                 // including metadata about the request's origin.
@@ -380,7 +404,9 @@ where
                         client::Config::from(ep.clone())
                     }))
                     .push(tap::layer(tap_next_id, taps))
-                    .push(metrics::layer::<_, classify::Response>(endpoint_http_metrics))
+                    .push(metrics::layer::<_, classify::Response>(
+                        endpoint_http_metrics,
+                    ))
                     .push(classify::layer())
                     .push(buffer::layer())
                     .push(limit::layer(MAX_IN_FLIGHT))
