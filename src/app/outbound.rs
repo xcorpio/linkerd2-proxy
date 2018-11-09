@@ -322,10 +322,11 @@ pub mod canonicalize {
     }
 
     pub struct Service<M: svc::Stack<CanonicalDstAddr>> {
+        original_addr: NameAddr,
         resolver: dns::Resolver,
-        addr: NameAddr,
-        stack: M,
         service: Option<M::Value>,
+        service_name: Option<CanonicalDstAddr>,
+        stack: M,
         state: State,
     }
 
@@ -374,11 +375,12 @@ pub mod canonicalize {
                 DstAddr(Addr::Name(na)) => {
                     let fut = self.resolver.refine(na.name());
                     let svc = Service {
-                        addr: na.clone(),
+                        original_addr: na.clone(),
                         stack: self.inner.clone(),
                         resolver: self.resolver.clone(),
                         state: State::Pending(fut),
                         service: None,
+                        service_name: None,
                     };
                     Ok(svc::Either::A(svc))
                 }
@@ -401,18 +403,23 @@ pub mod canonicalize {
                     State::Pending(ref mut fut) => match fut.poll() {
                         Ok(Async::NotReady) => return Ok(Async::NotReady),
                         Ok(Async::Ready(refine)) => {
-                            let addr = NameAddr::new(refine.name, self.addr.port());
-                            let target = CanonicalDstAddr(addr.into());
-                            let svc = self.stack.make(&target)?;
-                            self.service = Some(svc);
+                            let addr = NameAddr::new(refine.name, self.original_addr.port());
+                            let service_name = CanonicalDstAddr(addr.into());
+
+                            if self.service_name.as_ref() != Some(&service_name) {
+                                let svc = self.stack.make(&service_name)?;
+                                self.service = Some(svc);
+                                self.service_name = Some(service_name);
+                            }
 
                             State::ValidUntil(Delay::new(refine.valid_until))
                         }
                         Err(e) => {
                             if self.service.is_none() {
-                                let target = CanonicalDstAddr(self.addr.clone().into());
-                                let svc = self.stack.make(&target)?;
+                                let service_name = CanonicalDstAddr(self.original_addr.clone().into());
+                                let svc = self.stack.make(&service_name)?;
                                 self.service = Some(svc);
+                                self.service_name = Some(service_name);
                             }
 
                             let valid_until = match e.kind() {
@@ -424,10 +431,11 @@ pub mod canonicalize {
                             State::ValidUntil(Delay::new(valid_until))
                         }
                     },
+
                     State::ValidUntil(ref mut f) => match f.poll().expect("timer must not fail") {
                         Async::NotReady => return Ok(Async::NotReady),
                         Async::Ready(()) => {
-                            State::Pending(self.resolver.refine(self.addr.name()))
+                            State::Pending(self.resolver.refine(self.original_addr.name()))
                         }
                     },
                 };
