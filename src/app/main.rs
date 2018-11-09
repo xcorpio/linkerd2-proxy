@@ -266,7 +266,7 @@ where
 
             let outbound = {
                 use super::outbound::{
-                    discovery::Resolve, orig_proto_upgrade, Endpoint, RecognizeDstAddr,
+                    canonicalize, discovery::Resolve, orig_proto_upgrade, Endpoint, RecognizeDstAddr,
                 };
                 use super::profiles::Client as ProfilesClient;
                 use proxy::{
@@ -317,6 +317,7 @@ where
                             .push(metrics::layer::<_, classify::Response>(route_http_metrics))
                             .push(classify::layer()),
                     ))
+                    .push(canonicalize::layer(dns_resolver))
                     .push(buffer::layer())
                     .push(timeout::layer(config.bind_timeout))
                     .push(limit::layer(MAX_IN_FLIGHT))

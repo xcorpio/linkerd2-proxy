@@ -1,28 +1,24 @@
+use convert::TryFrom;
 use futures::prelude::*;
-use std::fmt;
-use std::net::IpAddr;
+use std::{fmt, net};
 use std::time::Instant;
 use tokio::timer::Delay;
 use trust_dns_resolver::{
-    self,
     config::{ResolverConfig, ResolverOpts},
-    error::{ResolveError, ResolveErrorKind},
-    lookup_ip::LookupIp,
+    lookup_ip::{LookupIp},
+    system_conf,
     AsyncResolver,
+    BackgroundLookupIp,
 };
+
+pub use trust_dns_resolver::error::{ResolveError, ResolveErrorKind};
 
 use app::config::Config;
 use transport::tls;
-use Addr;
 
 #[derive(Clone)]
 pub struct Resolver {
     resolver: AsyncResolver,
-}
-
-pub enum IpAddrFuture {
-    DNS(Box<Future<Item = LookupIp, Error = ResolveError> + Send>),
-    Fixed(IpAddr),
 }
 
 #[derive(Debug)]
@@ -36,8 +32,11 @@ pub enum Response {
     DoesNotExist { retry_after: Option<Instant> },
 }
 
-// `Box<Future>` implements `Future` so it doesn't need to be implemented manually.
-pub type IpAddrListFuture = Box<Future<Item=Response, Error=ResolveError> + Send>;
+pub struct IpAddrFuture(::logging::ContextualFuture<Ctx, BackgroundLookupIp>);
+
+pub struct RefineFuture(::logging::ContextualFuture<Ctx, BackgroundLookupIp>);
+
+pub type IpAddrListFuture = Box<Future<Item = Response, Error = ResolveError> + Send>;
 
 /// A valid DNS name.
 ///
@@ -46,19 +45,16 @@ pub type IpAddrListFuture = Box<Future<Item=Response, Error=ResolveError> + Send
 /// valid certificate.
 pub type Name = tls::DnsName;
 
-struct ResolveAllCtx(Name);
+struct Ctx(Name);
 
-impl fmt::Display for ResolveAllCtx {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(f, "resolve_all_ips={}", self.0)
-    }
+pub struct Refine {
+    pub name: Name,
+    pub valid_until: Instant,
 }
 
-struct ResolveOneCtx(Name);
-
-impl fmt::Display for ResolveOneCtx {
+impl fmt::Display for Ctx {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(f, "resolve_one_ip={}", self.0)
+        write!(f, "dns={}", self.0)
     }
 }
 
@@ -76,7 +72,7 @@ impl Resolver {
     /// TODO: This should be infallible like it is in the `domain` crate.
     pub fn from_system_config_and_env(env_config: &Config)
         -> Result<(Self, impl Future<Item = (), Error = ()> + Send), ResolveError> {
-        let (config, opts) = trust_dns_resolver::system_conf::read_system_conf()?;
+        let (config, opts) = system_conf::read_system_conf()?;
         let opts = env_config.configure_resolver_opts(opts);
         trace!("DNS config: {:?}", &config);
         trace!("DNS opts: {:?}", &opts);
@@ -99,21 +95,10 @@ impl Resolver {
         (resolver, background)
     }
 
-    pub fn resolve_one_ip(&self, host: &Addr) -> IpAddrFuture {
-        match host {
-            Addr::Name(n) => {
-                let name = n.name();
-                let ctx = ResolveOneCtx(name.clone());
-                let f = ::logging::context_future(ctx, self.lookup_ip(name));
-                IpAddrFuture::DNS(Box::new(f))
-            }
-            Addr::Socket(addr) => IpAddrFuture::Fixed(addr.ip()),
-        }
-    }
+    pub fn resolve_all_ips(&self, deadline: Instant, name: &Name) -> IpAddrListFuture {
+        let lookup = self.resolver.lookup_ip(name.as_ref());
 
-    pub fn resolve_all_ips(&self, deadline: Instant, host: &Name) -> IpAddrListFuture {
-        let name = host.clone();
-        let lookup = self.lookup_ip(&name);
+        // FIXME this delay logic is really confusing...
         let f = Delay::new(deadline)
             .then(move |_| {
                 trace!("after delay");
@@ -121,24 +106,26 @@ impl Resolver {
             })
             .then(move |result| {
                 trace!("completed with {:?}", &result);
-                match result {
-                    Ok(ips) => Ok(Response::Exists(ips)),
-                    Err(e) => {
-                        if let &ResolveErrorKind::NoRecordsFound { valid_until, .. } = e.kind() {
-                            Ok(Response::DoesNotExist { retry_after: valid_until })
-                        } else {
-                            Err(e)
-                        }
+                result.map(Response::Exists).or_else(|e| {
+                    if let &ResolveErrorKind::NoRecordsFound { valid_until, .. } = e.kind() {
+                        Ok(Response::DoesNotExist { retry_after: valid_until })
+                    } else {
+                        Err(e)
                     }
-                }
+                })
             });
-        Box::new(::logging::context_future(ResolveAllCtx(name), f))
+
+        Box::new(::logging::context_future(Ctx(name.clone()), f))
     }
 
-    fn lookup_ip(&self, name: &Name)
-        -> impl Future<Item = LookupIp, Error = ResolveError>
-    {
-        self.resolver.lookup_ip(name.as_ref())
+    pub fn resolve_one_ip(&self, name: &Name) -> IpAddrFuture {
+        let f = self.resolver.lookup_ip(name.as_ref());
+        IpAddrFuture(::logging::context_future(Ctx(name.clone()), f))
+    }
+
+    pub fn refine(&self, name: &Name) -> RefineFuture {
+        let f = self.resolver.lookup_ip(name.as_ref());
+        RefineFuture(::logging::context_future(Ctx(name.clone()), f))
     }
 }
 
@@ -153,32 +140,32 @@ impl fmt::Debug for Resolver {
 }
 
 impl Future for IpAddrFuture {
-    type Item = IpAddr;
+    type Item = net::IpAddr;
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        match *self {
-            IpAddrFuture::DNS(ref mut inner) => match inner.poll() {
-                Ok(Async::NotReady) => {
-                    trace!("dns not ready");
-                    Ok(Async::NotReady)
-                } ,
-                Ok(Async::Ready(ips)) => {
-                    match ips.iter().next() {
-                        Some(ip) => {
-                            trace!("DNS resolution found: {:?}", ip);
-                            Ok(Async::Ready(ip))
-                        },
-                        None => {
-                            trace!("DNS resolution did not find anything");
-                            Err(Error::NoAddressesFound)
-                        }
-                    }
-                },
-                Err(e) => Err(Error::ResolutionFailed(e)),
-            },
-            IpAddrFuture::Fixed(addr) => Ok(Async::Ready(addr)),
-        }
+        let ips = try_ready!(self.0.poll().map_err(Error::ResolutionFailed));
+        ips.iter()
+            .next()
+            .map(Async::Ready)
+            .ok_or_else(|| Error::NoAddressesFound)
+    }
+}
+
+impl Future for RefineFuture {
+    type Item = Refine;
+    type Error = ResolveError;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        let lookup = try_ready!(self.0.poll());
+        let valid_until = lookup.valid_until();
+
+        let n = lookup.query().name();
+        let name = Name::try_from(n.to_ascii().as_bytes())
+            .expect("Name returned from resolver must be valid");
+
+        let refine = Refine { name, valid_until };
+        Ok(Async::Ready(refine))
     }
 }
 

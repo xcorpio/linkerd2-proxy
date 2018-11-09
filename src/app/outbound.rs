@@ -108,7 +108,21 @@ impl<B> router::Recognize<http::Request<B>> for RecognizeDstAddr {
 
 // === impl DstAddr ===
 
-impl CanGetDestination for DstAddr {
+impl fmt::Display for DstAddr {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+// === impl CanonicalDstAddr ===
+
+impl fmt::Display for CanonicalDstAddr {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl CanGetDestination for CanonicalDstAddr {
     fn get_destination(&self) -> Option<&NameAddr> {
         match self.0 {
             Addr::Name(ref name) => Some(name),
@@ -117,14 +131,8 @@ impl CanGetDestination for DstAddr {
     }
 }
 
-impl fmt::Display for DstAddr {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
 // TODO this should only work with Bound destinations
-impl profiles::WithRoute for DstAddr {
+impl profiles::WithRoute for CanonicalDstAddr {
     type Output = Route;
 
     fn with_route(self, route: profiles::Route) -> Self::Output {
@@ -139,7 +147,7 @@ pub mod discovery {
     use futures::{Async, Poll};
     use std::net::SocketAddr;
 
-    use super::{Endpoint, DstAddr};
+    use super::{Endpoint, CanonicalDstAddr};
     use control::destination::Metadata;
     use proxy::resolve;
     use transport::{connect, tls};
@@ -165,19 +173,19 @@ pub mod discovery {
         }
     }
 
-    impl<R> resolve::Resolve<DstAddr> for Resolve<R>
+    impl<R> resolve::Resolve<CanonicalDstAddr> for Resolve<R>
     where
         R: resolve::Resolve<NameAddr, Endpoint = Metadata>,
     {
         type Endpoint = Endpoint;
         type Resolution = Resolution<R::Resolution>;
 
-        fn resolve(&self, dst: &DstAddr) -> Self::Resolution {
+        fn resolve(&self, dst: &CanonicalDstAddr) -> Self::Resolution {
             match dst {
-                DstAddr(Addr::Name(ref name)) => {
+                CanonicalDstAddr(Addr::Name(ref name)) => {
                     Resolution::Name(name.clone(), self.0.resolve(&name))
                 }
-                DstAddr(Addr::Socket(ref addr)) => Resolution::Addr(Some(*addr)),
+                CanonicalDstAddr(Addr::Socket(ref addr)) => Resolution::Addr(Some(*addr)),
             }
         }
     }
@@ -288,30 +296,52 @@ pub mod orig_proto_upgrade {
 }
 
 pub mod canonicalize {
-    use futures::Poll;
+    use futures::{Async, Future, Poll, future};
     use http;
-    use trust_dns_resolver;
+    use std::{error, fmt};
+    use std::time::Duration;
+    use tokio_timer::{clock, Delay};
 
-    use super::{DstAddr, CanonicalDstAddr};
+    use dns;
     use svc;
     use {Addr, NameAddr};
 
+    use super::{DstAddr, CanonicalDstAddr};
+
+    // Duration to wait before polling DNS again after an error (or a NXDOMAIN
+    // response with no TTL).
+    const DNS_ERROR_TTL: Duration = Duration::from_secs(5);
+
     #[derive(Debug, Clone)]
-    pub struct Layer;
+    pub struct Layer(dns::Resolver);
 
     #[derive(Clone, Debug)]
     pub struct Stack<M: svc::Stack<CanonicalDstAddr>> {
+        resolver: dns::Resolver,
         inner: M,
     }
 
-    #[derive(Clone, Debug)]
     pub struct Service<M: svc::Stack<CanonicalDstAddr>> {
-        name: NameAddr,
+        resolver: dns::Resolver,
+        addr: NameAddr,
         stack: M,
+        service: Option<M::Value>,
+        state: State,
     }
 
-    pub fn layer() -> Layer {
-        Layer
+    enum State {
+        Pending(dns::RefineFuture),
+        ValidUntil(Delay),
+    }
+
+    #[derive(Debug)]
+    pub enum Error<M, S> {
+        Stack(M),
+        Service(S),
+    }
+
+    pub fn layer(resolver: dns::Resolver) -> Layer {
+        Layer(resolver)
     }
 
     impl<M, A, B> svc::Layer<DstAddr, CanonicalDstAddr, M> for Layer
@@ -324,7 +354,8 @@ pub mod canonicalize {
         type Stack = Stack<M>;
 
         fn bind(&self, inner: M) -> Self::Stack {
-            Stack { inner }
+            let resolver = self.0.clone();
+            Stack { inner, resolver }
         }
     }
 
@@ -340,10 +371,14 @@ pub mod canonicalize {
 
         fn make(&self, dst_addr: &DstAddr) -> Result<Self::Value, Self::Error> {
             match dst_addr {
-                DstAddr(Addr::Name(name)) => {
+                DstAddr(Addr::Name(na)) => {
+                    let fut = self.resolver.refine(na.name());
                     let svc = Service {
-                        name: name.clone(),
+                        addr: na.clone(),
                         stack: self.inner.clone(),
+                        resolver: self.resolver.clone(),
+                        state: State::Pending(fut),
+                        service: None,
                     };
                     Ok(svc::Either::A(svc))
                 }
@@ -355,6 +390,51 @@ pub mod canonicalize {
         }
     }
 
+    impl<M, A, B> Service<M>
+    where
+        M: svc::Stack<CanonicalDstAddr>,
+        M::Value: svc::Service<Request = http::Request<A>, Response = http::Response<B>>,
+    {
+        fn poll_state(&mut self) -> Poll<(), M::Error> {
+            loop {
+                self.state = match self.state {
+                    State::Pending(ref mut fut) => match fut.poll() {
+                        Ok(Async::NotReady) => return Ok(Async::NotReady),
+                        Ok(Async::Ready(refine)) => {
+                            let addr = NameAddr::new(refine.name, self.addr.port());
+                            let target = CanonicalDstAddr(addr.into());
+                            let svc = self.stack.make(&target)?;
+                            self.service = Some(svc);
+
+                            State::ValidUntil(Delay::new(refine.valid_until))
+                        }
+                        Err(e) => {
+                            if self.service.is_none() {
+                                let target = CanonicalDstAddr(self.addr.clone().into());
+                                let svc = self.stack.make(&target)?;
+                                self.service = Some(svc);
+                            }
+
+                            let valid_until = match e.kind() {
+                                dns::ResolveErrorKind::NoRecordsFound { valid_until, .. } => {
+                                    valid_until.unwrap_or_else(|| clock::now() + DNS_ERROR_TTL)
+                                }
+                                _ => clock::now() + DNS_ERROR_TTL,
+                            };
+                            State::ValidUntil(Delay::new(valid_until))
+                        }
+                    },
+                    State::ValidUntil(ref mut f) => match f.poll().expect("timer must not fail") {
+                        Async::NotReady => return Ok(Async::NotReady),
+                        Async::Ready(()) => {
+                            State::Pending(self.resolver.refine(self.addr.name()))
+                        }
+                    },
+                };
+            }
+        }
+    }
+
     impl<M, A, B> svc::Service for Service<M>
     where
         M: svc::Stack<CanonicalDstAddr>,
@@ -362,15 +442,42 @@ pub mod canonicalize {
     {
         type Request = http::Request<A>;
         type Response = http::Response<B>;
-        type Error = <M::Value as svc::Service>::Error;
-        type Future = <M::Value as svc::Service>::Future;
+        type Error = Error<M::Error, <M::Value as svc::Service>::Error>;
+        type Future = future::MapErr<
+            <M::Value as svc::Service>::Future,
+            fn(<M::Value as svc::Service>::Error) -> Self::Error,
+        >;
 
         fn poll_ready(&mut self) -> Poll<(), Self::Error> {
-            unimplemented!("TODO: resolve name")
+            self.poll_state().map_err(Error::Stack)?;
+
+            match self.service.as_mut() {
+                None => Ok(Async::NotReady),
+                Some(ref mut svc) => svc.poll_ready().map_err(Error::Service),
+            }
         }
 
-        fn call(&mut self, _req: Self::Request) -> Self::Future {
-            unimplemented!("TODO: dispatch to inner service")
+        fn call(&mut self, req: Self::Request) -> Self::Future {
+            let svc = self.service.as_mut().expect("poll_ready must be called first");
+            svc.call(req).map_err(Error::Service)
+        }
+    }
+
+    impl<M: fmt::Display, S: fmt::Display> fmt::Display for Error<M, S> {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            match self {
+                Error::Stack(e) => e.fmt(f),
+                Error::Service(e) => e.fmt(f),
+            }
+        }
+    }
+
+    impl<M: error::Error, S: error::Error> error::Error for Error<M, S> {
+        fn cause(&self) -> Option<&error::Error> {
+            match self {
+                Error::Stack(e) => e.cause(),
+                Error::Service(e) => e.cause(),
+            }
         }
     }
 }

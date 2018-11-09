@@ -557,7 +557,7 @@ dependencies = [
  "tower-reconnect 0.1.0 (git+https://github.com/tower-rs/tower)",
  "tower-service 0.1.0 (git+https://github.com/tower-rs/tower)",
  "tower-util 0.1.0 (git+https://github.com/tower-rs/tower)",
- "trust-dns-resolver 0.10.0 (git+https://github.com/bluejekyll/trust-dns?rev=73c3bfb)",
+ "trust-dns-resolver 0.10.0 (git+https://github.com/olix0r/trust-dns?rev=1cb54195)",
  "try-lock 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "untrusted 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "webpki 0.18.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -1428,7 +1428,7 @@ dependencies = [
 [[package]]
 name = "trust-dns-proto"
 version = "0.5.0"
-source = "git+https://github.com/bluejekyll/trust-dns?rev=73c3bfb#73c3bfbce5ca0d05f46db11bbfafe7bea4aaba75"
+source = "git+https://github.com/olix0r/trust-dns?rev=1cb54195#1cb54195b1faf8cb4febf92fba216b7d680e9280"
 dependencies = [
  "byteorder 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "failure 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -1451,7 +1451,7 @@ dependencies = [
 [[package]]
 name = "trust-dns-resolver"
 version = "0.10.0"
-source = "git+https://github.com/bluejekyll/trust-dns?rev=73c3bfb#73c3bfbce5ca0d05f46db11bbfafe7bea4aaba75"
+source = "git+https://github.com/olix0r/trust-dns?rev=1cb54195#1cb54195b1faf8cb4febf92fba216b7d680e9280"
 dependencies = [
  "cfg-if 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "failure 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -1463,7 +1463,7 @@ dependencies = [
  "resolv-conf 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "smallvec 0.6.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "tokio 0.1.7 (registry+https://github.com/rust-lang/crates.io-index)",
- "trust-dns-proto 0.5.0 (git+https://github.com/bluejekyll/trust-dns?rev=73c3bfb)",
+ "trust-dns-proto 0.5.0 (git+https://github.com/olix0r/trust-dns?rev=1cb54195)",
 ]
 
 [[package]]
@@ -1778,8 +1778,8 @@ dependencies = [
 "checksum tower-reconnect 0.1.0 (git+https://github.com/tower-rs/tower)" = "<none>"
 "checksum tower-service 0.1.0 (git+https://github.com/tower-rs/tower)" = "<none>"
 "checksum tower-util 0.1.0 (git+https://github.com/tower-rs/tower)" = "<none>"
-"checksum trust-dns-proto 0.5.0 (git+https://github.com/bluejekyll/trust-dns?rev=73c3bfb)" = "<none>"
-"checksum trust-dns-resolver 0.10.0 (git+https://github.com/bluejekyll/trust-dns?rev=73c3bfb)" = "<none>"
+"checksum trust-dns-proto 0.5.0 (git+https://github.com/olix0r/trust-dns?rev=1cb54195)" = "<none>"
+"checksum trust-dns-resolver 0.10.0 (git+https://github.com/olix0r/trust-dns?rev=1cb54195)" = "<none>"
 "checksum try-lock 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)" = "119b532a17fbe772d360be65617310164549a07c25a1deab04c84168ce0d4545"
 "checksum ucd-util 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)" = "fd2be2d6639d0f8fe6cdda291ad456e23629558d466e2789d2c3e9892bda285d"
 "checksum unicode-bidi 0.3.4 (registry+https://github.com/rust-lang/crates.io-index)" = "49f2bd0c6468a8230e1db229cff8029217cf623c767ea5d60bfbd42729ea54d5"

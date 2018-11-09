@@ -33,7 +33,7 @@ impl Addr {
     pub fn new(host: &str, port: u16) -> Result<Self, Error> {
         IpAddr::from_str(host)
             .map(|ip| Addr::Socket((ip, port).into()))
-            .or_else(|_| NameAddr::new(host, port).map(Addr::Name))
+            .or_else(|_| NameAddr::parse(host, port).map(Addr::Name))
     }
 
     pub fn from_authority_and_default_port(
@@ -102,10 +102,20 @@ impl fmt::Display for Addr {
     }
 }
 
+impl From<NameAddr> for Addr {
+    fn from(na: NameAddr) -> Self {
+        Addr::Name(na)
+    }
+}
+
 // === impl NameAddr ===
 
 impl NameAddr {
-    pub fn new(host: &str, port: u16) -> Result<Self, Error> {
+    pub fn new(name: Name, port: u16) -> Self {
+        NameAddr { name, port }
+    }
+
+    pub fn parse(host: &str, port: u16) -> Result<Self, Error> {
         if host.is_empty() {
             return Err(Error::InvalidHost);
         }
@@ -119,13 +129,13 @@ impl NameAddr {
         a: &http::uri::Authority,
         default_port: u16,
     ) -> Result<Self, Error> {
-        Self::new(a.host(), a.port().unwrap_or(default_port))
+        Self::parse(a.host(), a.port().unwrap_or(default_port))
     }
 
     pub fn from_authority_with_port(a: &http::uri::Authority) -> Result<Self, Error> {
         a.port()
             .ok_or(Error::MissingPort)
-            .and_then(|p| Self::new(a.host(), p))
+            .and_then(|p| Self::parse(a.host(), p))
     }
 
     pub fn name(&self) -> &Name {
