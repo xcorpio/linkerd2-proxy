@@ -304,7 +304,6 @@ where
                 let profiles_client = ProfilesClient::new(
                     controller,
                     Duration::from_secs(3),
-                    control::KubernetesNormalize::new(config.namespaces.pod.clone()),
                 );
 
                 let dst_route_stack = endpoint_stack
