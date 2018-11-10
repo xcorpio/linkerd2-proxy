@@ -1,17 +1,11 @@
-use http;
 use std::fmt;
 
-use app::classify;
 use control::destination::{Metadata, ProtocolHint};
-use proxy::http::{
-    classify::CanClassify,
-    profiles::{self, CanGetDestination},
-    router, settings,
-};
+use proxy::http::settings;
 use svc;
 use tap;
 use transport::{connect, tls};
-use {Addr, NameAddr};
+use NameAddr;
 
 #[derive(Clone, Debug)]
 pub struct Endpoint {
@@ -19,21 +13,6 @@ pub struct Endpoint {
     pub connect: connect::Target,
     pub metadata: Metadata,
 }
-
-#[derive(Clone, Debug)]
-pub struct Route {
-    pub dst_addr: Addr,
-    pub route: profiles::Route,
-}
-
-#[derive(Copy, Clone, Debug)]
-pub struct RecognizeAddr;
-
-#[derive(Copy, Clone, Debug)]
-pub struct RecognizeDstAddr;
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct DstAddr(Addr);
 
 // === impl Endpoint ===
 
@@ -84,82 +63,12 @@ impl From<Endpoint> for tap::Endpoint {
     }
 }
 
-// === impl Route ===
-
-impl CanClassify for Route {
-    type Classify = classify::Request;
-
-    fn classify(&self) -> classify::Request {
-        self.route.response_classes().clone().into()
-    }
-}
-
-// === impl RecognizeAddr ===
-
-impl<B> router::Recognize<http::Request<B>> for RecognizeAddr {
-    type Target = Addr;
-
-    fn recognize(&self, req: &http::Request<B>) -> Option<Self::Target> {
-        let addr = super::http_request_addr(req).ok()?;
-        debug!("recognize: dst={:?}", addr);
-        Some(addr)
-    }
-}
-
-// === impl RecognizeDstAddr ===
-
-impl<B> router::Recognize<http::Request<B>> for RecognizeDstAddr {
-    type Target = DstAddr;
-
-    fn recognize(&self, req: &http::Request<B>) -> Option<Self::Target> {
-        req.extensions().get::<DstAddr>().cloned()
-    }
-}
-
-// === impl DstAddr ===
-
-impl From<Addr> for DstAddr {
-    fn from(addr: Addr) -> Self {
-        DstAddr(addr)
-    }
-}
-
-impl<'t> From<&'t DstAddr> for http::header::HeaderValue {
-    fn from(a: &'t DstAddr) -> Self {
-        http::header::HeaderValue::from_str(&format!("{}", a))
-            .expect("addr must be a valid header")
-    }
-}
-
-impl fmt::Display for DstAddr {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-impl CanGetDestination for DstAddr {
-    fn get_destination(&self) -> Option<&NameAddr> {
-        self.0.name_addr()
-    }
-}
-
-// TODO this should only work with Bound destinations
-impl profiles::WithRoute for DstAddr {
-    type Output = Route;
-
-    fn with_route(self, route: profiles::Route) -> Self::Output {
-        Route {
-            dst_addr: self.0,
-            route,
-        }
-    }
-}
-
 pub mod discovery {
     use futures::{Async, Poll};
     use std::net::SocketAddr;
 
-    use super::{DstAddr, Endpoint};
+    use super::super::dst::DstAddr;
+    use super::Endpoint;
     use control::destination::Metadata;
     use proxy::resolve;
     use transport::{connect, tls};
@@ -193,11 +102,11 @@ pub mod discovery {
         type Resolution = Resolution<R::Resolution>;
 
         fn resolve(&self, dst: &DstAddr) -> Self::Resolution {
-            match dst {
-                DstAddr(Addr::Name(ref name)) => {
+            match dst.as_ref() {
+                Addr::Name(ref name) => {
                     Resolution::Name(name.clone(), self.0.resolve(&name))
                 }
-                DstAddr(Addr::Socket(ref addr)) => Resolution::Addr(Some(*addr)),
+                Addr::Socket(ref addr) => Resolution::Addr(Some(*addr)),
             }
         }
     }

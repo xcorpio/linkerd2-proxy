@@ -8,7 +8,7 @@ use metrics::FmtLabels;
 use transport::tls;
 use {Conditional, Addr, NameAddr};
 
-use super::{classify, inbound, outbound};
+use super::{classify, dst, inbound, outbound};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct EndpointLabels {
@@ -40,8 +40,8 @@ struct Dst(Addr);
 
 // === impl RouteLabels ===
 
-impl From<outbound::Route> for RouteLabels {
-    fn from(r: outbound::Route) -> Self {
+impl From<dst::Route> for RouteLabels {
+    fn from(r: dst::Route) -> Self {
         RouteLabels {
             dst: Dst(r.dst_addr),
             direction: Direction::Out,
@@ -129,7 +129,7 @@ impl FmtLabels for Direction {
 impl<'a> FmtLabels for Authority<'a> {
     fn fmt_labels(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self.0.port() {
-            80 => write!(f, "authority=\"{}\"", self.0.name()),
+            80 => write!(f, "authority=\"{}\"", self.0.name().without_trailing_dot()),
             _ => write!(f, "authority=\"{}\"", self.0),
         }
     }

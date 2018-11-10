@@ -20,7 +20,9 @@ use logging;
 use metrics::{self, FmtMetrics};
 use proxy::{
     self, buffer,
-    http::{client, insert_target, metrics::timestamp_request_open, normalize_uri, router},
+    http::{
+        client, insert_target, metrics::timestamp_request_open, normalize_uri, profiles, router, settings,
+    },
     limit, reconnect, timeout,
 };
 use svc::{self, Layer as _Layer, Stack as _Stack};
@@ -31,6 +33,8 @@ use transport::{self, connect, tls, BoundPort, Connection, GetOriginalDst};
 use {Addr, Conditional};
 
 use super::config::Config;
+use super::dst::DstAddr;
+use super::profiles::Client as ProfilesClient;
 
 /// Runs a sidecar proxy.
 ///
@@ -267,18 +271,21 @@ where
                 .ok()
                 .expect("admin thread must receive resolver task");
 
+            let profiles_client = ProfilesClient::new(controller, Duration::from_secs(3));
+
             let outbound = {
-                use super::outbound::{discovery::Resolve, orig_proto_upgrade, DstAddr, Endpoint};
-                use super::profiles::Client as ProfilesClient;
+                use super::outbound::{discovery::Resolve, orig_proto_upgrade, Endpoint};
                 use proxy::{
                     canonicalize,
-                    http::{balance, header_from_target, metrics, profiles, settings},
+                    http::{balance, header_from_target, metrics},
                     resolve,
                 };
 
+                let profiles_client = profiles_client.clone();
                 let router_capacity = config.outbound_router_capacity;
                 let router_max_idle_age = config.outbound_router_max_idle_age;
                 let endpoint_http_metrics = endpoint_http_metrics.clone();
+                let route_http_metrics = route_http_metrics.clone();
 
                 // As the outbound proxy accepts connections, we don't do any
                 // special transport-level handling.
@@ -307,8 +314,6 @@ where
                     .push(svc::watch::layer(tls_client_config))
                     .push(buffer::layer());
 
-                let profiles_client = ProfilesClient::new(controller, Duration::from_secs(3));
-
                 let dst_router = endpoint_stack
                     .push(resolve::layer(Resolve::new(resolver)))
                     .push(balance::layer())
@@ -333,7 +338,7 @@ where
                     ))
                     .expect("outbound dst router");
 
-                let addr_route_stack = svc::shared::stack(dst_router)
+                let router = svc::shared::stack(dst_router)
                     .push(svc::stack::phantom_data::layer())
                     .push(insert_target::layer())
                     .push(canonicalize::layer(dns_resolver))
@@ -344,9 +349,7 @@ where
                         let addr = super::http_request_addr(req).ok();
                         debug!("outbound addr={:?}", addr);
                         addr
-                    }));
-
-                let router = addr_route_stack
+                    }))
                     .make(&router::Config::new(
                         "out addr",
                         router_capacity,
@@ -375,7 +378,7 @@ where
             };
 
             let inbound = {
-                use super::inbound::{self, Endpoint};
+                use super::inbound::{orig_proto_downgrade, Endpoint, RecognizeEndpoint};
                 use proxy::http::metrics;
 
                 // As the inbound proxy accepts connections, we don't do any
@@ -387,6 +390,15 @@ where
                     .push(proxy::timeout::layer(config.inbound_connect_timeout))
                     .push(transport_metrics.connect("inbound"));
 
+                let client_stack = connect
+                    .clone()
+                    .push(client::layer("in"))
+                    .push(reconnect::layer())
+                    .push(svc::stack_per_request::layer())
+                    .push(normalize_uri::layer())
+                    .push(buffer::layer())
+                    .push(settings::router::layer::<Endpoint>());
+
                 // A stack configured by `router::Config`, responsible for building
                 // a router made of route stacks configured by `inbound::Endpoint`.
                 //
@@ -397,30 +409,47 @@ where
                 // selectively. For HTTP/2 stacks, for instance, neither service will be
                 // employed.
                 let default_fwd_addr = config.inbound_forward.map(|a| a.into());
-                let stack = connect
-                    .clone()
-                    .push(client::layer("in"))
-                    .push(reconnect::layer())
-                    .push(svc::stack_per_request::layer())
-                    .push(normalize_uri::layer())
-                    .push(svc::stack::map_target::layer(|ep: &Endpoint| {
-                        client::Config::from(ep.clone())
-                    }))
+                let endpoint_router = client_stack
                     .push(tap::layer(tap_next_id, taps))
                     .push(metrics::layer::<_, classify::Response>(
                         endpoint_http_metrics,
                     ))
-                    .push(classify::layer())
                     .push(buffer::layer())
-                    .push(limit::layer(MAX_IN_FLIGHT))
-                    .push(router::layer(inbound::Recognize::new(default_fwd_addr)));
+                    .push(router::layer(RecognizeEndpoint::new(default_fwd_addr)))
+                    .make(&router::Config::new(
+                        "in endpoint",
+                        config.inbound_router_capacity,
+                        config.inbound_router_max_idle_age,
+                    ))
+                    .expect("inbound endpoint router");
 
                 // Build a router using the above policy
-                let capacity = config.inbound_router_capacity;
-                let max_idle_age = config.inbound_router_max_idle_age;
-                let router = stack
-                    .make(&router::Config::new("in", capacity, max_idle_age))
-                    .expect("inbound router");
+                let router = svc::shared::stack(endpoint_router)
+                    .push(svc::stack::phantom_data::layer())
+                    .push(buffer::layer())
+                    .push(profiles::router::layer(
+                        profiles_client.clone(),
+                        svc::stack::phantom_data::layer()
+                            .push(metrics::layer::<_, classify::Response>(route_http_metrics))
+                            .push(classify::layer()),
+                    ))
+                    .push(insert_target::layer())
+                    .push(buffer::layer())
+                    .push(limit::layer(MAX_IN_FLIGHT))
+                    .push(router::layer(|req: &http::Request<_>| {
+                        req.headers()
+                            .get(super::CANONICAL_DST_HEADER)
+                            .and_then(|dst| dst.to_str().ok())
+                            .and_then(|d| Addr::from_str(d).ok())
+                            .or_else(|| super::http_request_addr(req).ok())
+                            .map(DstAddr::from)
+                    }))
+                    .make(&router::Config::new(
+                        "in dst",
+                        config.inbound_router_capacity,
+                        config.inbound_router_max_idle_age,
+                    ))
+                    .expect("inbound dst router");
 
                 // As HTTP requests are accepted, we add some request extensions
                 // including metadata about the request's origin.
@@ -429,7 +458,7 @@ where
                 // `orig-proto` headers. This happens in the source stack so that
                 // the router need not detect whether a request _will be_ downgraded.
                 let source_stack = svc::stack::phantom_data::layer()
-                    .push(inbound::orig_proto_downgrade::layer())
+                    .push(orig_proto_downgrade::layer())
                     .push(insert_target::layer())
                     .push(timestamp_request_open::layer())
                     .bind(svc::shared::stack(router));

@@ -3,7 +3,7 @@ use std::fmt;
 use std::net::SocketAddr;
 
 use super::classify;
-use proxy::http::{client, router, Settings};
+use proxy::http::{router, settings};
 use proxy::server::Source;
 use tap;
 use transport::{connect, tls};
@@ -13,14 +13,11 @@ use {Addr, Conditional, NameAddr};
 pub struct Endpoint {
     pub addr: SocketAddr,
     pub dst_name: Option<NameAddr>,
-    pub settings: Settings,
     pub source_tls_status: tls::Status,
 }
 
-// === Recognize ===
-
 #[derive(Clone, Debug, Default)]
-pub struct Recognize {
+pub struct RecognizeEndpoint {
     default_addr: Option<SocketAddr>,
 }
 
@@ -45,10 +42,9 @@ impl Endpoint {
     }
 }
 
-// Makes it possible to build a client::Stack<Endpoint>.
-impl From<Endpoint> for client::Config {
-    fn from(ep: Endpoint) -> Self {
-        client::Config::new(ep.target(), ep.settings)
+impl settings::router::HasConnect for Endpoint {
+    fn connect(&self) -> connect::Target {
+        self.target()
     }
 }
 
@@ -68,16 +64,23 @@ impl fmt::Display for Endpoint {
     }
 }
 
-impl Recognize {
+// === impl RecognizeEndpoint ===
+
+impl RecognizeEndpoint {
     pub fn new(default_addr: Option<SocketAddr>) -> Self {
         Self { default_addr }
     }
 }
 
-impl<A> router::Recognize<http::Request<A>> for Recognize {
+impl<A> router::Recognize<http::Request<A>> for RecognizeEndpoint {
     type Target = Endpoint;
 
     fn recognize(&self, req: &http::Request<A>) -> Option<Self::Target> {
+        let dst_name = req
+            .extensions()
+            .get::<Addr>()
+            .and_then(|a| a.name_addr().cloned());
+
         let src = req.extensions().get::<Source>();
         let source_tls_status = src
             .map(|s| s.tls_status.clone())
@@ -87,30 +90,13 @@ impl<A> router::Recognize<http::Request<A>> for Recognize {
             .and_then(|s| s.orig_dst_if_not_local())
             .or(self.default_addr)?;
 
-        let settings = Settings::from_request(req);
-
-        let dst_name = req
-            .headers()
-            .get(super::CANONICAL_DST_HEADER)
-            .and_then(|dst| dst.to_str().ok())
-            .and_then(|d| Addr::from_str(d).ok())
-            .or_else(|| super::http_request_addr(req).ok())
-            .and_then(|a| a.into_name_addr());
-
         let ep = Endpoint {
             addr,
             dst_name,
-            settings,
             source_tls_status,
         };
         debug!("recognize: src={:?} ep={:?}", src, ep);
         Some(ep)
-    }
-}
-
-impl fmt::Display for Recognize {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "in")
     }
 }
 
@@ -183,15 +169,10 @@ mod tests {
     use Conditional;
 
     fn make_h1_endpoint(addr: net::SocketAddr) -> Endpoint {
-        let settings = Settings::Http1 {
-            was_absolute_form: false,
-            stack_per_request: true,
-        };
         let source_tls_status = TLS_DISABLED;
         Endpoint {
             addr,
             dst_name: None,
-            settings,
             source_tls_status,
         }
     }
