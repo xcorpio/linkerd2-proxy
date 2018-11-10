@@ -3,11 +3,12 @@ use std::fmt;
 use std::net::SocketAddr;
 
 use super::classify;
+use super::dst::DstAddr;
 use proxy::http::{router, settings};
 use proxy::server::Source;
 use tap;
 use transport::{connect, tls};
-use {Addr, Conditional, NameAddr};
+use {Conditional, NameAddr};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Endpoint {
@@ -76,19 +77,20 @@ impl<A> router::Recognize<http::Request<A>> for RecognizeEndpoint {
     type Target = Endpoint;
 
     fn recognize(&self, req: &http::Request<A>) -> Option<Self::Target> {
-        let dst_name = req
-            .extensions()
-            .get::<Addr>()
-            .and_then(|a| a.name_addr().cloned());
-
         let src = req.extensions().get::<Source>();
+        let addr = src
+            .and_then(|s| s.orig_dst_if_not_local())
+            .or(self.default_addr)?;
+
         let source_tls_status = src
             .map(|s| s.tls_status.clone())
             .unwrap_or_else(|| Conditional::None(tls::ReasonForNoTls::Disabled));
 
-        let addr = src
-            .and_then(|s| s.orig_dst_if_not_local())
-            .or(self.default_addr)?;
+        let dst_name = req
+            .extensions()
+            .get::<DstAddr>()
+            .and_then(|a| a.as_ref().name_addr())
+            .cloned();
 
         let ep = Endpoint {
             addr,

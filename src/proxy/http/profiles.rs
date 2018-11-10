@@ -298,9 +298,16 @@ pub mod router {
                 stack.make(&t).map_err(Error::Route)?
             };
 
-            let route_stream = target
-                .get_destination()
-                .and_then(|d| self.get_routes.get_routes(&d));
+            let route_stream = match target.get_destination() {
+                Some(dst) => {
+                    debug!("fetching routes for {:?}", dst);
+                    self.get_routes.get_routes(&dst)
+                }
+                None => {
+                    debug!("no destination for routes");
+                    None
+                }
+            };
 
             Ok(Service {
                 target: target.clone(),
