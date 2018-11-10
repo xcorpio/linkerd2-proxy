@@ -15,7 +15,7 @@ impl DnsName {
 
     pub fn without_trailing_dot(&self) -> &str {
         let fqdn = self.as_ref();
-        debug_assert!(fqdn.len() > 1);
+        debug_assert!(fqdn.len() > 1); // may not be `.`
         fqdn.trim_end_matches('.')
     }
 }
