@@ -123,7 +123,10 @@ impl classify::ClassifyResponse for Response {
                 Some(class) => Eos::Grpc(GrpcEos::NoBody(class.clone())),
             },
             Response::Profile(ref classes) => match Self::match_class(rsp, classes.as_ref()) {
-                None => Eos::Http(rsp.status()),
+                None => match grpc_class(rsp.headers()) {
+                    None => Eos::Http(rsp.status()),
+                    Some(class) => Eos::Grpc(GrpcEos::NoBody(class.clone())),
+                },
                 Some(class) => Eos::Profile(class.clone()),
             },
         }
