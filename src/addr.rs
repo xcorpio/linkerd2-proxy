@@ -102,8 +102,8 @@ impl Addr {
 impl fmt::Display for Addr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Addr::Name(NameAddr { ref name, port }) => write!(f, "{}:{}", name, port),
-            Addr::Socket(addr) => write!(f, "{}", addr),
+            Addr::Name(name) => name.fmt(f),
+            Addr::Socket(addr) => addr.fmt(f),
         }
     }
 }
