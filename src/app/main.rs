@@ -328,7 +328,7 @@ where
                     .push(buffer::layer())
                     .push(header_from_target::layer(super::CANONICAL_DST_HEADER))
                     .push(router::layer(|req: &http::Request<_>| {
-                        let addr = req.extensions().get::<Addr>().cloned().map(DstAddr::from);
+                        let addr = req.extensions().get::<Addr>().cloned().map(DstAddr::outbound);
                         debug!("outbound dst={:?}", addr);
                         addr
                     }))
@@ -447,7 +447,7 @@ where
 
                         let dst = canonical.or_else(|| super::http_request_addr(req).ok());
                         info!("inbound dst={:?}", dst);
-                        dst.map(DstAddr::from)
+                        dst.map(DstAddr::inbound)
                     }))
                     .make(&router::Config::new(
                         "in dst",

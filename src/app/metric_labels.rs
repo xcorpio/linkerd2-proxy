@@ -6,7 +6,7 @@ use std::{
 use metrics::FmtLabels;
 
 use transport::tls;
-use {Conditional, Addr, NameAddr};
+use {Conditional, NameAddr};
 
 use super::{classify, dst, inbound, outbound};
 
@@ -21,8 +21,7 @@ pub struct EndpointLabels {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct RouteLabels {
-    direction: Direction,
-    dst: Dst,
+    dst: dst::DstAddr,
     labels: Option<String>,
 }
 
@@ -35,16 +34,12 @@ enum Direction {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct Authority<'a>(&'a NameAddr);
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct Dst(Addr);
-
 // === impl RouteLabels ===
 
 impl From<dst::Route> for RouteLabels {
     fn from(r: dst::Route) -> Self {
         RouteLabels {
-            dst: Dst(r.dst_addr),
-            direction: Direction::Out,
+            dst: r.dst_addr,
             labels: prefix_labels("rt", r.route.labels().as_ref().into_iter()),
         }
     }
@@ -52,7 +47,7 @@ impl From<dst::Route> for RouteLabels {
 
 impl FmtLabels for RouteLabels {
     fn fmt_labels(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        (&self.dst, &self.direction).fmt_labels(f)?;
+        self.dst.fmt_labels(f)?;
 
         if let Some(labels) = self.labels.as_ref() {
             write!(f, ",{}", labels)?;
@@ -135,9 +130,14 @@ impl<'a> FmtLabels for Authority<'a> {
     }
 }
 
-impl FmtLabels for Dst {
+impl FmtLabels for dst::DstAddr {
     fn fmt_labels(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "dst=\"{}\"", self.0)
+        match self.direction() {
+            dst::Direction::In => Direction::In.fmt_labels(f)?,
+            dst::Direction::Out => Direction::Out.fmt_labels(f)?,
+        }
+
+        write!(f, ",dst=\"{}\"", self.as_ref())
     }
 }
 

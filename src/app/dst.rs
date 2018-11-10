@@ -6,14 +6,23 @@ use {Addr, NameAddr};
 
 use super::classify;
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Direction {
+    In,
+    Out,
+}
+
 #[derive(Clone, Debug)]
 pub struct Route {
-    pub dst_addr: Addr,
+    pub dst_addr: DstAddr,
     pub route: profiles::Route,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct DstAddr(Addr);
+pub struct DstAddr {
+    addr: Addr,
+    direction: Direction,
+}
 
 // === impl Route ===
 
@@ -29,13 +38,21 @@ impl CanClassify for Route {
 
 impl AsRef<Addr> for DstAddr {
     fn as_ref(&self) -> &Addr {
-        &self.0
+        &self.addr
     }
 }
 
-impl From<Addr> for DstAddr {
-    fn from(addr: Addr) -> Self {
-        DstAddr(addr)
+impl DstAddr {
+    pub fn outbound(addr: Addr) -> Self {
+        DstAddr { addr, direction: Direction::Out }
+    }
+
+    pub fn inbound(addr: Addr) -> Self {
+        DstAddr { addr, direction: Direction::In }
+    }
+
+    pub fn direction(&self) -> Direction {
+        self.direction
     }
 }
 
@@ -48,13 +65,13 @@ impl<'t> From<&'t DstAddr> for http::header::HeaderValue {
 
 impl fmt::Display for DstAddr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.0.fmt(f)
+        self.addr.fmt(f)
     }
 }
 
 impl profiles::CanGetDestination for DstAddr {
     fn get_destination(&self) -> Option<&NameAddr> {
-        self.0.name_addr()
+        self.addr.name_addr()
     }
 }
 
@@ -63,7 +80,7 @@ impl profiles::WithRoute for DstAddr {
 
     fn with_route(self, route: profiles::Route) -> Self::Output {
         Route {
-            dst_addr: self.0,
+            dst_addr: self,
             route,
         }
     }
