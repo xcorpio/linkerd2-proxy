@@ -161,9 +161,8 @@ mod tests {
     use http;
     use std::net;
 
-    use super::{Endpoint, Recognize};
-    use proxy::http::router::Recognize as _Recognize;
-    use proxy::http::settings::Settings;
+    use super::{Endpoint, RecognizeEndpoint};
+    use proxy::http::router::Recognize;
     use proxy::server::Source;
     use transport::tls;
     use Conditional;
@@ -192,7 +191,7 @@ mod tests {
             let mut req = http::Request::new(());
             req.extensions_mut().insert(src);
 
-            Recognize::default().recognize(&req) == rec
+            RecognizeEndpoint::default().recognize(&req) == rec
         }
 
         fn recognize_default_no_orig_dst(
@@ -204,12 +203,12 @@ mod tests {
             req.extensions_mut()
                 .insert(Source::for_test(remote, local, None, TLS_DISABLED));
 
-            Recognize::new(default).recognize(&req) == default.map(make_h1_endpoint)
+            RecognizeEndpoint::new(default).recognize(&req) == default.map(make_h1_endpoint)
         }
 
         fn recognize_default_no_ctx(default: Option<net::SocketAddr>) -> bool {
             let req = http::Request::new(());
-            Recognize::new(default).recognize(&req) == default.map(make_h1_endpoint)
+            RecognizeEndpoint::new(default).recognize(&req) == default.map(make_h1_endpoint)
         }
 
         fn recognize_default_no_loop(
@@ -221,7 +220,7 @@ mod tests {
             req.extensions_mut()
                 .insert(Source::for_test(remote, local, Some(local), TLS_DISABLED));
 
-            Recognize::new(default).recognize(&req) == default.map(make_h1_endpoint)
+            RecognizeEndpoint::new(default).recognize(&req) == default.map(make_h1_endpoint)
         }
     }
 }

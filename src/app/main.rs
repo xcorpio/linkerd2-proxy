@@ -21,7 +21,8 @@ use metrics::{self, FmtMetrics};
 use proxy::{
     self, buffer,
     http::{
-        client, insert_target, metrics::timestamp_request_open, normalize_uri, profiles, router, settings,
+        client, insert_target, metrics::timestamp_request_open, normalize_uri, profiles, router,
+        settings,
     },
     limit, reconnect, timeout,
 };
@@ -433,16 +434,20 @@ where
                             .push(metrics::layer::<_, classify::Response>(route_http_metrics))
                             .push(classify::layer()),
                     ))
-                    .push(insert_target::layer())
                     .push(buffer::layer())
                     .push(limit::layer(MAX_IN_FLIGHT))
+                    .push(insert_target::layer())
                     .push(router::layer(|req: &http::Request<_>| {
-                        req.headers()
+                        let canonical = req
+                            .headers()
                             .get(super::CANONICAL_DST_HEADER)
                             .and_then(|dst| dst.to_str().ok())
-                            .and_then(|d| Addr::from_str(d).ok())
-                            .or_else(|| super::http_request_addr(req).ok())
-                            .map(DstAddr::from)
+                            .and_then(|d| Addr::from_str(d).ok());
+                        info!("inbound canonical={:?}", canonical);
+
+                        let dst = canonical.or_else(|| super::http_request_addr(req).ok());
+                        info!("inbound dst={:?}", dst);
+                        dst.map(DstAddr::from)
                     }))
                     .make(&router::Config::new(
                         "in dst",
