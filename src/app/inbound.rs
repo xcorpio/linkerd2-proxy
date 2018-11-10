@@ -7,7 +7,7 @@ use proxy::http::{client, router, Settings};
 use proxy::server::Source;
 use tap;
 use transport::{connect, tls};
-use {Conditional, NameAddr};
+use {Addr, Conditional, NameAddr};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Endpoint {
@@ -87,10 +87,15 @@ impl<A> router::Recognize<http::Request<A>> for Recognize {
             .and_then(|s| s.orig_dst_if_not_local())
             .or(self.default_addr)?;
 
-        let dst_name = super::http_request_addr(req)
-            .ok()
-            .and_then(|h| h.into_name_addr());
         let settings = Settings::from_request(req);
+
+        let dst_name = req
+            .headers()
+            .get(super::CANONICAL_DST_HEADER)
+            .and_then(|dst| dst.to_str().ok())
+            .and_then(|d| Addr::from_str(d).ok())
+            .or_else(|| super::http_request_addr(req).ok())
+            .and_then(|a| a.into_name_addr());
 
         let ep = Endpoint {
             addr,

@@ -14,6 +14,8 @@ mod profiles;
 pub use self::main::Main;
 use addr::{self, Addr};
 
+const CANONICAL_DST_HEADER: &'static str = "l5d-dst-canonical";
+
 pub fn init() -> Result<config::Config, config::Error> {
     use convert::TryFrom;
     use logging;

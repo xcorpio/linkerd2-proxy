@@ -30,23 +30,29 @@ pub enum Error {
 // === impl Addr ===
 
 impl Addr {
-    pub fn new(host: &str, port: u16) -> Result<Self, Error> {
+    pub fn from_str(hostport: &str) -> Result<Self, Error> {
+        SocketAddr::from_str(hostport)
+            .map(Addr::Socket)
+            .or_else(|_| NameAddr::from_str(hostport).map(Addr::Name))
+    }
+
+    pub fn from_str_and_port(host: &str, port: u16) -> Result<Self, Error> {
         IpAddr::from_str(host)
             .map(|ip| Addr::Socket((ip, port).into()))
-            .or_else(|_| NameAddr::parse(host, port).map(Addr::Name))
+            .or_else(|_| NameAddr::from_str_and_port(host, port).map(Addr::Name))
     }
 
     pub fn from_authority_and_default_port(
         a: &http::uri::Authority,
         default_port: u16,
     ) -> Result<Self, Error> {
-        Self::new(a.host(), a.port().unwrap_or(default_port))
+        Self::from_str_and_port(a.host(), a.port().unwrap_or(default_port))
     }
 
     pub fn from_authority_with_port(a: &http::uri::Authority) -> Result<Self, Error> {
         a.port()
             .ok_or(Error::MissingPort)
-            .and_then(|p| Self::new(a.host(), p))
+            .and_then(|p| Self::from_str_and_port(a.host(), p))
     }
 
     pub fn port(&self) -> u16 {
@@ -115,7 +121,17 @@ impl NameAddr {
         NameAddr { name, port }
     }
 
-    pub fn parse(host: &str, port: u16) -> Result<Self, Error> {
+    pub fn from_str(hostport: &str) -> Result<Self, Error> {
+        let mut parts = hostport.rsplitn(2, ':');
+        let port = parts
+            .next()
+            .and_then(|p| p.parse::<u16>().ok())
+            .ok_or(Error::MissingPort)?;
+        let host = parts.next().ok_or(Error::InvalidHost)?;
+        Self::from_str_and_port(host, port)
+    }
+
+    pub fn from_str_and_port(host: &str, port: u16) -> Result<Self, Error> {
         if host.is_empty() {
             return Err(Error::InvalidHost);
         }
@@ -129,13 +145,13 @@ impl NameAddr {
         a: &http::uri::Authority,
         default_port: u16,
     ) -> Result<Self, Error> {
-        Self::parse(a.host(), a.port().unwrap_or(default_port))
+        Self::from_str_and_port(a.host(), a.port().unwrap_or(default_port))
     }
 
     pub fn from_authority_with_port(a: &http::uri::Authority) -> Result<Self, Error> {
         a.port()
             .ok_or(Error::MissingPort)
-            .and_then(|p| Self::parse(a.host(), p))
+            .and_then(|p| Self::from_str_and_port(a.host(), p))
     }
 
     pub fn name(&self) -> &Name {
