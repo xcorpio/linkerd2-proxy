@@ -7,7 +7,6 @@ use tokio_timer::clock;
 
 use metrics::{latency, Counter, FmtLabels, Histogram};
 
-mod class;
 mod report;
 mod service;
 pub mod timestamp_request_open;

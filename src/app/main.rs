@@ -328,7 +328,11 @@ where
                     .push(buffer::layer())
                     .push(header_from_target::layer(super::CANONICAL_DST_HEADER))
                     .push(router::layer(|req: &http::Request<_>| {
-                        let addr = req.extensions().get::<Addr>().cloned().map(DstAddr::outbound);
+                        let addr = req
+                            .extensions()
+                            .get::<Addr>()
+                            .cloned()
+                            .map(DstAddr::outbound);
                         debug!("outbound dst={:?}", addr);
                         addr
                     }))
