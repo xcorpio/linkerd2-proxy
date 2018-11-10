@@ -158,30 +158,6 @@ impl NameAddr {
 
 impl fmt::Display for NameAddr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}:{}", self.name, self.port)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use http::uri::Authority;
-
-    #[test]
-    fn test_is_loopback() {
-        let cases = &[
-            ("localhost", false), // Not absolute
-            ("localhost.", true),
-            ("LocalhOsT.", true),   // Case-insensitive
-            ("mlocalhost.", false), // prefixed
-            ("localhost1.", false), // suffixed
-            ("127.0.0.1", true),    // IPv4
-            ("[::1]", true),        // IPv6
-        ];
-        for (host, expected_result) in cases {
-            let authority = Authority::from_static(host);
-            let hp = Addr::from_authority_and_default_port(&authority, 80).unwrap();
-            assert_eq!(hp.is_loopback(), *expected_result, "{:?}", host)
-        }
+        write!(f, "{}:{}", self.name.without_trailing_dot(), self.port)
     }
 }

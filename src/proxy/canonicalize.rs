@@ -56,6 +56,8 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_millis(200);
 
 // === Layer ===
 
+// FIXME the resolver should be abstracted to a trait so that this can be tested
+// without a real DNS service.
 pub fn layer(resolver: dns::Resolver) -> Layer {
     Layer {
         resolver,
@@ -171,13 +173,11 @@ where
 
                         let valid_until = e
                             .into_inner()
-                            .and_then(|e| {
-                                match e.kind() {
-                                    dns::ResolveErrorKind::NoRecordsFound {
-                                        valid_until, ..
-                                    } => *valid_until,
-                                    _ => None,
+                            .and_then(|e| match e.kind() {
+                                dns::ResolveErrorKind::NoRecordsFound { valid_until, .. } => {
+                                    *valid_until
                                 }
+                                _ => None,
                             })
                             .unwrap_or_else(|| clock::now() + DNS_ERROR_TTL);
 
