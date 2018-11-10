@@ -3,6 +3,7 @@ pub mod classify;
 pub mod client;
 pub(super) mod glue;
 pub mod h1;
+pub mod header_from_target;
 pub mod insert_target;
 pub mod metrics;
 pub mod normalize_uri;

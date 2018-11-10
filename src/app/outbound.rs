@@ -124,6 +124,13 @@ impl From<Addr> for DstAddr {
     }
 }
 
+impl<'t> From<&'t DstAddr> for http::header::HeaderValue {
+    fn from(a: &'t DstAddr) -> Self {
+        http::header::HeaderValue::from_str(&format!("{}", a))
+            .expect("addr must be a valid header")
+    }
+}
+
 impl fmt::Display for DstAddr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.0.fmt(f)

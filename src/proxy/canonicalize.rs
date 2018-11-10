@@ -14,9 +14,13 @@ use dns;
 use svc;
 use {Addr, NameAddr};
 
-// Duration to wait before polling DNS again after an error (or a NXDOMAIN
-// response with no TTL).
-const DNS_ERROR_TTL: Duration = Duration::from_secs(5);
+/// The amount of time to wait for a DNS query to succeed before falling back to
+/// an uncanonicalized address.
+const DEFAULT_TIMEOUT: Duration = Duration::from_millis(100);
+
+/// Duration to wait before polling DNS again after an error (or a NXDOMAIN
+/// response with no TTL).
+const DNS_ERROR_TTL: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone)]
 pub struct Layer {
@@ -51,8 +55,6 @@ pub enum Error<M, S> {
     Stack(M),
     Service(S),
 }
-
-const DEFAULT_TIMEOUT: Duration = Duration::from_millis(200);
 
 // === Layer ===
 

@@ -76,7 +76,8 @@ where
         let control_listener = BoundPort::new(
             config.control_listener.addr,
             Conditional::None(tls::ReasonForNoIdentity::NotImplementedForTap.into()),
-        ).expect("controller listener bind");
+        )
+        .expect("controller listener bind");
 
         let inbound_listener = {
             let tls = config.tls_settings.as_ref().and_then(|settings| {
@@ -94,7 +95,8 @@ where
         let outbound_listener = BoundPort::new(
             config.outbound_listener.addr,
             Conditional::None(tls::ReasonForNoTls::InternalTraffic),
-        ).expect("private listener bind");
+        )
+        .expect("private listener bind");
 
         let runtime = runtime.into();
 
@@ -102,7 +104,8 @@ where
         let metrics_listener = BoundPort::new(
             config.metrics_listener.addr,
             Conditional::None(tls::ReasonForNoIdentity::NotImplementedForMetrics.into()),
-        ).expect("metrics listener bind");
+        )
+        .expect("metrics listener bind");
 
         Main {
             config,
@@ -265,13 +268,11 @@ where
                 .expect("admin thread must receive resolver task");
 
             let outbound = {
-                use super::outbound::{
-                    discovery::Resolve, orig_proto_upgrade, DstAddr, Endpoint,
-                };
+                use super::outbound::{discovery::Resolve, orig_proto_upgrade, DstAddr, Endpoint};
                 use super::profiles::Client as ProfilesClient;
                 use proxy::{
                     canonicalize,
-                    http::{balance, metrics, profiles, settings},
+                    http::{balance, header_from_target, metrics, profiles, settings},
                     resolve,
                 };
 
@@ -319,9 +320,10 @@ where
                             .push(classify::layer()),
                     ))
                     .push(buffer::layer())
+                    .push(header_from_target::layer("l5d-dst-canonical"))
                     .push(router::layer(|req: &http::Request<_>| {
                         let addr = req.extensions().get::<Addr>().cloned().map(DstAddr::from);
-                        debug!("outbonud dst={:?}", addr);
+                        debug!("outbound dst={:?}", addr);
                         addr
                     }))
                     .make(&router::Config::new(
@@ -368,7 +370,8 @@ where
                     config.outbound_ports_disable_protocol_detection,
                     get_original_dst.clone(),
                     drain_rx.clone(),
-                ).map_err(|e| error!("outbound proxy background task failed: {}", e))
+                )
+                .map_err(|e| error!("outbound proxy background task failed: {}", e))
             };
 
             let inbound = {
@@ -440,7 +443,8 @@ where
                     config.inbound_ports_disable_protocol_detection,
                     get_original_dst.clone(),
                     drain_rx.clone(),
-                ).map_err(|e| error!("inbound proxy background task failed: {}", e))
+                )
+                .map_err(|e| error!("inbound proxy background task failed: {}", e))
             };
 
             inbound.join(outbound).map(|_| {})
