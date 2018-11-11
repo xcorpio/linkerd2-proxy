@@ -45,6 +45,12 @@ pub type IpAddrListFuture = Box<Future<Item = Response, Error = ResolveError> + 
 /// valid certificate.
 pub type Name = tls::DnsName;
 
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub enum Suffix {
+    Root, // The `.` suffix.
+    Name(Name),
+}
+
 struct Ctx(Name);
 
 pub struct Refine {
@@ -55,6 +61,21 @@ pub struct Refine {
 impl fmt::Display for Ctx {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(f, "dns={}", self.0)
+    }
+}
+
+impl fmt::Display for Suffix {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Suffix::Root => write!(f, "."),
+            Suffix::Name(n) => n.fmt(f),
+        }
+    }
+}
+
+impl From<Name> for Suffix {
+    fn from(n: Name) -> Self {
+        Suffix::Name(n)
     }
 }
 
