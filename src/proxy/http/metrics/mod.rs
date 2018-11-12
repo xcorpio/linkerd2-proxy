@@ -74,7 +74,10 @@ where
     C: Hash + Eq,
 {
     fn retain_since(&mut self, epoch: Instant) {
-        self.by_target.retain(|_, m| m.lock().map(|m| m.last_update >= epoch).unwrap_or(false))
+        self.by_target.retain(|_, m| {
+            Arc::strong_count(m) > 1 ||
+                m.lock().map(|m| m.last_update >= epoch).unwrap_or(false)
+        })
     }
 }
 
