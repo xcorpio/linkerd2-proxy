@@ -79,6 +79,39 @@ impl From<Name> for Suffix {
     }
 }
 
+impl<'s> TryFrom<&'s str> for Suffix {
+    type Err = <Name as TryFrom<&'s [u8]>>::Err;
+    fn try_from(s: &str) -> Result<Self, Self::Err> {
+        if s == "." {
+            Ok(Suffix::Root)
+        } else {
+            Name::try_from(s.as_bytes()).map(|n| n.into())
+        }
+    }
+}
+
+impl Suffix {
+    pub fn contains(&self, name: &Name) -> bool {
+        match self {
+            Suffix::Root => true,
+            Suffix::Name(ref sfx) => {
+                let name = name.without_trailing_dot();
+                let sfx = sfx.without_trailing_dot();
+                name.ends_with(sfx) && {
+                    name.len() == sfx.len() || {
+                        // foo.bar.bah (11)
+                        // bar.bah (7)
+                        let idx = name.len() - sfx.len();
+                        let (hd, _) = name.split_at(idx);
+                        hd.ends_with('.')
+                    }
+                }
+
+            }
+        }
+    }
+}
+
 impl Resolver {
 
     /// Construct a new `Resolver` from environment variables and system
@@ -192,14 +225,14 @@ impl Future for RefineFuture {
 
 #[cfg(test)]
 mod tests {
-    use super::Name;
+    use super::{Name, Suffix};
+    use convert::TryFrom;
 
     #[test]
     fn test_dns_name_parsing() {
         // Stack sure `dns::Name`'s validation isn't too strict. It is
         // implemented in terms of `webpki::DNSName` which has many more tests
         // at https://github.com/briansmith/webpki/blob/master/tests/dns_name_tests.rs.
-        use convert::TryFrom;
 
         struct Case {
             input: &'static str,
@@ -239,5 +272,41 @@ mod tests {
         for case in INVALID {
             assert!(Name::try_from(case.as_bytes()).is_err());
         }
+    }
+
+    #[test]
+    fn suffix_valid() {
+        for (name, suffix) in &[
+            ("a", "."),
+            ("a.", "."),
+            ("a.b", "."),
+            ("a.b.", "."),
+            ("b.c", "b.c"),
+            ("b.c", "b.c"),
+            ("a.b.c", "b.c"),
+            ("a.b.c", "b.c."),
+            ("a.b.c.", "b.c"),
+            ("hacker.example.com", "example.com"),
+        ] {
+            let n = Name::try_from(name.as_bytes()).unwrap();
+            let s = Suffix::try_from(suffix).unwrap();
+            assert!(s.contains(&n), format!("{} should contain {}", suffix, name));
+        }
+    }
+
+    #[test]
+    fn suffix_invalid() {
+        for (name, suffix) in &[
+            ("a", "b"),
+            ("b", "a.b"),
+            ("b.a", "b"),
+            ("hackerexample.com", "example.com"),
+        ] {
+            let n = Name::try_from(name.as_bytes()).unwrap();
+            let s = Suffix::try_from(suffix).unwrap();
+            assert!(!s.contains(&n), format!("{} should not contain {}", suffix, name));
+        }
+
+        assert!(Suffix::try_from("").is_err(), "suffix must not be empty");
     }
 }
