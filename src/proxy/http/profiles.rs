@@ -307,6 +307,7 @@ pub mod router {
                         debug!("fetching routes for {:?}", dst);
                         self.get_routes.get_routes(&dst)
                     } else {
+                        debug!("skipping route discovery for dst={:?}", dst);
                         None
                     }
                 }
@@ -374,10 +375,12 @@ pub mod router {
         fn call(&mut self, req: Self::Request) -> Self::Future {
             for (ref condition, ref mut service) in &mut self.routes {
                 if condition.is_match(&req) {
+                    trace!("using configured route: {:?}", condition);
                     return service.call(req);
                 }
             }
 
+            trace!("using default route");
             self.default_route.call(req)
         }
     }

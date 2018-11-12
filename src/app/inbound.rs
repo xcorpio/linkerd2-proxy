@@ -78,6 +78,7 @@ impl<A> router::Recognize<http::Request<A>> for RecognizeEndpoint {
 
     fn recognize(&self, req: &http::Request<A>) -> Option<Self::Target> {
         let src = req.extensions().get::<Source>();
+        debug!("inbound endpoint: src={:?}", src);
         let addr = src
             .and_then(|s| s.orig_dst_if_not_local())
             .or(self.default_addr)?;
@@ -91,14 +92,13 @@ impl<A> router::Recognize<http::Request<A>> for RecognizeEndpoint {
             .get::<DstAddr>()
             .and_then(|a| a.as_ref().name_addr())
             .cloned();
+        debug!("inbound endpoint: dst={:?}", dst_name);
 
-        let ep = Endpoint {
+        Some(Endpoint {
             addr,
             dst_name,
             source_tls_status,
-        };
-        debug!("recognize: src={:?} ep={:?}", src, ep);
-        Some(ep)
+        })
     }
 }
 
