@@ -265,6 +265,7 @@ where
                 controller.clone(),
                 dns_resolver.clone(),
                 config.namespaces.clone(),
+                config.destination_get_suffixes,
                 config.destination_concurrency_limit,
             );
             resolver_bg_tx
@@ -320,6 +321,7 @@ where
                     .push(balance::layer())
                     .push(buffer::layer())
                     .push(profiles::router::layer(
+                        config.destination_profile_suffixes.clone(),
                         profiles_client,
                         svc::stack::phantom_data::layer()
                             .push(metrics::layer::<_, classify::Response>(route_http_metrics))
@@ -433,6 +435,7 @@ where
                     .push(svc::stack::phantom_data::layer())
                     .push(buffer::layer())
                     .push(profiles::router::layer(
+                        config.destination_profile_suffixes,
                         profiles_client.clone(),
                         svc::stack::phantom_data::layer()
                             .push(metrics::layer::<_, classify::Response>(route_http_metrics))
