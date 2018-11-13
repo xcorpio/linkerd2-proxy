@@ -371,10 +371,7 @@ impl NewQuery {
             Some(client) => {
                 let req = GetDestination {
                     scheme: "k8s".into(),
-                    path: match dst.port() {
-                        80 => dst.name().as_ref().to_owned(),
-                        pt => format!("{}:{}", dst.name(), pt),
-                    },
+                    path: format!("{}", dst),
                 };
                 let mut svc = Destination::new(client.lift_ref());
                 let response = svc.get(grpc::Request::new(req));

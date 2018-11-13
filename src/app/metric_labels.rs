@@ -123,9 +123,10 @@ impl FmtLabels for Direction {
 
 impl<'a> FmtLabels for Authority<'a> {
     fn fmt_labels(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self.0.port() {
-            80 => write!(f, "authority=\"{}\"", self.0.name().without_trailing_dot()),
-            _ => write!(f, "authority=\"{}\"", self.0),
+        if self.0.port() == 80 {
+            write!(f, "authority=\"{}\"", self.0.name().without_trailing_dot())
+        } else {
+            write!(f, "authority=\"{}\"", self.0)
         }
     }
 }
