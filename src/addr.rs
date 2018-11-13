@@ -178,3 +178,26 @@ impl fmt::Display for NameAddr {
         write!(f, "{}:{}", self.name.without_trailing_dot(), self.port)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use http::uri::Authority;
+
+    #[test]
+    fn test_is_loopback() {
+        let cases = &[
+            ("localhost:80", false), // Not absolute
+            ("localhost.:80", true),
+            ("LocalhOsT.:80", true),   // Case-insensitive
+            ("mlocalhost.:80", false), // prefixed
+            ("localhost1.:80", false), // suffixed
+            ("127.0.0.1:80", true),    // IPv4
+            ("[::1]:80", true),        // IPv6
+        ];
+        for (host, expected_result) in cases {
+            let a = Addr::from_str(host).unwrap();
+            assert_eq!(a.is_loopback(), *expected_result, "{:?}", host)
+        }
+    }
+}
