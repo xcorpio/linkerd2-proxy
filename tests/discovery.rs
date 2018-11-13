@@ -21,7 +21,7 @@ macro_rules! generate_outbound_dns_limit_test {
 
             let ctrl = controller::new();
             let _txs = (1..=3).map(|n| {
-                let disco_n = format!("disco{}.test.svc.cluster.local", n);
+                let disco_n = format!("disco{}.test.svc.cluster.local:80", n);
                 let tx = ctrl.destination_tx(&disco_n);
                 tx.send_addr(srv_addr);
                 tx // This will go into a vec, to keep the stream open.
@@ -35,7 +35,7 @@ macro_rules! generate_outbound_dns_limit_test {
             // Make two requests that go through service discovery, to reach the
             // maximum number of Destination resolutions.
             for n in 1..=2 {
-                let route = format!("disco{}.test.svc.cluster.local", n);
+                let route = format!("disco{}.test.svc.cluster.local:80", n);
                 let client = $make_client(proxy.outbound, route);
                 println!("trying {}th destination...", n);
                 assert_eq!(client.get("/"), "hello");
@@ -46,7 +46,7 @@ macro_rules! generate_outbound_dns_limit_test {
             // route cache capacity, so we won't start evicting inactive
             // routes yet, and their Destination resolutions will remain
             // active.
-            let client = $make_client(proxy.outbound, "disco3.test.svc.cluster.local");
+            let client = $make_client(proxy.outbound, "disco3.test.svc.cluster.local:80");
             println!("trying 3rd destination...");
             let mut req = client.request_builder("/");
             let rsp = client.request(req.method("GET"));
@@ -76,10 +76,10 @@ macro_rules! generate_tests {
             let srv = $make_server().route("/", "hello").route("/bye", "bye").run();
 
             let ctrl = controller::new()
-                .destination_and_close("disco.test.svc.cluster.local", srv.addr);
+                .destination_and_close("disco.test.svc.cluster.local:80", srv.addr);
 
             let proxy = proxy::new().controller(ctrl.run()).outbound(srv).run();
-            let client = $make_client(proxy.outbound, "disco.test.svc.cluster.local");
+            let client = $make_client(proxy.outbound, "disco.test.svc.cluster.local:80");
 
             assert_eq!(client.get("/"), "hello");
             assert_eq!(client.get("/bye"), "bye");
@@ -103,7 +103,7 @@ macro_rules! generate_tests {
 
             let ctrl = controller::new();
             let _txs = (1..=11).map(|n| {
-                let disco_n = format!("disco{}.test.svc.cluster.local", n);
+                let disco_n = format!("disco{}.test.svc.cluster.local:80", n);
                 let tx = ctrl.destination_tx(&disco_n);
                 tx.send_addr(srv_addr);
                 tx // This will go into a vec, to keep the stream open.
@@ -117,7 +117,7 @@ macro_rules! generate_tests {
             // Make ten requests that go through service discovery, to reach the
             // maximum number of Destination resolutions.
             for n in 1..=10 {
-                let route = format!("disco{}.test.svc.cluster.local", n);
+                let route = format!("disco{}.test.svc.cluster.local:80", n);
                 let client = $make_client(proxy.outbound, route);
                 println!("trying {}th destination...", n);
                 assert_eq!(client.get("/"), "hello");
@@ -128,7 +128,7 @@ macro_rules! generate_tests {
             // route cache capacity, so we won't start evicting inactive
             // routes yet, and their Destination resolutions will remain
             // active.
-            let client = $make_client(proxy.outbound, "disco11.test.svc.cluster.local");
+            let client = $make_client(proxy.outbound, "disco11.test.svc.cluster.local:80");
             println!("trying 11th destination...");
             let mut req = client.request_builder("/");
             let rsp = client.request(req.method("GET"));
@@ -153,7 +153,7 @@ macro_rules! generate_tests {
             // should drop their Destination resolutions, so we should now be
             // able to open a new one.
             println!("trying 11th destination again...");
-            let client = $make_client(proxy.outbound, "disco11.test.svc.cluster.local");
+            let client = $make_client(proxy.outbound, "disco11.test.svc.cluster.local:80");
             assert_eq!(client.get("/"), "hello");
         }
 
@@ -164,11 +164,11 @@ macro_rules! generate_tests {
             let srv = $make_server().route("/recon", "nect").run();
 
             let ctrl = controller::new()
-                .destination_close("disco.test.svc.cluster.local")
-                .destination_and_close("disco.test.svc.cluster.local", srv.addr);
+                .destination_close("disco.test.svc.cluster.local:80")
+                .destination_and_close("disco.test.svc.cluster.local:80", srv.addr);
 
             let proxy = proxy::new().controller(ctrl.run()).outbound(srv).run();
-            let client = $make_client(proxy.outbound, "disco.test.svc.cluster.local");
+            let client = $make_client(proxy.outbound, "disco.test.svc.cluster.local:80");
 
             assert_eq!(client.get("/recon"), "nect");
         }
@@ -209,10 +209,10 @@ macro_rules! generate_tests {
             let srv = $make_server().route("/", "hello").run();
             let ctrl = controller::new();
 
-            let dst_tx0 = ctrl.destination_tx("initially-exists.ns.svc.cluster.local");
+            let dst_tx0 = ctrl.destination_tx("initially-exists.ns.svc.cluster.local:80");
             dst_tx0.send_addr(srv.addr);
 
-            let dst_tx1 = ctrl.destination_tx("initially-exists.ns.svc.cluster.local");
+            let dst_tx1 = ctrl.destination_tx("initially-exists.ns.svc.cluster.local:80");
 
             let proxy = proxy::new()
                 .controller(ctrl.run())
@@ -220,7 +220,7 @@ macro_rules! generate_tests {
                 .run_with_test_env(env);
 
             let initially_exists =
-                $make_client(proxy.outbound, "initially-exists.ns.svc.cluster.local");
+                $make_client(proxy.outbound, "initially-exists.ns.svc.cluster.local:80");
             assert_eq!(initially_exists.get("/"), "hello");
 
             drop(dst_tx0); // trigger reconnect
@@ -252,14 +252,14 @@ macro_rules! generate_tests {
             let ctrl = controller::new();
 
             // when the proxy requests the destination, don't respond.
-            let _dst_tx = ctrl.destination_tx("disco.test.svc.cluster.local");
+            let _dst_tx = ctrl.destination_tx("disco.test.svc.cluster.local:80");
 
             let proxy = proxy::new()
                 .controller(ctrl.run())
                 .outbound(srv)
                 .run_with_test_env(env);
 
-            let client = $make_client(proxy.outbound, "disco.test.svc.cluster.local");
+            let client = $make_client(proxy.outbound, "disco.test.svc.cluster.local:80");
             let mut req = client.request_builder("/");
             let rsp = client.request(req.method("GET"));
             // the request should time out
@@ -276,14 +276,14 @@ macro_rules! generate_tests {
                 .run();
 
             let ctrl = controller::new()
-                .destination_and_close("disco.test.svc.cluster.local", srv.addr);
+                .destination_and_close("disco.test.svc.cluster.local:80", srv.addr);
 
             let proxy = proxy::new()
                 .controller(ctrl.run())
                 // don't set srv as outbound(), so that SO_ORIGINAL_DST isn't
                 // used as a backup
                 .run();
-            let client = $make_client(proxy.outbound, "disco.test.svc.cluster.local");
+            let client = $make_client(proxy.outbound, "disco.test.svc.cluster.local:80");
 
             assert_eq!(client.get("/"), "hello");
             assert_eq!(client.get("/bye"), "bye");
@@ -302,7 +302,7 @@ macro_rules! generate_tests {
 
             let ctrl = controller::new();
 
-            let dst_tx = ctrl.destination_tx("disco.test.svc.cluster.local");
+            let dst_tx = ctrl.destination_tx("disco.test.svc.cluster.local:80");
             dst_tx.send_addr(srv.addr);
             // but don't drop, to not trigger stream closing reconnects
 
@@ -325,7 +325,7 @@ macro_rules! generate_tests {
             drop(tx);
             ::std::thread::sleep(Duration::from_millis(500));
 
-            let client = $make_client(proxy.outbound, "disco.test.svc.cluster.local");
+            let client = $make_client(proxy.outbound, "disco.test.svc.cluster.local:80");
 
             assert_eq!(client.get("/"), "hello");
         }
@@ -372,7 +372,7 @@ fn outbound_updates_newer_services() {
     let srv = server::http1().route("/h1", "hello h1").run();
 
     let ctrl = controller::new()
-        .destination_and_close("disco.test.svc.cluster.local", srv.addr);
+        .destination_and_close("disco.test.svc.cluster.local:80", srv.addr);
 
     let proxy = proxy::new()
         .controller(ctrl.run())
@@ -381,7 +381,7 @@ fn outbound_updates_newer_services() {
 
     // the HTTP2 service starts watching first, receiving an addr
     // from the controller
-    let client1 = client::http2(proxy.outbound, "disco.test.svc.cluster.local");
+    let client1 = client::http2(proxy.outbound, "disco.test.svc.cluster.local:80");
 
     // Depending on the version of `hyper` we're using, protocol upgrades may or
     // may not be supported yet, so this may have a response status of either 200
@@ -393,7 +393,7 @@ fn outbound_updates_newer_services() {
     // a new HTTP1 service needs to be build now, while the HTTP2
     // service already exists, so make sure previously sent addrs
     // get into the newer service
-    let client2 = client::http1(proxy.outbound, "disco.test.svc.cluster.local");
+    let client2 = client::http1(proxy.outbound, "disco.test.svc.cluster.local:80");
     assert_eq!(client2.get("/h1"), "hello h1");
 }
 
@@ -416,14 +416,14 @@ mod proxy_to_proxy {
             .run();
 
         let ctrl = controller::new();
-        let dst = ctrl.destination_tx("disco.test.svc.cluster.local");
+        let dst = ctrl.destination_tx("disco.test.svc.cluster.local:80");
         dst.send_h2_hinted(srv.addr);
 
         let proxy = proxy::new()
             .controller(ctrl.run())
             .run();
 
-        let client = client::http1(proxy.outbound, "disco.test.svc.cluster.local");
+        let client = client::http1(proxy.outbound, "disco.test.svc.cluster.local:80");
 
         let res = client.request(&mut client.request_builder("/hint"));
         assert_eq!(res.status(), 200);
@@ -454,7 +454,7 @@ mod proxy_to_proxy {
             .run();
 
         // This client will be used as a mocked-other-proxy.
-        let client = client::http2(proxy.inbound, "disco.test.svc.cluster.local");
+        let client = client::http2(proxy.inbound, "disco.test.svc.cluster.local:80");
 
         let res = client.request(
             client

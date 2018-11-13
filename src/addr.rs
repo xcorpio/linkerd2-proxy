@@ -167,7 +167,7 @@ impl NameAddr {
     }
 
     pub fn as_authority(&self) -> http::uri::Authority {
-        http::uri::Authority::from_str(self.name.as_ref())
+        http::uri::Authority::from_str(&format!("{}", self))
             .expect("NameAddr must be valid authority")
     }
 }
