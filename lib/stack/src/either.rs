@@ -34,12 +34,12 @@ where
     M: super::Stack<T, Error = N::Error>,
 {
     type Value = Either<N::Value, M::Value>;
-    type Error = N::Error;
+    type Error = Either<N::Error, M::Error>;
 
     fn make(&self, target: &T) -> Result<Self::Value, Self::Error> {
         match self {
-            Either::A(ref a) => a.make(target).map(Either::A),
-            Either::B(ref b) => b.make(target).map(Either::B),
+            Either::A(ref a) => a.make(target).map(Either::A).map_err(Either::A),
+            Either::B(ref b) => b.make(target).map(Either::B).map_err(Either::B),
         }
     }
 }
