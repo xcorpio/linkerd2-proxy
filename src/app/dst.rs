@@ -1,7 +1,7 @@
 use http;
 use std::fmt;
 
-use proxy::http::{classify::CanClassify, profiles};
+use proxy::http::{metrics::classify::CanClassify, profiles};
 use {Addr, NameAddr};
 
 use super::classify;

@@ -103,9 +103,7 @@ pub mod discovery {
 
         fn resolve(&self, dst: &DstAddr) -> Self::Resolution {
             match dst.as_ref() {
-                Addr::Name(ref name) => {
-                    Resolution::Name(name.clone(), self.0.resolve(&name))
-                }
+                Addr::Name(ref name) => Resolution::Name(name.clone(), self.0.resolve(&name)),
                 Addr::Socket(ref addr) => Resolution::Addr(Some(*addr)),
             }
         }

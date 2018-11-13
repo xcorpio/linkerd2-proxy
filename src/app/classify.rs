@@ -1,8 +1,8 @@
 use h2;
 use http;
 
-pub use proxy::http::classify::{layer, CanClassify};
-use proxy::http::{classify, profiles};
+pub use proxy::http::metrics::classify::{self, layer, CanClassify};
+use proxy::http::profiles;
 
 #[derive(Clone, Debug)]
 pub enum Request {
@@ -193,7 +193,7 @@ mod tests {
     use http::{HeaderMap, Response, StatusCode};
 
     use super::{Class, SuccessOrFailure};
-    use proxy::http::classify::{ClassifyEos as _CE, ClassifyResponse as _CR};
+    use proxy::http::metrics::classify::{ClassifyEos as _CE, ClassifyResponse as _CR};
 
     #[test]
     fn http_response_status_ok() {
@@ -265,12 +265,12 @@ mod tests {
     }
 
     #[test]
-    fn profile_without_response_match() {
+    fn profile_without_response_match_falls_back_to_grpc() {
         let rsp = Response::builder().status(StatusCode::OK).body(()).unwrap();
         let mut trailers = HeaderMap::new();
         trailers.insert("grpc-status", 3.into());
 
-        let class = super::Response::Grpc.start(&rsp).eos(Some(&trailers));
+        let class = super::Response::Profile(Default::default()).start(&rsp).eos(Some(&trailers));
         assert_eq!(class, Class::Grpc(SuccessOrFailure::Failure, 3));
     }
 }
