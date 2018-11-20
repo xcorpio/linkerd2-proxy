@@ -11,7 +11,7 @@ use api::tap::observe_request;
 use convert::TryFrom;
 
 #[derive(Clone, Debug)]
-pub(super) enum Match {
+pub enum Match {
     Any(Vec<Match>),
     All(Vec<Match>),
     Not(Box<Match>),
@@ -31,26 +31,26 @@ pub enum InvalidMatch {
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct LabelMatch {
+pub struct LabelMatch {
     key: String,
     value: String,
 }
 
 #[derive(Clone, Debug)]
-pub(super) enum TcpMatch {
+pub enum TcpMatch {
     // Inclusive
     PortRange(u16, u16),
     Net(NetMatch),
 }
 
 #[derive(Clone, Debug)]
-pub(super) enum NetMatch {
+pub enum NetMatch {
     Net4(Ipv4Net),
     Net6(Ipv6Net),
 }
 
 #[derive(Clone, Debug)]
-pub(super) enum HttpMatch {
+pub enum HttpMatch {
     Scheme(String),
     Method(http::Method),
     Path(observe_request::match_::http::string_match::Match),
@@ -60,7 +60,7 @@ pub(super) enum HttpMatch {
 // ===== impl Match ======
 
 impl Match {
-    pub(super) fn matches(&self, ev: &Event) -> bool {
+    pub fn matches(&self, ev: &Event) -> bool {
         match *self {
             Match::Any(ref ms) => ms.iter().any(|m| m.matches(ev)),
             Match::All(ref ms) => ms.iter().all(|m| m.matches(ev)),
@@ -116,7 +116,7 @@ impl Match {
         }
     }
 
-    pub(super) fn new(match_: &observe_request::Match) -> Result<Match, InvalidMatch> {
+    pub fn new(match_: &observe_request::Match) -> Result<Match, InvalidMatch> {
         match_
             .match_
             .as_ref()
@@ -144,28 +144,28 @@ impl<'a> TryFrom<&'a observe_request::match_::Match> for Match {
     fn try_from(m: &observe_request::match_::Match) -> Result<Self, Self::Err> {
         use api::tap::observe_request::match_;
 
-        let match_ = match *m {
-            match_::Match::All(ref seq) => Match::All(Self::from_seq(seq)?),
+        match m {
+            match_::Match::All(ref seq) => Self::from_seq(seq).map(Match::All),
+            match_::Match::Any(ref seq) => Self::from_seq(seq).map(Match::Any),
 
-            match_::Match::Any(ref seq) => Match::Any(Self::from_seq(seq)?),
+            match_::Match::Not(ref m) => m
+                .match_
+                .as_ref()
+                .ok_or(InvalidMatch::Empty)
+                .and_then(Self::try_from)
+                .map(Box::new)
+                .map(Match::Not),
 
-            match_::Match::Not(ref m) => match m.match_.as_ref() {
-                Some(m) => Match::Not(Box::new(Self::try_from(m)?)),
-                None => return Err(InvalidMatch::Empty),
-            },
+            match_::Match::Source(ref src) => TcpMatch::try_from(src).map(Match::Source),
 
-            match_::Match::Source(ref src) => Match::Source(TcpMatch::try_from(src)?),
-
-            match_::Match::Destination(ref dst) => Match::Destination(TcpMatch::try_from(dst)?),
+            match_::Match::Destination(ref dst) => TcpMatch::try_from(dst).map(Match::Destination),
 
             match_::Match::DestinationLabel(ref label) => {
-                Match::DestinationLabel(LabelMatch::try_from(label)?)
+                LabelMatch::try_from(label).map(Match::DestinationLabel)
             }
 
-            match_::Match::Http(ref http) => Match::Http(HttpMatch::try_from(http)?),
-        };
-
-        Ok(match_)
+            match_::Match::Http(ref http) => HttpMatch::try_from(http).map(Match::Http),
+        }
     }
 }
 
@@ -267,10 +267,10 @@ impl<'a> TryFrom<&'a observe_request::match_::tcp::Netmask> for NetMatch {
             m.mask as u8
         };
 
-        let ip = match m.ip.as_ref().and_then(|a| a.ip.as_ref()) {
-            Some(ip) => ip,
-            None => return Err(InvalidMatch::Empty),
-        };
+        let ip =
+            m.ip.as_ref()
+                .and_then(|a| a.ip.as_ref())
+                .ok_or(InvalidMatch::Empty)?;
 
         let net = match *ip {
             ip_address::Ip::Ipv4(ref n) => {
@@ -332,38 +332,32 @@ impl<'a> TryFrom<&'a observe_request::match_::Http> for HttpMatch {
 
         m.match_
             .as_ref()
-            .ok_or_else(|| InvalidMatch::Empty)
+            .ok_or(InvalidMatch::Empty)
             .and_then(|m| match *m {
                 Pb::Scheme(ref s) => s
                     .type_
                     .as_ref()
-                    .ok_or_else(|| InvalidMatch::Empty)
-                    .and_then(|s| {
-                        s.try_to_string()
-                            .map(HttpMatch::Scheme)
-                            .map_err(|_| InvalidMatch::InvalidScheme)
-                    }),
+                    .ok_or(InvalidMatch::Empty)
+                    .and_then(|s| s.try_to_string().map_err(|_| InvalidMatch::InvalidScheme))
+                    .map(HttpMatch::Scheme),
 
                 Pb::Method(ref m) => m
                     .type_
                     .as_ref()
-                    .ok_or_else(|| InvalidMatch::Empty)
-                    .and_then(|m| {
-                        m.try_as_http()
-                            .map(HttpMatch::Method)
-                            .map_err(|_| InvalidMatch::InvalidHttpMethod)
-                    }),
+                    .ok_or(InvalidMatch::Empty)
+                    .and_then(|m| m.try_as_http().map_err(|_| InvalidMatch::InvalidHttpMethod))
+                    .map(HttpMatch::Method),
 
                 Pb::Authority(ref a) => a
                     .match_
                     .as_ref()
-                    .ok_or_else(|| InvalidMatch::Empty)
+                    .ok_or(InvalidMatch::Empty)
                     .map(|a| HttpMatch::Authority(a.clone())),
 
                 Pb::Path(ref p) => p
                     .match_
                     .as_ref()
-                    .ok_or_else(|| InvalidMatch::Empty)
+                    .ok_or(InvalidMatch::Empty)
                     .map(|p| HttpMatch::Path(p.clone())),
             })
     }
@@ -524,11 +518,5 @@ mod tests {
 
             err == HttpMatch::try_from(&http).err()
         }
-
-        // TODO
-        // fn http_matches(m: HttpMatch, ctx: event::Request) -> bool {
-        //     let matches = false;
-        //     m.matches(&addr) == matches
-        // }
     }
 }

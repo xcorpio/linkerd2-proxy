@@ -6,88 +6,54 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tower_grpc::{self as grpc, Response};
 
-use api::tap::{server, ObserveRequest, TapEvent};
+use super::Subscribe;
+use api::tap::{observe_request, server, ObserveRequest, TapEvent};
 use convert::*;
-use tap::{event, Event, Tap, Taps};
 
 #[derive(Clone, Debug)]
-pub struct Grpc {
-    next_id: Arc<AtomicUsize>,
-    taps: Arc<Mutex<Taps>>,
-    tap_capacity: usize,
+pub struct Server<T: Subscribe> {
+    subscribe: T,
 }
 
 pub struct ResponseStream {
-    rx: futures_mpsc_lossy::Receiver<Event>,
+    observation: Observation,
     remaining: usize,
-    current: IndexMap<usize, event::Request>,
-    tap_id: usize,
-    taps: Arc<Mutex<Taps>>,
 }
 
-impl Grpc {
-    pub fn new(tap_capacity: usize) -> (Arc<Mutex<Taps>>, Self) {
-        let taps = Arc::new(Mutex::new(Taps::default()));
-
-        let grpc = Grpc {
-            next_id: Arc::new(AtomicUsize::new(0)),
-            tap_capacity,
-            taps: taps.clone(),
-        };
-
-        (taps, grpc)
+impl<T: Subscribe> Server<T> {
+    pub(super) fn new(subscribe: T) -> Self {
+        Self { subscribe }
     }
 }
 
-impl server::Tap for Grpc {
+impl<T: Subscribe> server::Tap for Server<T> {
     type ObserveStream = ResponseStream;
     type ObserveFuture = future::FutureResult<Response<Self::ObserveStream>, grpc::Error>;
 
     fn observe(&mut self, req: grpc::Request<ObserveRequest>) -> Self::ObserveFuture {
-        if self.next_id.load(Ordering::Acquire) == ::std::usize::MAX {
-            return future::err(grpc::Error::Grpc(
-                grpc::Status::with_code(grpc::Code::Internal),
-                HeaderMap::new(),
-            ));
-        }
         let req = req.into_inner();
 
-        let (tap, rx) = match req
-            .match_
-            .and_then(|m| Tap::new(&m, self.tap_capacity).ok())
-        {
-            Some(m) => m,
-            None => {
+        let match_ = match Match::new(&req.match_match_) {
+            Ok(m) => m,
+            Err(_) => {
                 return future::err(grpc::Error::Grpc(
                     grpc::Status::with_code(grpc::Code::InvalidArgument),
                     HeaderMap::new(),
-                ));
+                ))
             }
         };
 
-        let tap_id = match self.taps.lock() {
-            Ok(mut taps) => {
-                let tap_id = self.next_id.fetch_add(1, Ordering::AcqRel);
-                let _ = (*taps).insert(tap_id, tap);
-                tap_id
-            }
-            Err(_) => {
-                return future::err(grpc::Error::Grpc(
-                    grpc::Status::with_code(grpc::Code::Internal),
-                    HeaderMap::new(),
-                ));
-            }
-        };
-
-        let events = ResponseStream {
-            rx,
-            tap_id,
-            current: IndexMap::default(),
+        let tap = self.subscribe.subscribe(match_);
+        future::ok(Response::new(ResponseStream {
+            tap,
             remaining: req.limit as usize,
-            taps: self.taps.clone(),
-        };
+        }))
+    }
+}
 
-        future::ok(Response::new(events))
+impl<T: Subscribe> ResponseStream<T::Stream> {
+    fn response(stream: T::Stream) -> Self {
+        unimplemented!()
     }
 }
 

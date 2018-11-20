@@ -1,3 +1,6 @@
+use http;
+use futures::sync::oneshot;
+use futures::{Future, Stream};
 use futures_mpsc_lossy;
 use indexmap::IndexMap;
 use std::sync::{
@@ -5,113 +8,83 @@ use std::sync::{
     Arc,
 };
 
-use api::tap::observe_request;
+use api::tap as api;
+use svc;
 
 pub mod event;
-mod match_;
 mod grpc;
+mod match_;
 mod pb;
 mod service;
 
-pub use self::event::{Direction, Endpoint, Event};
-pub use self::match_::InvalidMatch;
-use self::match_::*;
-pub use self::grpc::Grpc;
+use self::event::{Direction, Endpoint, Event};
+pub use self::grpc::Server;
+use self::match_;
 pub use self::service::layer;
 
-#[derive(Clone, Debug, Default)]
-pub struct NextId(Arc<AtomicUsize>);
+use std::collections::VecDeque;
 
-#[derive(Default, Debug)]
-pub struct Taps {
-    by_id: IndexMap<usize, Tap>,
+pub trait Subscribe<M: Match, R: Recv> {
+    fn subscribe(&mut self, match_: M, recv: R);
 }
 
-#[derive(Debug)]
-pub struct Tap {
-    match_: Match,
-    tx: futures_mpsc_lossy::Sender<Event>,
+pub trait Match {
+    fn match_<B>(&self, req: &http::Request<B>) -> bool;
 }
 
-/// Indicates the tap is no longer receiving
-struct Ended;
-
-impl Taps {
-    pub fn insert(&mut self, id: usize, tap: Tap) -> Option<Tap> {
-        debug!("insert id={} tap={:?}", id, tap);
-        self.by_id.insert(id, tap)
-    }
-
-    pub fn remove(&mut self, id: usize) -> Option<Tap> {
-        debug!("remove id={}", id);
-        self.by_id.swap_remove(&id)
-    }
-
-    ///
-    pub(super) fn inspect(&mut self, ev: &Event) {
-        if self.by_id.is_empty() {
-            return;
-        }
-        debug!(
-            "inspect taps={:?} event={:?}",
-            self.by_id.keys().collect::<Vec<_>>(),
-            ev
-        );
-
-        // Iterate through taps by index so that items may be removed.
-        let mut idx = 0;
-        while idx < self.by_id.len() {
-            let (tap_id, inspect) = {
-                let (id, tap) = self.by_id.get_index(idx).unwrap();
-                (*id, tap.inspect(ev))
-            };
-
-            // If the tap is no longer receiving events, remove it. The index is only
-            // incremented on successs so that, when an item is removed, the swapped item
-            // is inspected on the next iteration OR, if the last item has been removed,
-            // `len()` will return `idx` and a subsequent iteration will not occur.
-            match inspect {
-                Ok(matched) => {
-                    debug!("inspect tap={} match={}", tap_id, matched);
-                }
-                Err(Ended) => {
-                    debug!("ended tap={}", tap_id);
-                    self.by_id.swap_remove_index(idx);
-                    continue;
-                }
-            }
-
-            idx += 1;
-        }
-    }
+pub trait Recv {
+    type Publish: publish::Init;
+    fn recv(&mut self) -> Option<Self::Publish>;
 }
 
-impl Tap {
-    pub fn new(
-        match_: &observe_request::Match,
-        capacity: usize,
-    ) -> Result<(Tap, futures_mpsc_lossy::Receiver<Event>), InvalidMatch> {
-        let (tx, rx) = futures_mpsc_lossy::channel(capacity);
-        let match_ = Match::new(match_)?;
-        let tap = Tap { match_, tx };
-        Ok((tap, rx))
-    }
-
-    fn inspect(&self, ev: &Event) -> Result<bool, Ended> {
-        if self.match_.matches(ev) {
-            return self
-                .tx
-                .lossy_send(ev.clone())
-                .map_err(|_| Ended)
-                .map(|_| true);
-        }
-
-        Ok(false)
-    }
+pub struct Daemon<M: Match, R: Recv> {
+    subscriptions: VecDeque<Subscription<M, R>>,
+    subscribe_requests: futures_mpsc_lossy::Receiver<(M, R)>,
 }
 
-impl NextId {
-    fn next_id(&self) -> usize {
-        self.0.fetch_add(1, Ordering::Relaxed)
+struct Subscription<M: Match, R: Recv> {
+    match_: Arc<M>,
+    recv: Option<R>,
+}
+
+pub mod publish {
+    pub trait Init {
+        type OpenRequest: OpenRequest<
+            EndRequest = Self::EndRequest,
+            OpenResponse = Self::OpenResponse,
+            EndResponse = Self::EndResponse,
+        >;
+        type EndRequest: EndRequest;
+        type OpenResponse: OpenResponse<EndResponse = EndRespones>;
+        type EndResponse: EndResponse;
+
+        type Error;
+        type Future: Future<Item = Self::OpenRequest, Error = Self::Error>;
+
+        fn init(&mut self) -> Self::Future;
+    }
+
+    pub trait OpenRequest {
+        type EndRequest: EndRequest;
+        type OpenResponse: OpenResponse<EndResponse = Self::EndRespone>;
+        type EndResponse: EndResponse;
+
+
+        fn open<B>(self, req: http::Request<B>) -> (Self::EndRequest, Self::OpenResponse);
+    }
+
+    pub trait EndRequest {
+        fn fail(self, err: h2::Reason);
+        fn end(self);
+    }
+
+    pub trait OpenResponse {
+        type EndResponse: EndResponse;
+        fn open<B>(self, req: http::Response<B>) -> Self::EndResponse;
+    }
+
+    pub trait EndResponse {
+        fn fail(self, err: h2::Reason);
+        fn end(self);
     }
 }

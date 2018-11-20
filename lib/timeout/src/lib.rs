@@ -49,13 +49,13 @@ impl<T> Timeout<T> {
         }
     }
 
-    fn error<E>(&self, error: E) -> Error<E> {
+    fn error<E>(error: E) -> Error<E> {
         Error {
             kind: ErrorKind::Error(error),
         }
     }
 
-    fn timeout_error<E>(&self, error: timer::timeout::Error<E>) -> Error<E> {
+    fn timeout_error<E>(error: timer::timeout::Error<E>) -> Error<E> {
         let kind = match error {
             _ if error.is_timer() =>
                 ErrorKind::Timer(error.into_timer()
@@ -78,7 +78,7 @@ where
     type Future = Timeout<timer::Timeout<S::Future>>;
 
     fn poll_ready(&mut self) -> Poll<(), Self::Error> {
-        self.inner.poll_ready().map_err(|e| self.error(e))
+        self.inner.poll_ready().map_err(Self::error)
     }
 
     fn call(&mut self, req: Req) -> Self::Future {
@@ -116,7 +116,7 @@ where
     type Item = F::Item;
     type Error = Error<F::Error>;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        self.inner.poll().map_err(|e| self.timeout_error(e))
+        self.inner.poll().map_err(Self::timeout_error)
     }
 }
 
