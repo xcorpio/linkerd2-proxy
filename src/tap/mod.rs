@@ -1,23 +1,25 @@
-use http;
-use futures::sync::oneshot;
 use futures::{Future, Stream};
-use futures_mpsc_lossy;
-use indexmap::IndexMap;
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Weak,
-};
+use http;
+use std::sync::Weak;
 
-use api::tap as api;
-use svc;
-
-pub mod event;
+mod daemon;
 mod grpc;
-mod match_;
-mod pb;
 mod service;
 
-pub use self::grpc::Server;
+mod event;
+mod match_;
+mod pb;
+
+pub type Layer = service::Layer<daemon::Register<grpc::Tap>>;
+pub type Server = grpc::Server<daemon::Subscribe<grpc::Tap>>;
+pub type Daemon = daemon::Daemon<grpc::Tap>;
+
+pub fn new() -> (Layer, Server, Daemon) {
+    let (daemon, register, subscribe) = daemon::new();
+    let layer = service::layer(register);
+    let server = Server::new(subscribe);
+    (layer, server, daemon)
+}
 
 trait Register {
     type Tap: Tap;
@@ -35,8 +37,10 @@ trait Tap {
     type TapResponse: TapResponse<TapBody = Self::TapResponseBody>;
     type TapResponseBody: TapBody;
 
-    fn tap<B: Payload>(&self, req: &http::Request<B>)
-        -> Option<(Self::TapRequestBody, Self::TapResponse)>;
+    fn tap<B: Payload>(
+        &self,
+        req: &http::Request<B>,
+    ) -> Option<(Self::TapRequestBody, Self::TapResponse)>;
 }
 
 trait TapBody {
