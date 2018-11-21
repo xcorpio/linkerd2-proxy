@@ -29,62 +29,14 @@ pub trait Subscribe<M: Match, R: Recv> {
 }
 
 pub trait Match {
-    fn match_<B>(&self, req: &http::Request<B>) -> bool;
+    type Publish: publish::Init<OpenRequest>;
+    type OpenRequest: publish::Init;
+
+    fn match_<B>(&self, req: &http::Request<B>) -> Option<Self::Publish>;
 }
 
-pub trait Recv {
-    type Publish: publish::Init;
-    fn recv(&mut self) -> Option<Self::Publish>;
-}
-
-pub struct Daemon<M: Match, R: Recv> {
-    subscriptions: VecDeque<Subscription<M, R>>,
-    subscribe_requests: futures_mpsc_lossy::Receiver<(M, R)>,
-}
-
-struct Subscription<M: Match, R: Recv> {
-    match_: Arc<M>,
-    recv: Option<R>,
-}
-
-pub mod publish {
-    pub trait Init {
-        type OpenRequest: OpenRequest<
-            EndRequest = Self::EndRequest,
-            OpenResponse = Self::OpenResponse,
-            EndResponse = Self::EndResponse,
-        >;
-        type EndRequest: EndRequest;
-        type OpenResponse: OpenResponse<EndResponse = EndRespones>;
-        type EndResponse: EndResponse;
-
-        type Error;
-        type Future: Future<Item = Self::OpenRequest, Error = Self::Error>;
-
-        fn init(&mut self) -> Self::Future;
-    }
-
-    pub trait OpenRequest {
-        type EndRequest: EndRequest;
-        type OpenResponse: OpenResponse<EndResponse = Self::EndRespone>;
-        type EndResponse: EndResponse;
-
-
-        fn open<B>(self, req: http::Request<B>) -> (Self::EndRequest, Self::OpenResponse);
-    }
-
-    pub trait EndRequest {
-        fn fail(self, err: h2::Reason);
-        fn end(self);
-    }
-
-    pub trait OpenResponse {
-        type EndResponse: EndResponse;
-        fn open<B>(self, req: http::Response<B>) -> Self::EndResponse;
-    }
-
-    pub trait EndResponse {
-        fn fail(self, err: h2::Reason);
-        fn end(self);
-    }
+pub struct Daemon<M: Match> {
+    active: VecDeque<Arc<M>>,
+    match_rx: futures_mpsc_lossy::Receiver<M>,
+    match_request_rx: futures_mpsc_lossy::Receiver<oneshot::Sender<Weak<M>>>,
 }
