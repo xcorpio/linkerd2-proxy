@@ -5,7 +5,7 @@ use futures_mpsc_lossy;
 use indexmap::IndexMap;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
-    Arc,
+    Weak,
 };
 
 use api::tap as api;
@@ -17,26 +17,40 @@ mod match_;
 mod pb;
 mod service;
 
-use self::event::{Direction, Endpoint, Event};
 pub use self::grpc::Server;
-use self::match_;
-pub use self::service::layer;
 
-use std::collections::VecDeque;
+trait Register {
+    type Tap: Tap;
+    type Taps: Stream<Item = Weak<Self::Tap>>;
 
-pub trait Subscribe<M: Match, R: Recv> {
-    fn subscribe(&mut self, match_: M, recv: R);
+    fn register(&mut self) -> Self::Taps;
 }
 
-pub trait Match {
-    type Publish: publish::Init<OpenRequest>;
-    type OpenRequest: publish::Init;
-
-    fn match_<B>(&self, req: &http::Request<B>) -> Option<Self::Publish>;
+trait Subscribe<T: Tap> {
+    fn subscribe(&mut self, tap: Weak<T>);
 }
 
-pub struct Daemon<M: Match> {
-    active: VecDeque<Arc<M>>,
-    match_rx: futures_mpsc_lossy::Receiver<M>,
-    match_request_rx: futures_mpsc_lossy::Receiver<oneshot::Sender<Weak<M>>>,
+trait Tap {
+    type TapRequestBody: TapBody;
+    type TapResponse: TapResponse<TapBody = Self::TapResponseBody>;
+    type TapResponseBody: TapBody;
+
+    fn tap<B: Payload>(&self, req: &http::Request<B>)
+        -> Option<(Self::TapRequestBody, Self::TapResponse)>;
+}
+
+trait TapBody {
+    fn data<D: IntoBuf>(&mut self, data: &D::Buf);
+
+    fn end(self, headers: Option<&http::HeaderMap>);
+
+    fn fail(self, error: &h2::Error);
+}
+
+trait TapResponse {
+    type TapBody: TapBody;
+
+    fn tap<B: Payload>(self, rsp: &http::Response<B>) -> Self::TapBody;
+
+    fn fail<E: HasH2Reason>(self, error: &E);
 }
