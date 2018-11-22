@@ -16,24 +16,25 @@ const TAP_BUFFER_CAPACITY: usize = 16;
 const REGISTER_TAPS_BUFFER_CAPACITY: usize = 16;
 
 pub fn new<T>() -> (Daemon<T>, Register<T>, Subscribe<T>) {
-    let (reg_tx, reg_rx) = mpsc::channel(REGISTER_BUFFER_CAPACITY);
+    let (svc_tx, svc_rx) = mpsc::channel(REGISTER_BUFFER_CAPACITY);
     let (tap_tx, tap_rx) = mpsc::channel(TAP_BUFFER_CAPACITY);
 
     let daemon = Daemon {
-        reg_rx,
-        regs: VecDeque::default(),
+        svc_rx,
+        svcs: VecDeque::default(),
 
         tap_rx,
         taps: VecDeque::default(),
     };
 
-    (daemon, Register(reg_tx), Subscribe(tap_tx))
+    (daemon, Register(svc_tx), Subscribe(tap_tx))
 }
 
+#[must_use = "daemon must be polled"]
 #[derive(Debug)]
 pub struct Daemon<T> {
-    reg_rx: mpsc::Receiver<mpsc::Sender<Weak<T>>>,
-    regs: VecDeque<mpsc::Sender<Weak<T>>>,
+    svc_rx: mpsc::Receiver<mpsc::Sender<Weak<T>>>,
+    svcs: VecDeque<mpsc::Sender<Weak<T>>>,
 
     tap_rx: mpsc::Receiver<Weak<T>>,
     taps: VecDeque<Weak<T>>,
@@ -50,18 +51,38 @@ impl<T: Tap> Future for Daemon<T> {
     type Error = Never;
 
     fn poll(&mut self) -> Poll<(), Never> {
-        while let Ok(Async::Ready(Some(tap))) = self.tap_rx.poll() {
-            for tx in &mut self.regs {
-                let _ = tx.try_send(tap.clone());
+        // Drop taps that are no longer active (i.e. the response stream has
+        // been droped).
+        self.taps.retain(|t| t.upgrade().is_some());
+
+        // Connect newly-created services to active taps.
+        while let Ok(Async::Ready(Some(mut svc))) = self.svc_rx.poll() {
+            // Notify the service of all active taps. If there's an error, the
+            // registration is dropped.
+            let mut is_ok = true;
+            for tap in &self.taps {
+                if is_ok {
+                    is_ok = svc.try_send(tap.clone()).is_ok();
+                }
             }
-            self.taps.push_back(tap);
+
+            if is_ok {
+                self.svcs.push_back(svc);
+            }
         }
 
-        while let Ok(Async::Ready(Some(mut tx))) = self.reg_rx.poll() {
-            for tap in &self.taps {
-                let _ = tx.try_send(tap.clone());
+        // Connect newly-created taps to existing services.
+        while let Ok(Async::Ready(Some(tap))) = self.tap_rx.poll() {
+            if tap.upgrade().is_none() {
+                continue;
             }
-            self.regs.push_back(tx);
+
+            // Notify services of the new tap. If the tap can't be sent to a
+            // given service, it's assumed that the service has been dropped, so
+            // it is removed from the registry.
+            self.svcs.retain(|s| s.try_send(tap.clone()).is_ok());
+
+            self.taps.push_back(tap);
         }
 
         Ok(Async::NotReady)
