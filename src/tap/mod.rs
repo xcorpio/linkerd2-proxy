@@ -1,14 +1,14 @@
-use futures::{Future, Stream};
+use bytes::IntoBuf;
+use futures::Stream;
 use http;
 use std::sync::Weak;
+use tower_h2::Body as Payload;
+
+use proxy::http::HasH2Reason;
 
 mod daemon;
 mod grpc;
 mod service;
-
-mod event;
-mod match_;
-mod pb;
 
 pub type Layer = service::Layer<daemon::Register<grpc::Tap>>;
 pub type Server = grpc::Server<daemon::Subscribe<grpc::Tap>>;

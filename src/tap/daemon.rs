@@ -1,4 +1,4 @@
-use futures::{Async, Future, Poll};
+use futures::{Async, Future, Poll, Stream};
 use futures::sync::mpsc;
 use never::Never;
 use std::collections::VecDeque;
@@ -42,7 +42,7 @@ pub struct Daemon<T> {
 #[derive(Clone, Debug)]
 pub struct Register<T>(mpsc::Sender<mpsc::Sender<Weak<T>>>);
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Subscribe<T>(mpsc::Sender<Weak<T>>);
 
 impl<T: Tap> Future for Daemon<T> {
@@ -50,14 +50,14 @@ impl<T: Tap> Future for Daemon<T> {
     type Error = Never;
 
     fn poll(&mut self) -> Poll<(), Never> {
-        while let Ok(Async::Ready(tap)) = self.tap_rx.poll_ready() {
+        while let Ok(Async::Ready(Some(tap))) = self.tap_rx.poll() {
             for tx in &mut self.regs {
                 let _ = tx.try_send(tap.clone());
             }
             self.taps.push_back(tap);
         }
 
-        while let Ok(Async::Ready(mut tx)) = self.reg_rx.poll_ready() {
+        while let Ok(Async::Ready(Some(mut tx))) = self.reg_rx.poll() {
             for tap in &self.taps {
                 let _ = tx.try_send(tap.clone());
             }
@@ -79,7 +79,7 @@ impl<T: Tap> super::Register for Register<T> {
     }
 }
 
-impl<T: Tap> Subscribe<T> for Subscribe<T> {
+impl<T: Tap> super::Subscribe<T> for Subscribe<T> {
     fn subscribe(&mut self, tap: Weak<T>) {
         let _ = self.0.try_send(tap);
     }

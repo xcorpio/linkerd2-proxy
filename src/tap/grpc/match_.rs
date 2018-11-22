@@ -1,14 +1,19 @@
+use http;
 use indexmap::IndexMap;
+use ipnet::{Contains, Ipv4Net, Ipv6Net};
 use std::boxed::Box;
 use std::net;
+use std::{error, fmt};
 
-use http;
-use ipnet::{Contains, Ipv4Net, Ipv6Net};
-
-use super::{event, Event};
 use api::net::ip_address;
 use api::tap::observe_request;
 use convert::TryFrom;
+
+pub trait Inspect {
+    fn src_addr<B>(&self, req: http::Request<B>) -> Option<net::SocketAddr>;
+    fn dst_addr<B>(&self, req: http::Request<B>) -> Option<net::SocketAddr>;
+    fn dst_labels<B>(&self, req: http::Request<B>) -> Option<&IndexMap<String, String>>;
+}
 
 #[derive(Clone, Debug)]
 pub enum Match {
@@ -21,7 +26,7 @@ pub enum Match {
     Http(HttpMatch),
 }
 
-#[derive(Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum InvalidMatch {
     Empty,
     InvalidPort,
@@ -51,7 +56,7 @@ pub enum NetMatch {
 
 #[derive(Clone, Debug)]
 pub enum HttpMatch {
-    Scheme(String),
+    Scheme(http::uri::Scheme),
     Method(http::Method),
     Path(observe_request::match_::http::string_match::Match),
     Authority(observe_request::match_::http::string_match::Match),
@@ -60,111 +65,59 @@ pub enum HttpMatch {
 // ===== impl Match ======
 
 impl Match {
-    pub fn matches(&self, ev: &Event) -> bool {
-        match *self {
-            Match::Any(ref ms) => ms.iter().any(|m| m.matches(ev)),
-            Match::All(ref ms) => ms.iter().all(|m| m.matches(ev)),
-            Match::Not(ref not) => !not.matches(ev),
-
-            Match::Source(ref src) => match *ev {
-                Event::StreamRequestOpen(ref req) | Event::StreamRequestFail(ref req, _) => {
-                    src.matches(&req.source.remote)
-                }
-                Event::StreamResponseOpen(ref rsp, _)
-                | Event::StreamResponseFail(ref rsp, _)
-                | Event::StreamResponseEnd(ref rsp, _) => src.matches(&rsp.request.source.remote),
-                _ => false,
-            },
-
-            Match::Destination(ref dst) => match *ev {
-                Event::StreamRequestOpen(ref req) | Event::StreamRequestFail(ref req, _) => {
-                    dst.matches(&req.endpoint.target.addr)
-                }
-                Event::StreamResponseOpen(ref rsp, _)
-                | Event::StreamResponseFail(ref rsp, _)
-                | Event::StreamResponseEnd(ref rsp, _) => {
-                    dst.matches(&rsp.request.endpoint.target.addr)
-                }
-                _ => false,
-            },
-
-            Match::DestinationLabel(ref label) => match *ev {
-                Event::StreamRequestOpen(ref req) | Event::StreamRequestFail(ref req, _) => {
-                    label.matches(&req.endpoint.labels)
-                }
-
-                Event::StreamResponseOpen(ref rsp, _)
-                | Event::StreamResponseFail(ref rsp, _)
-                | Event::StreamResponseEnd(ref rsp, _) => {
-                    label.matches(&rsp.request.endpoint.labels)
-                }
-
-                _ => false,
-            },
-
-            Match::Http(ref http) => match *ev {
-                Event::StreamRequestOpen(ref req) | Event::StreamRequestFail(ref req, _) => {
-                    http.matches(req)
-                }
-
-                Event::StreamResponseOpen(ref rsp, _)
-                | Event::StreamResponseFail(ref rsp, _)
-                | Event::StreamResponseEnd(ref rsp, _) => http.matches(&rsp.request),
-
-                _ => false,
-            },
-        }
-    }
-
-    pub fn new(match_: &observe_request::Match) -> Result<Match, InvalidMatch> {
-        match_
-            .match_
-            .as_ref()
-            .map(Match::try_from)
-            .unwrap_or_else(|| Err(InvalidMatch::Empty))
-    }
-
-    fn from_seq(seq: &observe_request::match_::Seq) -> Result<Vec<Match>, InvalidMatch> {
+    fn from_seq(seq: observe_request::match_::Seq) -> Result<Vec<Self>, InvalidMatch> {
         let mut new = Vec::with_capacity(seq.matches.len());
-
-        for m in &seq.matches {
-            if let Some(m) = m.match_.as_ref() {
-                new.push(Self::try_from(m)?);
-            }
+        for m in seq.matches.into_iter().filter_map(|m| m.match_) {
+            new.push(Self::try_from(m)?);
         }
 
         Ok(new)
     }
+
+    pub fn matches<B>(&self, req: &http::Request<B>) -> bool {
+        match self {
+            Match::Any(ref ms) => ms.iter().any(|m| m.matches(req)),
+            Match::All(ref ms) => ms.iter().all(|m| m.matches(req)),
+            Match::Not(ref not) => !not.matches(req),
+            Match::Source(ref src) => req.src_addr().map(|a| src.matches(a)).unwrap_or(false),
+            Match::Destination(ref dst) => req.dst_addr().map(|d| dst.matches(d)).unwrap_or(false),
+            Match::DestinationLabel(ref lbl) => {
+                req.dst_addr().map(|l| lbl.matches(l)).unwrap_or(false)
+            }
+            Match::Http(ref http) => http.matches(req),
+        }
+    }
 }
 
-impl<'a> TryFrom<&'a observe_request::match_::Match> for Match {
+impl Match {
+    pub fn try_new(m: Option<observe_request::Match>) -> Result<Self, InvalidMatch> {
+        m.and_then(|m| m.match_)
+            .map(Self::try_from)
+            .unwrap_or_else(|| Err(InvalidMatch::Empty))
+    }
+}
+
+impl TryFrom<observe_request::match_::Match> for Match {
     type Err = InvalidMatch;
 
     #[allow(unconditional_recursion)]
-    fn try_from(m: &observe_request::match_::Match) -> Result<Self, Self::Err> {
+    fn try_from(m: observe_request::match_::Match) -> Result<Self, Self::Err> {
         use api::tap::observe_request::match_;
 
         match m {
-            match_::Match::All(ref seq) => Self::from_seq(seq).map(Match::All),
-            match_::Match::Any(ref seq) => Self::from_seq(seq).map(Match::Any),
-
-            match_::Match::Not(ref m) => m
+            match_::Match::All(seq) => Self::from_seq(seq).map(Match::All),
+            match_::Match::Any(seq) => Self::from_seq(seq).map(Match::Any),
+            match_::Match::Not(m) => m
                 .match_
-                .as_ref()
                 .ok_or(InvalidMatch::Empty)
                 .and_then(Self::try_from)
-                .map(Box::new)
-                .map(Match::Not),
-
-            match_::Match::Source(ref src) => TcpMatch::try_from(src).map(Match::Source),
-
-            match_::Match::Destination(ref dst) => TcpMatch::try_from(dst).map(Match::Destination),
-
-            match_::Match::DestinationLabel(ref label) => {
-                LabelMatch::try_from(label).map(Match::DestinationLabel)
+                .map(|m| Match::Not(Box::new(m))),
+            match_::Match::Source(src) => TcpMatch::try_from(src).map(Match::Source),
+            match_::Match::Destination(dst) => TcpMatch::try_from(dst).map(Match::Destination),
+            match_::Match::DestinationLabel(l) => {
+                LabelMatch::try_from(l).map(Match::DestinationLabel)
             }
-
-            match_::Match::Http(ref http) => HttpMatch::try_from(http).map(Match::Http),
+            match_::Match::Http(http) => HttpMatch::try_from(http).map(Match::Http),
         }
     }
 }
@@ -177,10 +130,10 @@ impl LabelMatch {
     }
 }
 
-impl<'a> TryFrom<&'a observe_request::match_::Label> for LabelMatch {
+impl TryFrom<observe_request::match_::Label> for LabelMatch {
     type Err = InvalidMatch;
 
-    fn try_from(m: &observe_request::match_::Label) -> Result<Self, InvalidMatch> {
+    fn try_from(m: observe_request::match_::Label) -> Result<Self, InvalidMatch> {
         if m.key.is_empty() || m.value.is_empty() {
             return Err(InvalidMatch::Empty);
         }
@@ -195,30 +148,25 @@ impl<'a> TryFrom<&'a observe_request::match_::Label> for LabelMatch {
 // ===== impl TcpMatch ======
 
 impl TcpMatch {
-    fn matches(&self, addr: &net::SocketAddr) -> bool {
-        match *self {
+    fn matches(&self, addr: net::SocketAddr) -> bool {
+        match self {
             // If either a minimum or maximum is not specified, the range is considered to
             // be over a discrete value.
             TcpMatch::PortRange(min, max) => min <= addr.port() && addr.port() <= max,
 
-            TcpMatch::Net(ref net) => net.matches(&addr.ip()),
+            TcpMatch::Net(net) => net.matches(addr.ip()),
         }
     }
 }
 
-impl<'a> TryFrom<&'a observe_request::match_::Tcp> for TcpMatch {
+impl TryFrom<observe_request::match_::Tcp> for TcpMatch {
     type Err = InvalidMatch;
 
-    fn try_from(m: &observe_request::match_::Tcp) -> Result<Self, InvalidMatch> {
+    fn try_from(m: observe_request::match_::Tcp) -> Result<Self, InvalidMatch> {
         use api::tap::observe_request::match_::tcp;
 
-        let m = match m.match_.as_ref() {
-            None => return Err(InvalidMatch::Empty),
-            Some(m) => m,
-        };
-
-        let match_ = match *m {
-            tcp::Match::Ports(ref range) => {
+        m.match_.ok_or(InvalidMatch::Empty).and_then(|t| match t {
+            tcp::Match::Ports(range) => {
                 // If either a minimum or maximum is not specified, the range is considered to
                 // be over a discrete value.
                 let min = if range.min == 0 { range.max } else { range.min };
@@ -229,36 +177,35 @@ impl<'a> TryFrom<&'a observe_request::match_::Tcp> for TcpMatch {
                 if min > u32::from(::std::u16::MAX) || max > u32::from(::std::u16::MAX) {
                     return Err(InvalidMatch::InvalidPort);
                 }
-                TcpMatch::PortRange(min as u16, max as u16)
+                Ok(TcpMatch::PortRange(min as u16, max as u16))
             }
 
-            tcp::Match::Netmask(ref netmask) => TcpMatch::Net(NetMatch::try_from(netmask)?),
-        };
-
-        Ok(match_)
+            tcp::Match::Netmask(netmask) => NetMatch::try_from(netmask).map(TcpMatch::Net),
+        })
     }
 }
 
 // ===== impl NetMatch ======
 
 impl NetMatch {
-    fn matches(&self, addr: &net::IpAddr) -> bool {
-        match *self {
-            NetMatch::Net4(ref net) => match *addr {
+    fn matches(&self, addr: net::IpAddr) -> bool {
+        match self {
+            NetMatch::Net4(net) => match addr {
                 net::IpAddr::V6(_) => false,
-                net::IpAddr::V4(ref addr) => net.contains(addr),
+                net::IpAddr::V4(addr) => net.contains(addr),
             },
-            NetMatch::Net6(ref net) => match *addr {
+            NetMatch::Net6(net) => match addr {
                 net::IpAddr::V4(_) => false,
-                net::IpAddr::V6(ref addr) => net.contains(addr),
+                net::IpAddr::V6(addr) => net.contains(addr),
             },
         }
     }
 }
 
-impl<'a> TryFrom<&'a observe_request::match_::tcp::Netmask> for NetMatch {
+impl TryFrom<observe_request::match_::tcp::Netmask> for NetMatch {
     type Err = InvalidMatch;
-    fn try_from(m: &'a observe_request::match_::tcp::Netmask) -> Result<Self, InvalidMatch> {
+
+    fn try_from(m: observe_request::match_::tcp::Netmask) -> Result<Self, InvalidMatch> {
         let mask = if m.mask == 0 {
             return Err(InvalidMatch::Empty);
         } else if m.mask > u32::from(::std::u8::MAX) {
@@ -267,20 +214,15 @@ impl<'a> TryFrom<&'a observe_request::match_::tcp::Netmask> for NetMatch {
             m.mask as u8
         };
 
-        let ip =
-            m.ip.as_ref()
-                .and_then(|a| a.ip.as_ref())
-                .ok_or(InvalidMatch::Empty)?;
-
-        let net = match *ip {
-            ip_address::Ip::Ipv4(ref n) => {
-                let net =
-                    Ipv4Net::new((*n).into(), mask).map_err(|_| InvalidMatch::InvalidNetwork)?;
+        let net = match m.ip.and_then(|a| a.ip).ok_or(InvalidMatch::Empty)? {
+            ip_address::Ip::Ipv4(n) => {
+                let ip = n.into();
+                let net = Ipv4Net::new(ip, mask).map_err(|_| InvalidMatch::InvalidNetwork)?;
                 NetMatch::Net4(net)
             }
-            ip_address::Ip::Ipv6(ref ip6) => {
-                let net =
-                    Ipv6Net::new(ip6.into(), mask).map_err(|_| InvalidMatch::InvalidNetwork)?;
+            ip_address::Ip::Ipv6(n) => {
+                let ip = n.into();
+                let net = Ipv6Net::new(ip, mask).map_err(|_| InvalidMatch::InvalidNetwork)?;
                 NetMatch::Net6(net)
             }
         };
@@ -292,23 +234,24 @@ impl<'a> TryFrom<&'a observe_request::match_::tcp::Netmask> for NetMatch {
 // ===== impl HttpMatch ======
 
 impl HttpMatch {
-    fn matches(&self, req: &event::Request) -> bool {
-        match *self {
-            HttpMatch::Scheme(ref m) => req
-                .scheme
-                .as_ref()
-                .map(|s| m == s.as_ref())
-                .unwrap_or(false),
+    fn matches<B>(&self, req: &http::Request<B>) -> bool {
+        match self {
+            HttpMatch::Scheme(ref m) => req.scheme().map(|s| m == s).unwrap_or(false),
 
-            HttpMatch::Method(ref m) => *m == req.method,
+            HttpMatch::Method(ref m) => m == req.method(),
 
             HttpMatch::Authority(ref m) => req
                 .authority
                 .as_ref()
                 .map(|a| Self::matches_string(m, a.as_str()))
+                .or_else(|| {
+                    req.headers()
+                        .get(http::header::HOST)
+                        .map(|h| Self::matches_string(m, h.as_str()))
+                })
                 .unwrap_or(false),
 
-            HttpMatch::Path(ref m) => Self::matches_string(m, &req.path),
+            HttpMatch::Path(ref m) => Self::matches_string(m, req.path()),
         }
     }
 
@@ -318,48 +261,41 @@ impl HttpMatch {
     ) -> bool {
         use api::tap::observe_request::match_::http::string_match::Match::*;
 
-        match *string_match {
+        match string_match {
             Exact(ref exact) => value == exact,
             Prefix(ref prefix) => value.starts_with(prefix),
         }
     }
 }
 
-impl<'a> TryFrom<&'a observe_request::match_::Http> for HttpMatch {
+impl TryFrom<observe_request::match_::Http> for HttpMatch {
     type Err = InvalidMatch;
-    fn try_from(m: &'a observe_request::match_::Http) -> Result<Self, InvalidMatch> {
+    fn try_from(m: observe_request::match_::Http) -> Result<Self, InvalidMatch> {
         use api::tap::observe_request::match_::http::Match as Pb;
 
-        m.match_
-            .as_ref()
-            .ok_or(InvalidMatch::Empty)
-            .and_then(|m| match *m {
-                Pb::Scheme(ref s) => s
-                    .type_
-                    .as_ref()
-                    .ok_or(InvalidMatch::Empty)
-                    .and_then(|s| s.try_to_string().map_err(|_| InvalidMatch::InvalidScheme))
-                    .map(HttpMatch::Scheme),
+        m.match_.ok_or(InvalidMatch::Empty).and_then(|m| match m {
+            Pb::Scheme(s) => s.type_.ok_or(InvalidMatch::Empty).and_then(|s| {
+                s.try_to_string()
+                    .map(HttpMatch::Scheme)
+                    .map_err(|_| InvalidMatch::InvalidScheme)
+            }),
 
-                Pb::Method(ref m) => m
-                    .type_
-                    .as_ref()
-                    .ok_or(InvalidMatch::Empty)
-                    .and_then(|m| m.try_as_http().map_err(|_| InvalidMatch::InvalidHttpMethod))
-                    .map(HttpMatch::Method),
+            Pb::Method(m) => m
+                .type_
+                .ok_or(InvalidMatch::Empty)
+                .and_then(|m| m.try_as_http().map_err(|_| InvalidMatch::InvalidHttpMethod))
+                .map(HttpMatch::Method),
 
-                Pb::Authority(ref a) => a
-                    .match_
-                    .as_ref()
-                    .ok_or(InvalidMatch::Empty)
-                    .map(|a| HttpMatch::Authority(a.clone())),
+            Pb::Authority(a) => a
+                .match_
+                .ok_or(InvalidMatch::Empty)
+                .map(|a| HttpMatch::Authority(a)),
 
-                Pb::Path(ref p) => p
-                    .match_
-                    .as_ref()
-                    .ok_or(InvalidMatch::Empty)
-                    .map(|p| HttpMatch::Path(p.clone())),
-            })
+            Pb::Path(p) => p
+                .match_
+                .ok_or(InvalidMatch::Empty)
+                .map(|p| HttpMatch::Path(p)),
+        })
     }
 }
 
@@ -412,22 +348,21 @@ mod tests {
             use self::observe_request::match_::tcp;
 
             let err: Option<InvalidMatch> =
-                tcp.match_.as_ref()
-                    .map(|m| match *m {
-                        tcp::Match::Ports(ref ps) => {
+                tcp.match_
+                    .map(|m| match m {
+                        tcp::Match::Ports(ps) => {
                             let ok = 0 < ps.min &&
                                 ps.min <= ps.max &&
                                 ps.max < u32::from(::std::u16::MAX);
                             if ok { None } else { Some(InvalidMatch::InvalidPort) }
                         }
-                        tcp::Match::Netmask(ref n) => {
-                            let ip = n.ip.as_ref().and_then(|a| a.ip.as_ref());
-                            if ip.is_some() { None } else { Some(InvalidMatch::Empty) }
+                        tcp::Match::Netmask(n) => {
+                            if n.ip.is_some() { None } else { Some(InvalidMatch::Empty) }
                         }
                     })
                     .unwrap_or(Some(InvalidMatch::Empty));
 
-            err == TcpMatch::try_from(&tcp).err()
+            err == TcpMatch::try_from(tcp).err()
         }
 
         fn tcp_matches(m: TcpMatch, addr: net::SocketAddr) -> bool {
@@ -520,3 +455,21 @@ mod tests {
         }
     }
 }
+
+impl fmt::Display for InvalidMatch {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Empty => "missing required field",
+                InvalidPort => "invalid port number",
+                InvalidNetwork => "invalid network address",
+                InvalidHttpMethod => "invalid http method",
+                InvalidScheme => "invalid request scheme",
+            }
+        )
+    }
+}
+
+impl error::Error for InvalidMatch {}

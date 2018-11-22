@@ -3,10 +3,11 @@
 use std::error::Error;
 use std::fmt;
 
+use super::event::{self, Event};
+use api::pb_elapsed;
 use api::tap as api;
 use convert::*;
 use proxy;
-use tap::event::{self, Event};
 
 #[derive(Debug, Clone)]
 pub struct UnknownEvent;
@@ -107,6 +108,8 @@ impl event::StreamRequestFail {
 impl<'a> TryFrom<&'a Event> for api::TapEvent {
     type Err = UnknownEvent;
     fn try_from(ev: &'a Event) -> Result<Self, Self::Err> {
+        use api::http_types;
+
         let tap_ev = match *ev {
             Event::StreamRequestOpen(ref ctx) => {
                 let init = api::tap_event::http::RequestInit {
