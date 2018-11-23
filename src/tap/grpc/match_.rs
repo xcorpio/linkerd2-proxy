@@ -247,7 +247,6 @@ impl HttpMatch {
             HttpMatch::Authority(ref m) => req
                 .uri()
                 .authority_part()
-                .as_ref()
                 .map(|a| Self::matches_string(m, a.as_str()))
                 .or_else(|| {
                     req.headers()
@@ -277,8 +276,8 @@ impl HttpMatch {
 impl TryFrom<observe_request::match_::Http> for HttpMatch {
     type Err = InvalidMatch;
     fn try_from(m: observe_request::match_::Http) -> Result<Self, InvalidMatch> {
-        use api::tap::observe_request::match_::http::Match as Pb;
         use api::http_types::scheme::{Registered, Type};
+        use api::tap::observe_request::match_::http::Match as Pb;
 
         m.match_.ok_or(InvalidMatch::Empty).and_then(|m| match m {
             Pb::Scheme(s) => s.type_.ok_or(InvalidMatch::Empty).and_then(|s| match s {
@@ -289,11 +288,9 @@ impl TryFrom<observe_request::match_::Http> for HttpMatch {
                     Ok(HttpMatch::Scheme(http::uri::Scheme::HTTPS))
                 }
                 Type::Registered(_) => Err(InvalidMatch::InvalidScheme),
-                Type::Unregistered(ref s) => {
-                    http::uri::Scheme::from_shared(s.as_str().into())
-                        .map(HttpMatch::Scheme)
-                        .map_err(|_| InvalidMatch::InvalidScheme)
-                }
+                Type::Unregistered(ref s) => http::uri::Scheme::from_shared(s.as_str().into())
+                    .map(HttpMatch::Scheme)
+                    .map_err(|_| InvalidMatch::InvalidScheme),
             }),
 
             Pb::Method(m) => m
@@ -419,51 +416,38 @@ mod tests {
         fn http_from_proto(http: observe_request::match_::Http) -> bool {
             use self::observe_request::match_::http;
 
-            let err = match http.match_.as_ref() {
+            let err = match http.match_ {
                 None => Some(InvalidMatch::Empty),
                 Some(&http::Match::Method(ref m)) => {
-                    match m.type_.as_ref() {
+                    match m.type_ {
                         None => Some(InvalidMatch::Empty),
-                        Some(&http_types::http_method::Type::Unregistered(ref m)) => if m.len() <= 15 {
-                            let mut err = None;
-                            if let Err(_) = ::http::Method::from_bytes(m.as_bytes()) {
-                                err = Some(InvalidMatch::InvalidHttpMethod);
-                            }
-                            err
-                        } else {
+                        Some(http_types::http_method::Type::Unregistered(m)) if m.len() > 15 => {
                             Some(InvalidMatch::InvalidHttpMethod)
                         }
-                        Some(&http_types::http_method::Type::Registered(m)) => if m < 9 {
-                            None
-                        } else {
+                        Some(http_types::http_method::Type::Unregistered(m)) => {
+                            ::http::Method::from_bytes(m.as_bytes())
+                                .err()
+                                .map(|_| InvalidMatch::InvalidHttpMethod)
+                        }
+                        Some(http_types::http_method::Type::Registered(m)) if m >= 9 => {
                             Some(InvalidMatch::InvalidHttpMethod)
                         }
+                        Some(http_types::http_method::Type::Registered(_)) => None,
                     }
                 }
-                Some(&http::Match::Scheme(ref m)) => {
-                    match m.type_.as_ref() {
-                        None => Some(InvalidMatch::Empty),
-                        Some(&http_types::scheme::Type::Unregistered(_)) => None,
-                        Some(&http_types::scheme::Type::Registered(m)) => {
-                            if m < 2 {
-                                None
-                            } else {
-                                Some(InvalidMatch::InvalidScheme)
-                            }
-                        }
-                    }
+                Some(http::Match::Scheme(m)) => match m.type_ {
+                    None => Some(InvalidMatch::Empty),
+                    Some(http_types::scheme::Type::Unregistered(_)) => None,
+                    Some(http_types::scheme::Type::Registered(m)) if m < 2 => None,
+                    Some(http_types::scheme::Type::Registered(_)) => Some(InvalidMatch::InvalidScheme),
                 }
-                Some(&http::Match::Authority(ref m)) => {
-                    match m.match_ {
-                        None => Some(InvalidMatch::Empty),
-                        Some(_) => None,
-                    }
+                Some(http::Match::Authority(m)) => match m.match_ {
+                    None => Some(InvalidMatch::Empty),
+                    Some(_) => None,
                 }
-                Some(&http::Match::Path(ref m)) => {
-                    match m.match_ {
-                        None => Some(InvalidMatch::Empty),
-                        Some(_) => None,
-                    }
+                Some(http::Match::Path(m)) => match m.match_ {
+                    None => Some(InvalidMatch::Empty),
+                    Some(_) => None,
                 }
             };
 

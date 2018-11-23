@@ -12,14 +12,14 @@ mod daemon;
 mod grpc;
 mod service;
 
-pub type Layer<I> = service::Layer<daemon::Register<grpc::Tap<I>>>;
-pub type Server<I> = grpc::Server<I, daemon::Subscribe<grpc::Tap<I>>>;
-pub type Daemon<I> = daemon::Daemon<grpc::Tap<I>>;
+pub type Layer = service::Layer<daemon::Register<grpc::Tap>>;
+pub type Server = grpc::Server<daemon::Subscribe<grpc::Tap>>;
+pub type Daemon = daemon::Daemon<grpc::Tap>;
 
-pub fn new<I: Inspect + Clone>(inspect: I) -> (Layer<I>, Server<I>, Daemon<I>) {
+pub fn new() -> (Layer, Server, Daemon) {
     let (daemon, register, subscribe) = daemon::new();
     let layer = service::layer(register);
-    let server = Server::new(inspect, subscribe);
+    let server = Server::new(subscribe);
     (layer, server, daemon)
 }
 
@@ -27,6 +27,12 @@ pub trait Inspect {
     fn src_addr<B>(&self, req: &http::Request<B>) -> Option<&net::SocketAddr>;
     fn dst_addr<B>(&self, req: &http::Request<B>) -> Option<&net::SocketAddr>;
     fn dst_labels<B>(&self, req: &http::Request<B>) -> Option<&IndexMap<String, String>>;
+
+    fn is_outbound<B>(&self, req: &http::Request<B>) -> bool;
+
+    fn is_inbound<B>(&self, req: &http::Request<B>) -> bool {
+        !self.is_outbound(req)
+    }
 }
 
 trait Register {
@@ -45,9 +51,10 @@ trait Tap {
     type TapResponse: TapResponse<TapBody = Self::TapResponseBody>;
     type TapResponseBody: TapBody;
 
-    fn tap<B: Payload>(
+    fn tap<B: Payload, I: Inspect>(
         &self,
         req: &http::Request<B>,
+        inspect: &I,
     ) -> Option<(Self::TapRequestBody, Self::TapResponse)>;
 }
 

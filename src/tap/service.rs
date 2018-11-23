@@ -6,8 +6,8 @@ use std::collections::VecDeque;
 use std::sync::Weak;
 use tower_h2::Body as Payload;
 
+use super::{Inspect, Register, Tap, TapBody, TapResponse};
 use proxy::http::HasH2Reason;
-use super::{Register, Tap, TapBody, TapResponse};
 use svc;
 
 /// A stack module that wraps services to record taps.
@@ -25,10 +25,11 @@ pub struct Stack<R: Register, T> {
 
 /// A middleware that records HTTP taps.
 #[derive(Clone, Debug)]
-pub struct Service<R, S, T> {
+pub struct Service<I, R, S, T> {
     subscription_rx: R,
     subscriptions: VecDeque<Weak<S>>,
     inner: T,
+    inspect: I,
 }
 
 #[derive(Debug, Clone)]
@@ -38,7 +39,7 @@ pub struct ResponseFuture<F, T: TapResponse> {
 }
 
 #[derive(Debug)]
-pub struct Body<B, T: TapBody> {
+pub struct Body<B: Payload, T: TapBody> {
     inner: B,
     taps: VecDeque<T>,
 }
@@ -54,6 +55,7 @@ where
 
 impl<R, T, M> svc::Layer<T, T, M> for Layer<R>
 where
+    T: Inspect + Clone,
     R: Register + Clone,
     M: svc::Stack<T>,
 {
@@ -73,33 +75,33 @@ where
 
 impl<R, T, M> svc::Stack<T> for Stack<R, M>
 where
+    T: Inspect + Clone,
     R: Register + Clone,
     M: svc::Stack<T>,
 {
-    type Value = Service<R::Taps, R::Tap, M::Value>;
+    type Value = Service<T, R::Taps, R::Tap, M::Value>;
     type Error = M::Error;
 
     fn make(&self, target: &T) -> Result<Self::Value, Self::Error> {
         let inner = self.inner.make(&target)?;
         let subscription_rx = self.registry.register();
         Ok(Service {
+            inner,
             subscription_rx,
             subscriptions: VecDeque::default(),
-            inner,
+            inspect: target.clone(),
         })
     }
 }
 
 // === Service ===
 
-impl<R, S, T, A, B> svc::Service<http::Request<A>> for Service<R, S, T>
+impl<I, R, S, T, A, B> svc::Service<http::Request<A>> for Service<I, R, S, T>
 where
+    I: Inspect,
     R: Stream<Item = Weak<S>>,
     S: Tap,
-    T: svc::Service<
-        http::Request<Body<A, S::TapRequestBody>>,
-        Response = http::Response<B>,
-    >,
+    T: svc::Service<http::Request<Body<A, S::TapRequestBody>>, Response = http::Response<B>>,
     T::Error: HasH2Reason,
     A: Payload,
     B: Payload,
@@ -117,9 +119,10 @@ where
     }
 
     fn call(&mut self, req: http::Request<A>) -> Self::Future {
-        let taps = self.subscriptions.iter().filter_map(|s| {
-            s.upgrade().and_then(|s| s.tap(&req))
-        });
+        let taps = self
+            .subscriptions
+            .iter()
+            .filter_map(|s| s.upgrade().and_then(|s| s.tap(&req, &self.inspect)));
 
         let req_taps = VecDeque::with_capacity(self.subscriptions.len());
         let rsp_taps = VecDeque::with_capacity(self.subscriptions.len());
@@ -130,8 +133,11 @@ where
 
         let req = {
             let (head, inner) = req.into_parts();
-            let taps = req_taps;
-            http::Request::from_parts(head, Body { inner, taps })
+            let body = Body {
+                inner,
+                taps: req_taps,
+            };
+            http::Request::from_parts(head, body)
         };
 
         let inner = self.inner.call(req);
@@ -184,6 +190,16 @@ where
 
 // === Body ===
 
+impl<B: Payload + Default, T: TapBody> Default for Body<B, T> {
+    fn default() -> Self {
+        Self {
+            inner: B::default(),
+            taps: VecDeque::default(),
+        }
+    }
+}
+
+
 impl<B: Payload, T: TapBody> Payload for Body<B, T> {
     type Data = <B::Data as IntoBuf>::Buf;
 
@@ -211,8 +227,7 @@ impl<B: Payload, T: TapBody> Payload for Body<B, T> {
     }
 }
 
-impl<B, T: TapBody> Body<B, T> {
-
+impl<B: Payload, T: TapBody> Body<B, T> {
     fn tap_eos(&mut self, trailers: Option<&http::HeaderMap>) {
         while let Some(tap) = self.taps.pop_front() {
             tap.end(trailers);
@@ -228,10 +243,9 @@ impl<B, T: TapBody> Body<B, T> {
     }
 }
 
-impl<B, T: TapBody> Drop for Body<B, T> {
+impl<B: Payload, T: TapBody> Drop for Body<B, T> {
     fn drop(&mut self) {
         // TODO this should be recorded as a cancelation if the stream didn't end.
         self.tap_eos(None);
     }
 }
-

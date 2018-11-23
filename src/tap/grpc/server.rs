@@ -16,23 +16,21 @@ use tap::{self, Inspect, Subscribe};
 const PER_REQUEST_BUFFER_CAPACITY: usize = 40;
 
 #[derive(Clone, Debug)]
-pub struct Server<I, T> {
-    inspect: I,
+pub struct Server<T> {
     subscribe: T,
 }
 
 #[derive(Debug)]
-pub struct ResponseStream<I> {
+pub struct ResponseStream {
     rx: mpsc::Receiver<api::TapEvent>,
-    tap: Arc<Tap<I>>,
+    tap: Arc<Tap>,
 }
 
 #[derive(Clone, Debug)]
-pub struct Tap<I> {
+pub struct Tap {
     tx: mpsc::Sender<api::TapEvent>,
     match_: Match,
     remaining: Arc<AtomicUsize>,
-    inspect: I,
 }
 
 pub struct TapRequestBody(mpsc::Sender<api::TapEvent>);
@@ -41,9 +39,9 @@ pub struct TapResponse(mpsc::Sender<api::TapEvent>);
 
 pub struct TapResponseBody(mpsc::Sender<api::TapEvent>);
 
-impl<I: Inspect, T: Subscribe<Tap<I>>> Server<I, T> {
-    pub(in tap) fn new(inspect: I, subscribe: T) -> Self {
-        Self { inspect, subscribe }
+impl<T: Subscribe<Tap>> Server<T> {
+    pub(in tap) fn new(subscribe: T) -> Self {
+        Self { subscribe }
     }
 }
 
@@ -54,12 +52,11 @@ fn invalid_arg(msg: http::header::HeaderValue) -> grpc::Error {
     grpc::Error::Grpc(status, headers)
 }
 
-impl<I, T> api::server::Tap for Server<I, T>
+impl<T> api::server::Tap for Server<T>
 where
-    I: Inspect + Clone,
-    T: Subscribe<Tap<I>> + Clone
+    T: Subscribe<Tap> + Clone
 {
-    type ObserveStream = ResponseStream<I>;
+    type ObserveStream = ResponseStream;
     type ObserveFuture = future::FutureResult<Response<Self::ObserveStream>, grpc::Error>;
 
     fn observe(&mut self, req: grpc::Request<api::ObserveRequest>) -> Self::ObserveFuture {
@@ -85,7 +82,6 @@ where
         let tap = Arc::new(Tap {
             tx,
             match_,
-            inspect: self.inspect.clone(),
             remaining: Arc::new((req.limit as usize).into()),
         });
         self.subscribe.subscribe(Arc::downgrade(&tap));
@@ -94,7 +90,7 @@ where
     }
 }
 
-impl<I: Inspect> Stream for ResponseStream<I> {
+impl Stream for ResponseStream {
     type Item = api::TapEvent;
     type Error = grpc::Error;
 
@@ -103,21 +99,21 @@ impl<I: Inspect> Stream for ResponseStream<I> {
     }
 }
 
-impl<I: Inspect> tap::Tap for Tap<I> {
+impl tap::Tap for Tap {
     type TapRequestBody = TapRequestBody;
     type TapResponse = TapResponse;
     type TapResponseBody = TapResponseBody;
 
-    fn tap<B: Payload>(&self, req: &http::Request<B>) -> Option<(TapRequestBody, TapResponse)> {
-        if !self.match_.matches(&req, &self.inspect) {
+    fn tap<B: Payload, I: Inspect>(&self, req: &http::Request<B>, inspect: &I) -> Option<(TapRequestBody, TapResponse)> {
+        if !self.match_.matches(&req, inspect) {
             return None;
         }
 
-        fn req_open<B>(req: &http::Request<B>) -> api::TapEvent {
+        fn req_open<B, I: Inspect>(req: &http::Request<B>, inspect: &I) -> api::TapEvent {
             unimplemented!()
         }
 
-        let msg = req_open(req);
+        let msg = req_open(req, inspect);
 
         loop {
             // Determine whether a tap should be emitted by decrementing `remaining`.
