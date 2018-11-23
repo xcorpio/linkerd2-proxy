@@ -9,11 +9,7 @@ use api::net::ip_address;
 use api::tap::observe_request;
 use convert::TryFrom;
 
-pub trait Inspect {
-    fn src_addr<B>(&self, req: http::Request<B>) -> Option<net::SocketAddr>;
-    fn dst_addr<B>(&self, req: http::Request<B>) -> Option<net::SocketAddr>;
-    fn dst_labels<B>(&self, req: http::Request<B>) -> Option<&IndexMap<String, String>>;
-}
+use tap::Inspect;
 
 #[derive(Clone, Debug)]
 pub enum Match {
@@ -74,16 +70,23 @@ impl Match {
         Ok(new)
     }
 
-    pub fn matches<B>(&self, req: &http::Request<B>) -> bool {
+    pub fn matches<B, I: Inspect>(&self, req: &http::Request<B>, inspect: &I) -> bool {
         match self {
-            Match::Any(ref ms) => ms.iter().any(|m| m.matches(req)),
-            Match::All(ref ms) => ms.iter().all(|m| m.matches(req)),
-            Match::Not(ref not) => !not.matches(req),
-            Match::Source(ref src) => req.src_addr().map(|a| src.matches(a)).unwrap_or(false),
-            Match::Destination(ref dst) => req.dst_addr().map(|d| dst.matches(d)).unwrap_or(false),
-            Match::DestinationLabel(ref lbl) => {
-                req.dst_addr().map(|l| lbl.matches(l)).unwrap_or(false)
-            }
+            Match::Any(ref ms) => ms.iter().any(|m| m.matches(req, inspect)),
+            Match::All(ref ms) => ms.iter().all(|m| m.matches(req, inspect)),
+            Match::Not(ref not) => !not.matches(req, inspect),
+            Match::Source(ref src) => inspect
+                .src_addr(req)
+                .map(|a| src.matches(a))
+                .unwrap_or(false),
+            Match::Destination(ref dst) => inspect
+                .dst_addr(req)
+                .map(|d| dst.matches(d))
+                .unwrap_or(false),
+            Match::DestinationLabel(ref lbl) => inspect
+                .dst_labels(req)
+                .map(|l| lbl.matches(l))
+                .unwrap_or(false),
             Match::Http(ref http) => http.matches(req),
         }
     }
@@ -148,13 +151,12 @@ impl TryFrom<observe_request::match_::Label> for LabelMatch {
 // ===== impl TcpMatch ======
 
 impl TcpMatch {
-    fn matches(&self, addr: net::SocketAddr) -> bool {
+    fn matches(&self, addr: &net::SocketAddr) -> bool {
         match self {
             // If either a minimum or maximum is not specified, the range is considered to
             // be over a discrete value.
-            TcpMatch::PortRange(min, max) => min <= addr.port() && addr.port() <= max,
-
-            TcpMatch::Net(net) => net.matches(addr.ip()),
+            TcpMatch::PortRange(min, max) => *min <= addr.port() && addr.port() <= *max,
+            TcpMatch::Net(net) => net.matches(&addr.ip()),
         }
     }
 }
@@ -188,7 +190,7 @@ impl TryFrom<observe_request::match_::Tcp> for TcpMatch {
 // ===== impl NetMatch ======
 
 impl NetMatch {
-    fn matches(&self, addr: net::IpAddr) -> bool {
+    fn matches(&self, addr: &net::IpAddr) -> bool {
         match self {
             NetMatch::Net4(net) => match addr {
                 net::IpAddr::V6(_) => false,
@@ -221,7 +223,7 @@ impl TryFrom<observe_request::match_::tcp::Netmask> for NetMatch {
                 NetMatch::Net4(net)
             }
             ip_address::Ip::Ipv6(n) => {
-                let ip = n.into();
+                let ip = (&n).into();
                 let net = Ipv6Net::new(ip, mask).map_err(|_| InvalidMatch::InvalidNetwork)?;
                 NetMatch::Net6(net)
             }
@@ -236,22 +238,26 @@ impl TryFrom<observe_request::match_::tcp::Netmask> for NetMatch {
 impl HttpMatch {
     fn matches<B>(&self, req: &http::Request<B>) -> bool {
         match self {
-            HttpMatch::Scheme(ref m) => req.scheme().map(|s| m == s).unwrap_or(false),
+            HttpMatch::Scheme(ref m) => {
+                m == req.uri().scheme_part().unwrap_or(&http::uri::Scheme::HTTP)
+            }
 
             HttpMatch::Method(ref m) => m == req.method(),
 
             HttpMatch::Authority(ref m) => req
-                .authority
+                .uri()
+                .authority_part()
                 .as_ref()
                 .map(|a| Self::matches_string(m, a.as_str()))
                 .or_else(|| {
                     req.headers()
                         .get(http::header::HOST)
-                        .map(|h| Self::matches_string(m, h.as_str()))
+                        .and_then(|h| h.to_str().ok())
+                        .map(|h| Self::matches_string(m, h))
                 })
                 .unwrap_or(false),
 
-            HttpMatch::Path(ref m) => Self::matches_string(m, req.path()),
+            HttpMatch::Path(ref m) => Self::matches_string(m, req.uri().path()),
         }
     }
 
@@ -272,12 +278,22 @@ impl TryFrom<observe_request::match_::Http> for HttpMatch {
     type Err = InvalidMatch;
     fn try_from(m: observe_request::match_::Http) -> Result<Self, InvalidMatch> {
         use api::tap::observe_request::match_::http::Match as Pb;
+        use api::http_types::scheme::{Registered, Type};
 
         m.match_.ok_or(InvalidMatch::Empty).and_then(|m| match m {
-            Pb::Scheme(s) => s.type_.ok_or(InvalidMatch::Empty).and_then(|s| {
-                s.try_to_string()
-                    .map(HttpMatch::Scheme)
-                    .map_err(|_| InvalidMatch::InvalidScheme)
+            Pb::Scheme(s) => s.type_.ok_or(InvalidMatch::Empty).and_then(|s| match s {
+                Type::Registered(reg) if reg == Registered::Http.into() => {
+                    Ok(HttpMatch::Scheme(http::uri::Scheme::HTTP))
+                }
+                Type::Registered(reg) if reg == Registered::Https.into() => {
+                    Ok(HttpMatch::Scheme(http::uri::Scheme::HTTPS))
+                }
+                Type::Registered(_) => Err(InvalidMatch::InvalidScheme),
+                Type::Unregistered(ref s) => {
+                    http::uri::Scheme::from_shared(s.as_str().into())
+                        .map(HttpMatch::Scheme)
+                        .map_err(|_| InvalidMatch::InvalidScheme)
+                }
             }),
 
             Pb::Method(m) => m
@@ -365,7 +381,7 @@ mod tests {
             err == TcpMatch::try_from(tcp).err()
         }
 
-        fn tcp_matches(m: TcpMatch, addr: net::SocketAddr) -> bool {
+        fn tcp_matches(m: TcpMatch, addr: &net::SocketAddr) -> bool {
             let matches = match (&m, addr.ip()) {
                 (&TcpMatch::Net(NetMatch::Net4(ref n)), net::IpAddr::V4(ip)) => {
                     n.contains(&ip)
@@ -379,7 +395,7 @@ mod tests {
                 _ => false
             };
 
-            m.matches(&addr) == matches
+            m.matches(addr) == matches
         }
 
         fn labels_from_proto(label: observe_request::match_::Label) -> bool {

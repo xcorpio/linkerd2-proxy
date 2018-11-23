@@ -1,6 +1,8 @@
 use bytes::IntoBuf;
 use futures::Stream;
 use http;
+use indexmap::IndexMap;
+use std::net;
 use std::sync::Weak;
 use tower_h2::Body as Payload;
 
@@ -10,15 +12,21 @@ mod daemon;
 mod grpc;
 mod service;
 
-pub type Layer = service::Layer<daemon::Register<grpc::Tap>>;
-pub type Server = grpc::Server<daemon::Subscribe<grpc::Tap>>;
-pub type Daemon = daemon::Daemon<grpc::Tap>;
+pub type Layer<I> = service::Layer<daemon::Register<grpc::Tap<I>>>;
+pub type Server<I> = grpc::Server<I, daemon::Subscribe<grpc::Tap<I>>>;
+pub type Daemon<I> = daemon::Daemon<grpc::Tap<I>>;
 
-pub fn new() -> (Layer, Server, Daemon) {
+pub fn new<I: Inspect + Clone>(inspect: I) -> (Layer<I>, Server<I>, Daemon<I>) {
     let (daemon, register, subscribe) = daemon::new();
     let layer = service::layer(register);
-    let server = Server::new(subscribe);
+    let server = Server::new(inspect, subscribe);
     (layer, server, daemon)
+}
+
+pub trait Inspect {
+    fn src_addr<B>(&self, req: &http::Request<B>) -> Option<&net::SocketAddr>;
+    fn dst_addr<B>(&self, req: &http::Request<B>) -> Option<&net::SocketAddr>;
+    fn dst_labels<B>(&self, req: &http::Request<B>) -> Option<&IndexMap<String, String>>;
 }
 
 trait Register {
