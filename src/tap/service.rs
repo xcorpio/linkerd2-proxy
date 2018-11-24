@@ -228,13 +228,13 @@ impl<B: Payload, T: TapBody> Payload for Body<B, T> {
 
 impl<B: Payload, T: TapBody> Body<B, T> {
     fn eos(&mut self, trailers: Option<&http::HeaderMap>) {
-        while let Some(tap) = self.taps.pop_front() {
+        for tap in self.taps.drain(..) {
             tap.eos(trailers);
         }
     }
 
     fn err(&mut self, error: h2::Error) -> h2::Error {
-        while let Some(tap) = self.taps.pop_front() {
+        for tap in self.taps.drain(..) {
             tap.fail(&error);
         }
 

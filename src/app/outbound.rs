@@ -6,7 +6,7 @@ use proxy::http::settings;
 use svc;
 use tap;
 use transport::{connect, tls};
-use NameAddr;
+use {Conditional, NameAddr};
 
 #[derive(Clone, Debug)]
 pub struct Endpoint {
@@ -61,12 +61,20 @@ impl tap::Inspect for Endpoint {
         req.extensions().get::<Source>().map(|s| s.remote)
     }
 
+    fn src_tls<B>(&self, _: &http::Request<B>) -> tls::Status {
+        Conditional::None(tls::ReasonForNoTls::InternalTraffic)
+    }
+
     fn dst_addr<B>(&self, _: &http::Request<B>) -> Option<net::SocketAddr> {
         Some(self.connect.addr)
     }
 
     fn dst_labels<B>(&self, _: &http::Request<B>) -> Option<&IndexMap<String, String>> {
         Some(self.metadata.labels())
+    }
+
+    fn dst_tls<B>(&self, _: &http::Request<B>) -> tls::Status {
+        self.metadata.tls_status()
     }
 
     fn is_outbound<B>(&self, _: &http::Request<B>) -> bool {

@@ -47,9 +47,15 @@ impl settings::router::HasConnect for Endpoint {
 }
 
 impl tap::Inspect for Endpoint {
-
     fn src_addr<B>(&self, req: &http::Request<B>) -> Option<SocketAddr> {
         req.extensions().get::<Source>().map(|s| s.remote)
+    }
+
+    fn src_tls<B>(&self, req: &http::Request<B>) -> tls::Status {
+        req.extensions()
+            .get::<Source>()
+            .map(|s| s.tls_status)
+            .unwrap_or_else(|| Conditional::None(tls::ReasonForNoTls::Disabled))
     }
 
     fn dst_addr<B>(&self, _: &http::Request<B>) -> Option<SocketAddr> {
@@ -58,6 +64,10 @@ impl tap::Inspect for Endpoint {
 
     fn dst_labels<B>(&self, _: &http::Request<B>) -> Option<&IndexMap<String, String>> {
         None
+    }
+
+    fn dst_tls<B>(&self, _: &http::Request<B>) -> tls::Status {
+        Conditional::None(tls::ReasonForNoTls::InternalTraffic)
     }
 
     fn is_outbound<B>(&self, _: &http::Request<B>) -> bool {
@@ -109,10 +119,10 @@ impl<A> router::Recognize<http::Request<A>> for RecognizeEndpoint {
 }
 
 pub mod orig_proto_downgrade {
-    use std::marker::PhantomData;
     use http;
     use proxy::http::orig_proto;
     use proxy::server::Source;
+    use std::marker::PhantomData;
     use svc;
 
     #[derive(Debug)]
@@ -174,10 +184,7 @@ pub mod orig_proto_downgrade {
 
         fn make(&self, target: &Source) -> Result<Self::Value, Self::Error> {
             debug!("downgrading requests; source={:?}", target);
-            self
-                .inner
-                .make(&target)
-                .map(orig_proto::Downgrade::new)
+            self.inner.make(&target).map(orig_proto::Downgrade::new)
         }
     }
 }

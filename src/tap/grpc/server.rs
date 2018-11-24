@@ -1,13 +1,14 @@
-use bytes::IntoBuf;
+use bytes::Buf;
 use futures::{future, sync::mpsc, Poll, Stream};
 use http::HeaderMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
+use tokio_timer::clock;
 use tower_grpc::{self as grpc, Response};
 use tower_h2::Body as Payload;
 
-use api::http_types;
-use api::tap as api;
+use api::{http_types, pb_duration, tap as api};
 
 use super::match_::Match;
 use proxy::http::HasH2Reason;
@@ -27,30 +28,50 @@ pub struct ResponseStream {
     tap: Arc<Tap>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Tap {
     tx: mpsc::Sender<api::TapEvent>,
     match_: Match,
-    remaining: Arc<AtomicUsize>,
+    count: AtomicUsize,
+    total: usize,
 }
 
-pub struct TapRequestBody(mpsc::Sender<api::TapEvent>);
+#[derive(Debug)]
+pub struct TapResponse {
+    base_event: api::TapEvent,
+    id: api::tap_event::http::StreamId,
+    request_init_at: Instant,
+    tx: mpsc::Sender<api::TapEvent>,
+}
 
-pub struct TapResponse(mpsc::Sender<api::TapEvent>);
+#[derive(Debug)]
+pub struct TapRequestBody {
+    base_event: api::TapEvent,
+    id: api::tap_event::http::StreamId,
+    tx: mpsc::Sender<api::TapEvent>,
+}
 
-pub struct TapResponseBody(mpsc::Sender<api::TapEvent>);
+#[derive(Debug)]
+pub struct TapResponseBody {
+    base_event: api::TapEvent,
+    id: api::tap_event::http::StreamId,
+    request_init_at: Instant,
+    response_init_at: Instant,
+    response_bytes: usize,
+    tx: mpsc::Sender<api::TapEvent>,
+}
 
 impl<T: iface::Subscribe<Tap>> Server<T> {
     pub(in tap) fn new(subscribe: T) -> Self {
         Self { subscribe }
     }
-}
 
-fn invalid_arg(msg: http::header::HeaderValue) -> grpc::Error {
-    let status = grpc::Status::with_code(grpc::Code::InvalidArgument);
-    let mut headers = HeaderMap::new();
-    headers.insert("grpc-message", msg);
-    grpc::Error::Grpc(status, headers)
+    fn invalid_arg(msg: http::header::HeaderValue) -> grpc::Error {
+        let status = grpc::Status::with_code(grpc::Code::InvalidArgument);
+        let mut headers = HeaderMap::new();
+        headers.insert("grpc-message", msg);
+        grpc::Error::Grpc(status, headers)
+    }
 }
 
 impl<T> api::server::Tap for Server<T>
@@ -63,10 +84,17 @@ where
     fn observe(&mut self, req: grpc::Request<api::ObserveRequest>) -> Self::ObserveFuture {
         let req = req.into_inner();
 
-        if req.limit == 0 {
-            let v = http::header::HeaderValue::from_static("limit must be positive");
-            return future::err(invalid_arg(v));
-        }
+        let total = match req.limit as usize {
+            0 => {
+                let v = http::header::HeaderValue::from_static("limit must be positive");
+                return future::err(Self::invalid_arg(v));
+            }
+            n if n == ::std::usize::MAX => {
+                let v = http::header::HeaderValue::from_static("limit is too large");
+                return future::err(Self::invalid_arg(v));
+            }
+            n => n,
+        };
 
         let match_ = match Match::try_new(req.match_) {
             Ok(m) => m,
@@ -75,18 +103,13 @@ where
                     .parse()
                     .or_else(|_| "invalid message".parse())
                     .unwrap();
-                return future::err(invalid_arg(v));
+                return future::err(Self::invalid_arg(v));
             }
         };
 
         let (tx, rx) = mpsc::channel(PER_REQUEST_BUFFER_CAPACITY);
-        let tap = Arc::new(Tap {
-            tx,
-            match_,
-            remaining: Arc::new((req.limit as usize).into()),
-        });
+        let tap = Arc::new(Tap::new(tx, match_, total));
         self.subscribe.subscribe(Arc::downgrade(&tap));
-
         future::ok(Response::new(ResponseStream { rx, tap }))
     }
 }
@@ -97,6 +120,43 @@ impl Stream for ResponseStream {
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         self.rx.poll().or_else(|_| Ok(None.into()))
+    }
+}
+
+impl Tap {
+    fn new(tx: mpsc::Sender<api::TapEvent>, match_: Match, total: usize) -> Self {
+        Self {
+            tx,
+            match_,
+            total,
+            count: 0.into(),
+        }
+    }
+
+    fn base_event<B, I: Inspect>(req: &http::Request<B>, inspect: &I) -> api::TapEvent {
+        api::TapEvent {
+            proxy_direction: if inspect.is_outbound(req) {
+                api::tap_event::ProxyDirection::Outbound.into()
+            } else {
+                api::tap_event::ProxyDirection::Inbound.into()
+            },
+            source: inspect.src_addr(req).as_ref().map(|a| a.into()),
+            source_meta: {
+                let mut m = api::tap_event::EndpointMeta::default();
+                m.labels
+                    .insert("tls".to_owned(), format!("{}", inspect.src_tls(req)));
+                Some(m)
+            },
+            destination: inspect.dst_addr(req).as_ref().map(|a| a.into()),
+            destination_meta: inspect.dst_labels(req).map(|labels| {
+                let mut m = api::tap_event::EndpointMeta::default();
+                m.labels.extend(labels.clone());
+                m.labels
+                    .insert("tls".to_owned(), format!("{}", inspect.dst_tls(req)));
+                m
+            }),
+            event: None,
+        }
     }
 }
 
@@ -114,127 +174,162 @@ impl iface::Tap for Tap {
             return None;
         }
 
-        // TODO request ID.
-        let id: api::tap_event::http::StreamId = { api::tap_event::http::StreamId::default() };
+        let n = self.count.fetch_add(1, Ordering::AcqRel);
 
-        let proxy_direction = if inspect.is_outbound(req) {
-            api::tap_event::ProxyDirection::Outbound
-        } else {
-            api::tap_event::ProxyDirection::Inbound
-        };
-
-        let source = inspect.src_addr(req).as_ref().map(|a| a.into());
-        // TODO tls
-        let source_meta = None;
-
-        let destination = inspect.dst_addr(req).as_ref().map(|a| a.into());
-        let destination_meta = inspect.dst_labels(req).map(|labels| {
-            let mut meta = api::tap_event::EndpointMeta::default();
-            meta.labels.extend(labels.clone());
-            // TODO tls?
-            meta
-        });
-
-        let authority = req
-            .uri()
-            .authority_part()
-            .map(|a| a.as_str())
-            .unwrap_or_default()
-            .into();
-
-        let init = api::tap_event::http::RequestInit {
-            id: Some(id),
-            method: Some(req.method().into()),
-            scheme: req.uri().scheme_part().map(http_types::Scheme::from),
-            authority,
-            path: req.uri().path().into(),
-        };
-
-        let event = Some(api::tap_event::Event::Http(api::tap_event::Http {
-            event: Some(api::tap_event::http::Event::RequestInit(init)),
-        }));
-
-        let msg = api::TapEvent {
-            proxy_direction: proxy_direction.into(),
-            source,
-            source_meta,
-            destination,
-            destination_meta,
-            event,
-        };
-
-        loop {
-            // Determine whether a tap should be emitted by decrementing `remaining`.
-            //
-            // `AtomicUsize::fetch_sub` cannot be used because it wraps on overflow.
-            let n = self.remaining.load(Ordering::Acquire);
-
-            // If there are no more requests to tap, drop the sender so that the
-            // receiver closes immediately.
-            if n == 0 {
-                return None;
-            }
-
-            // Claim a tap slot by decrementing the remaining count.
-            let m = self.remaining.compare_and_swap(n, n - 1, Ordering::AcqRel);
-            if n != m {
-                // Another task claimed the slot, so try again.
-                continue;
-            }
-
-            // If the receiver event isn't actually written to the channel,
-            // return None so that we don't do work for an unaccounted request.
-            let mut tx = self.tx.clone();
-            return tx.try_send(msg).ok().map(move |()| {
-                let req = TapRequestBody(tx.clone());
-                let rsp = TapResponse(tx);
-                (req, rsp)
-            });
+        // If there are no more requests to tap, drop the sender so that the
+        // receiver closes immediately.
+        if n == self.total {
+            return None;
         }
+
+        let base_event = Self::base_event(req, inspect);
+
+        let id = api::tap_event::http::StreamId {
+            base: 0,
+            stream: n as u64,
+        };
+
+        // If the receiver event isn't actually written to the channel,
+        // return None so that we don't do work for an unaccounted request.
+        let mut tx = self.tx.clone();
+        let msg = api::TapEvent {
+            event: Some(api::tap_event::Event::Http(api::tap_event::Http {
+                event: Some(api::tap_event::http::Event::RequestInit(
+                    api::tap_event::http::RequestInit {
+                        id: Some(id.clone()),
+                        method: Some(req.method().into()),
+                        scheme: req.uri().scheme_part().map(http_types::Scheme::from),
+                        authority: inspect.authority(req).unwrap_or_default().to_owned(),
+                        path: req.uri().path().into(),
+                    },
+                )),
+            })),
+            ..base_event.clone()
+        };
+        let _ = tx.try_send(msg).ok()?;
+
+        let request_init_at = clock::now();
+        let req = TapRequestBody {
+            id: id.clone(),
+            tx: tx.clone(),
+            base_event: base_event.clone(),
+        };
+        let rsp = TapResponse {
+            id,
+            tx,
+            base_event,
+            request_init_at,
+        };
+        Some((req, rsp))
     }
 }
 
 impl iface::TapResponse for TapResponse {
     type TapBody = TapResponseBody;
 
-    fn tap<B: Payload>(mut self, req: &http::Response<B>) -> TapResponseBody {
-        fn rsp_open<B>(_req: &http::Response<B>) -> api::TapEvent {
-            unimplemented!()
-        }
+    fn tap<B: Payload>(mut self, rsp: &http::Response<B>) -> TapResponseBody {
+        let response_init_at = clock::now();
+        let msg = api::TapEvent {
+            event: Some(api::tap_event::Event::Http(api::tap_event::Http {
+                event: Some(api::tap_event::http::Event::ResponseInit(
+                    api::tap_event::http::ResponseInit {
+                        id: Some(self.id.clone()),
+                        since_request_init: Some(pb_duration(
+                            response_init_at - self.request_init_at,
+                        )),
+                        http_status: rsp.status().as_u16().into(),
+                    },
+                )),
+            })),
+            ..self.base_event.clone()
+        };
+        let _ = self.tx.try_send(msg);
 
-        let _ = self.0.try_send(rsp_open(req));
-        TapResponseBody(self.0)
+        TapResponseBody {
+            base_event: self.base_event,
+            id: self.id,
+            request_init_at: self.request_init_at,
+            response_init_at,
+            response_bytes: 0,
+            tx: self.tx,
+        }
     }
 
-    fn fail<E: HasH2Reason>(self, _: &E) {
-        unimplemented!()
+    fn fail<E: HasH2Reason>(mut self, e: &E) {
+        let response_end_at = clock::now();
+        let end = e.h2_reason().map(|r| api::eos::End::ResetErrorCode(r.into()));
+        let msg = api::TapEvent {
+            event: Some(api::tap_event::Event::Http(api::tap_event::Http {
+                event: Some(api::tap_event::http::Event::ResponseEnd(
+                    api::tap_event::http::ResponseEnd {
+                        id: Some(self.id.clone()),
+                        since_request_init: Some(pb_duration(
+                            response_end_at - self.request_init_at,
+                        )),
+                        since_response_init: None,
+                        response_bytes: 0,
+                        eos: Some(api::Eos { end }),
+                    },
+                )),
+            })),
+            ..self.base_event
+        };
+
+        let _ = self.tx.try_send(msg);
     }
 }
 
 impl iface::TapBody for TapRequestBody {
-    fn data<B: IntoBuf>(&mut self, _: &B::Buf) {
-        unimplemented!()
-    }
+    fn data<B: Buf>(&mut self, _: &B) {}
 
-    fn eos(self, _: Option<&http::HeaderMap>) {
-        unimplemented!()
-    }
+    fn eos(self, _: Option<&http::HeaderMap>) {}
 
-    fn fail(self, _: &h2::Error) {
-        unimplemented!()
-    }
+    fn fail(self, _: &h2::Error) {}
 }
 
 impl iface::TapBody for TapResponseBody {
-    fn data<B: IntoBuf>(&mut self, _: &B::Buf) {
-        unimplemented!()
+    fn data<B: Buf>(&mut self, data: &B) {
+        self.response_bytes += data.remaining();
     }
 
-    fn eos(self, _: Option<&http::HeaderMap>) {
-        unimplemented!()
+    fn eos(self, trls: Option<&http::HeaderMap>) {
+        let end = trls
+            .and_then(|t| t.get("grpc-status"))
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<u32>().ok())
+            .map(api::eos::End::GrpcStatusCode);
+
+        self.send_end(end);
     }
 
-    fn fail(self, _: &h2::Error) {
-        unimplemented!()
+    fn fail(self, e: &h2::Error) {
+        let end = e.reason().map(|r| api::eos::End::ResetErrorCode(r.into()));
+        self.send_end(end);
+    }
+}
+
+impl TapResponseBody {
+    fn send_end(mut self, end: Option<api::eos::End>) {
+        let response_end_at = clock::now();
+        let msg = api::TapEvent {
+            event: Some(api::tap_event::Event::Http(api::tap_event::Http {
+                event: Some(api::tap_event::http::Event::ResponseEnd(
+                    api::tap_event::http::ResponseEnd {
+                        id: Some(self.id.clone()),
+                        since_request_init: Some(pb_duration(
+                            response_end_at - self.request_init_at,
+                        )),
+                        since_response_init: Some(pb_duration(
+                            response_end_at - self.response_init_at,
+                        )),
+                        response_bytes: self.response_bytes as u64,
+                        eos: Some(api::Eos { end }),
+                    },
+                )),
+            })),
+            ..self.base_event
+        };
+
+        let _ = self.tx.try_send(msg);
     }
 }

@@ -87,7 +87,7 @@ impl Match {
                 .dst_labels(req)
                 .map(|l| lbl.matches(l))
                 .unwrap_or(false),
-            Match::Http(ref http) => http.matches(req),
+            Match::Http(ref http) => http.matches(req, inspect),
         }
     }
 }
@@ -236,7 +236,7 @@ impl TryFrom<observe_request::match_::tcp::Netmask> for NetMatch {
 // ===== impl HttpMatch ======
 
 impl HttpMatch {
-    fn matches<B>(&self, req: &http::Request<B>) -> bool {
+    fn matches<B, I: Inspect>(&self, req: &http::Request<B>, inspect: &I) -> bool {
         match self {
             HttpMatch::Scheme(ref m) => {
                 m == req.uri().scheme_part().unwrap_or(&http::uri::Scheme::HTTP)
@@ -244,16 +244,9 @@ impl HttpMatch {
 
             HttpMatch::Method(ref m) => m == req.method(),
 
-            HttpMatch::Authority(ref m) => req
-                .uri()
-                .authority_part()
-                .map(|a| Self::matches_string(m, a.as_str()))
-                .or_else(|| {
-                    req.headers()
-                        .get(http::header::HOST)
-                        .and_then(|h| h.to_str().ok())
-                        .map(|h| Self::matches_string(m, h))
-                })
+            HttpMatch::Authority(ref m) => inspect
+                .authority(req)
+                .map(|a| Self::matches_string(m, &a))
                 .unwrap_or(false),
 
             HttpMatch::Path(ref m) => Self::matches_string(m, req.uri().path()),

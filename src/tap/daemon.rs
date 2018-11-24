@@ -40,10 +40,10 @@ pub struct Daemon<T> {
     taps: VecDeque<Weak<T>>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Register<T>(mpsc::Sender<mpsc::Sender<Weak<T>>>);
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Subscribe<T>(mpsc::Sender<Weak<T>>);
 
 impl<T: Tap> Future for Daemon<T> {
@@ -93,6 +93,12 @@ impl<T: Tap> Future for Daemon<T> {
     }
 }
 
+impl<T: Tap> Clone for Register<T> {
+    fn clone(&self) -> Self {
+        Register(self.0.clone())
+    }
+}
+
 impl<T: Tap> super::iface::Register for Register<T> {
     type Tap = T;
     type Taps = mpsc::Receiver<Weak<T>>;
@@ -101,6 +107,12 @@ impl<T: Tap> super::iface::Register for Register<T> {
         let (tx, rx) = mpsc::channel(REGISTER_TAPS_BUFFER_CAPACITY);
         let _ = self.0.try_send(tx);
         rx
+    }
+}
+
+impl<T: Tap> Clone for Subscribe<T> {
+    fn clone(&self) -> Self {
+        Subscribe(self.0.clone())
     }
 }
 
