@@ -113,6 +113,7 @@ where
         // Wrapping is okay. This is realy just to disambiguate events within a
         // single tap stream.
         let base_id = self.base_id.fetch_add(1, Ordering::AcqRel) as u32;
+        info!("tap id={}", base_id);
 
         let (tx, rx) = mpsc::channel(PER_REQUEST_BUFFER_CAPACITY);
         let tap = Arc::new(Tap::new(base_id, tx, match_, total));
