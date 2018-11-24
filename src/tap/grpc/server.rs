@@ -6,6 +6,7 @@ use std::sync::Arc;
 use tower_grpc::{self as grpc, Response};
 use tower_h2::Body as Payload;
 
+use api::http_types;
 use api::tap as api;
 
 use super::match_::Match;
@@ -54,7 +55,7 @@ fn invalid_arg(msg: http::header::HeaderValue) -> grpc::Error {
 
 impl<T> api::server::Tap for Server<T>
 where
-    T: iface::Subscribe<Tap> + Clone
+    T: iface::Subscribe<Tap> + Clone,
 {
     type ObserveStream = ResponseStream;
     type ObserveFuture = future::FutureResult<Response<Self::ObserveStream>, grpc::Error>;
@@ -104,16 +105,63 @@ impl iface::Tap for Tap {
     type TapResponse = TapResponse;
     type TapResponseBody = TapResponseBody;
 
-    fn tap<B: Payload, I: Inspect>(&self, req: &http::Request<B>, inspect: &I) -> Option<(TapRequestBody, TapResponse)> {
+    fn tap<B: Payload, I: Inspect>(
+        &self,
+        req: &http::Request<B>,
+        inspect: &I,
+    ) -> Option<(TapRequestBody, TapResponse)> {
         if !self.match_.matches(&req, inspect) {
             return None;
         }
 
-        fn req_open<B, I: Inspect>(_req: &http::Request<B>, _inspect: &I) -> api::TapEvent {
-            unimplemented!()
-        }
+        // TODO request ID.
+        let id: api::tap_event::http::StreamId = { api::tap_event::http::StreamId::default() };
 
-        let msg = req_open(req, inspect);
+        let proxy_direction = if inspect.is_outbound(req) {
+            api::tap_event::ProxyDirection::Outbound
+        } else {
+            api::tap_event::ProxyDirection::Inbound
+        };
+
+        let source = inspect.src_addr(req).as_ref().map(|a| a.into());
+        // TODO tls
+        let source_meta = None;
+
+        let destination = inspect.dst_addr(req).as_ref().map(|a| a.into());
+        let destination_meta = inspect.dst_labels(req).map(|labels| {
+            let mut meta = api::tap_event::EndpointMeta::default();
+            meta.labels.extend(labels.clone());
+            // TODO tls?
+            meta
+        });
+
+        let authority = req
+            .uri()
+            .authority_part()
+            .map(|a| a.as_str())
+            .unwrap_or_default()
+            .into();
+
+        let init = api::tap_event::http::RequestInit {
+            id: Some(id),
+            method: Some(req.method().into()),
+            scheme: req.uri().scheme_part().map(http_types::Scheme::from),
+            authority,
+            path: req.uri().path().into(),
+        };
+
+        let event = Some(api::tap_event::Event::Http(api::tap_event::Http {
+            event: Some(api::tap_event::http::Event::RequestInit(init)),
+        }));
+
+        let msg = api::TapEvent {
+            proxy_direction: proxy_direction.into(),
+            source,
+            source_meta,
+            destination,
+            destination_meta,
+            event,
+        };
 
         loop {
             // Determine whether a tap should be emitted by decrementing `remaining`.
