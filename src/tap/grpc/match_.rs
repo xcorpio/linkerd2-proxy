@@ -354,7 +354,7 @@ mod tests {
             use self::observe_request::match_::tcp;
 
             let err: Option<InvalidMatch> =
-                tcp.match_
+                tcp.match_.as_ref()
                     .map(|m| match m {
                         tcp::Match::Ports(ps) => {
                             let ok = 0 < ps.min &&
@@ -363,7 +363,10 @@ mod tests {
                             if ok { None } else { Some(InvalidMatch::InvalidPort) }
                         }
                         tcp::Match::Netmask(n) => {
-                            if n.ip.is_some() { None } else { Some(InvalidMatch::Empty) }
+                            match n.ip.as_ref().and_then(|ip| ip.ip.as_ref()) {
+                                Some(_) => None,
+                                None => Some(InvalidMatch::Empty),
+                            }
                         }
                     })
                     .unwrap_or(Some(InvalidMatch::Empty));
@@ -371,7 +374,7 @@ mod tests {
             err == TcpMatch::try_from(tcp).err()
         }
 
-        fn tcp_matches(m: TcpMatch, addr: &net::SocketAddr) -> bool {
+        fn tcp_matches(m: TcpMatch, addr: net::SocketAddr) -> bool {
             let matches = match (&m, addr.ip()) {
                 (&TcpMatch::Net(NetMatch::Net4(ref n)), net::IpAddr::V4(ip)) => {
                     n.contains(&ip)
@@ -396,7 +399,7 @@ mod tests {
                     None
                 };
 
-            err == LabelMatch::try_from(&label).err()
+            err == LabelMatch::try_from(label).err()
         }
 
         fn label_matches(l: LabelMatch, labels: HashMap<String, String>) -> bool {
@@ -409,12 +412,12 @@ mod tests {
         fn http_from_proto(http: observe_request::match_::Http) -> bool {
             use self::observe_request::match_::http;
 
-            let err = match http.match_ {
+            let err = match http.match_.as_ref() {
                 None => Some(InvalidMatch::Empty),
-                Some(&http::Match::Method(ref m)) => {
-                    match m.type_ {
+                Some(http::Match::Method(ref m)) => {
+                    match m.type_.as_ref() {
                         None => Some(InvalidMatch::Empty),
-                        Some(http_types::http_method::Type::Unregistered(m)) if m.len() > 15 => {
+                        Some(http_types::http_method::Type::Unregistered(ref m)) if m.len() > 15 => {
                             Some(InvalidMatch::InvalidHttpMethod)
                         }
                         Some(http_types::http_method::Type::Unregistered(m)) => {
@@ -422,29 +425,29 @@ mod tests {
                                 .err()
                                 .map(|_| InvalidMatch::InvalidHttpMethod)
                         }
-                        Some(http_types::http_method::Type::Registered(m)) if m >= 9 => {
+                        Some(http_types::http_method::Type::Registered(m)) if *m >= 9 => {
                             Some(InvalidMatch::InvalidHttpMethod)
                         }
                         Some(http_types::http_method::Type::Registered(_)) => None,
                     }
                 }
-                Some(http::Match::Scheme(m)) => match m.type_ {
+                Some(http::Match::Scheme(m)) => match m.type_.as_ref() {
                     None => Some(InvalidMatch::Empty),
                     Some(http_types::scheme::Type::Unregistered(_)) => None,
-                    Some(http_types::scheme::Type::Registered(m)) if m < 2 => None,
+                    Some(http_types::scheme::Type::Registered(m)) if *m < 2 => None,
                     Some(http_types::scheme::Type::Registered(_)) => Some(InvalidMatch::InvalidScheme),
                 }
-                Some(http::Match::Authority(m)) => match m.match_ {
+                Some(http::Match::Authority(m)) => match m.match_.as_ref() {
                     None => Some(InvalidMatch::Empty),
                     Some(_) => None,
                 }
-                Some(http::Match::Path(m)) => match m.match_ {
+                Some(http::Match::Path(m)) => match m.match_.as_ref() {
                     None => Some(InvalidMatch::Empty),
                     Some(_) => None,
                 }
             };
 
-            err == HttpMatch::try_from(&http).err()
+            err == HttpMatch::try_from(http).err()
         }
     }
 }
