@@ -1,4 +1,4 @@
-use bytes::{Buf, IntoBuf};
+use bytes::IntoBuf;
 use futures::{Async, Future, Poll, Stream};
 use h2;
 use http;
@@ -6,7 +6,8 @@ use std::collections::VecDeque;
 use std::sync::Weak;
 use tower_h2::Body as Payload;
 
-use super::{Inspect, Register, Tap, TapBody, TapResponse};
+use super::iface::{Register, Tap, TapBody, TapResponse};
+use super::Inspect;
 use proxy::http::HasH2Reason;
 use svc;
 
@@ -46,11 +47,13 @@ pub struct Body<B: Payload, T: TapBody> {
 
 // === Layer ===
 
-pub fn layer<R>(registry: R) -> Layer<R>
+impl<R> Layer<R>
 where
     R: Register + Clone,
 {
-    Layer { registry }
+    pub(super) fn new(registry: R) -> Self {
+        Layer { registry }
+    }
 }
 
 impl<R, T, M> svc::Layer<T, T, M> for Layer<R>
@@ -84,7 +87,7 @@ where
 
     fn make(&self, target: &T) -> Result<Self::Value, Self::Error> {
         let inner = self.inner.make(&target)?;
-        let subscription_rx = self.registry.register();
+        let subscription_rx = self.registry.clone().register();
         Ok(Service {
             inner,
             subscription_rx,
@@ -119,16 +122,13 @@ where
     }
 
     fn call(&mut self, req: http::Request<A>) -> Self::Future {
-        let taps = self
-            .subscriptions
-            .iter()
-            .filter_map(|s| s.upgrade().and_then(|s| s.tap(&req, &self.inspect)));
-
-        let req_taps = VecDeque::with_capacity(self.subscriptions.len());
-        let rsp_taps = VecDeque::with_capacity(self.subscriptions.len());
-        for (req_tap, rsp_tap) in taps {
-            req_taps.push_back(req_tap);
-            rsp_taps.push_back(rsp_tap);
+        let mut req_taps = VecDeque::with_capacity(self.subscriptions.len());
+        let mut rsp_taps = VecDeque::with_capacity(self.subscriptions.len());
+        for t in self.subscriptions.iter().filter_map(Weak::upgrade) {
+            if let Some((req_tap, rsp_tap)) = t.tap(&req, &self.inspect) {
+                req_taps.push_back(req_tap);
+                rsp_taps.push_back(rsp_tap);
+            }
         }
 
         let req = {
@@ -199,7 +199,6 @@ impl<B: Payload + Default, T: TapBody> Default for Body<B, T> {
     }
 }
 
-
 impl<B: Payload, T: TapBody> Payload for Body<B, T> {
     type Data = <B::Data as IntoBuf>::Buf;
 
@@ -213,7 +212,7 @@ impl<B: Payload, T: TapBody> Payload for Body<B, T> {
 
         if let Some(ref f) = frame.as_ref() {
             for ref mut tap in self.taps.iter_mut() {
-                tap.data(f);
+                tap.data::<Self::Data>(f);
             }
         }
 

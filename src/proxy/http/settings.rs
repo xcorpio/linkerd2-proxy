@@ -212,7 +212,8 @@ pub mod router {
         }
 
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
-            ResponseFuture { inner: self.router.call(req) }
+            let inner = self.router.call(req);
+            ResponseFuture { inner }
         }
     }
 

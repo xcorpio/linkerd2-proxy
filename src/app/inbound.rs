@@ -34,10 +34,6 @@ impl classify::CanClassify for Endpoint {
 }
 
 impl Endpoint {
-    pub fn dst_name(&self) -> Option<&NameAddr> {
-        self.dst_name.as_ref()
-    }
-
     fn target(&self) -> connect::Target {
         let tls = Conditional::None(tls::ReasonForNoTls::InternalTraffic);
         connect::Target::new(self.addr, tls)
@@ -56,15 +52,15 @@ impl tap::Inspect for Endpoint {
         req.extensions().get::<Source>().map(|s| s.remote)
     }
 
-    fn dst_addr<B>(&self, req: &http::Request<B>) -> Option<SocketAddr> {
+    fn dst_addr<B>(&self, _: &http::Request<B>) -> Option<SocketAddr> {
         Some(self.addr)
     }
 
-    fn dst_labels<B>(&self, req: &http::Request<B>) -> Option<&IndexMap<String, String>> {
+    fn dst_labels<B>(&self, _: &http::Request<B>) -> Option<&IndexMap<String, String>> {
         None
     }
 
-    fn is_outbound<B>(&self, req: &http::Request<B>) -> bool {
+    fn is_outbound<B>(&self, _: &http::Request<B>) -> bool {
         false
     }
 }

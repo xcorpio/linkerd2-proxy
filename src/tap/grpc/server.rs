@@ -10,7 +10,7 @@ use api::tap as api;
 
 use super::match_::Match;
 use proxy::http::HasH2Reason;
-use tap::{self, Inspect, Subscribe};
+use tap::{iface, Inspect};
 
 // Buffer ~10 req/rsp pairs' worth of events.
 const PER_REQUEST_BUFFER_CAPACITY: usize = 40;
@@ -39,7 +39,7 @@ pub struct TapResponse(mpsc::Sender<api::TapEvent>);
 
 pub struct TapResponseBody(mpsc::Sender<api::TapEvent>);
 
-impl<T: Subscribe<Tap>> Server<T> {
+impl<T: iface::Subscribe<Tap>> Server<T> {
     pub(in tap) fn new(subscribe: T) -> Self {
         Self { subscribe }
     }
@@ -54,7 +54,7 @@ fn invalid_arg(msg: http::header::HeaderValue) -> grpc::Error {
 
 impl<T> api::server::Tap for Server<T>
 where
-    T: Subscribe<Tap> + Clone
+    T: iface::Subscribe<Tap> + Clone
 {
     type ObserveStream = ResponseStream;
     type ObserveFuture = future::FutureResult<Response<Self::ObserveStream>, grpc::Error>;
@@ -99,7 +99,7 @@ impl Stream for ResponseStream {
     }
 }
 
-impl tap::Tap for Tap {
+impl iface::Tap for Tap {
     type TapRequestBody = TapRequestBody;
     type TapResponse = TapResponse;
     type TapResponseBody = TapResponseBody;
@@ -109,7 +109,7 @@ impl tap::Tap for Tap {
             return None;
         }
 
-        fn req_open<B, I: Inspect>(req: &http::Request<B>, inspect: &I) -> api::TapEvent {
+        fn req_open<B, I: Inspect>(_req: &http::Request<B>, _inspect: &I) -> api::TapEvent {
             unimplemented!()
         }
 
@@ -146,11 +146,11 @@ impl tap::Tap for Tap {
     }
 }
 
-impl tap::TapResponse for TapResponse {
+impl iface::TapResponse for TapResponse {
     type TapBody = TapResponseBody;
 
-    fn tap<B: Payload>(self, req: &http::Response<B>) -> TapResponseBody {
-        fn rsp_open<B>(req: &http::Response<B>) -> api::TapEvent {
+    fn tap<B: Payload>(mut self, req: &http::Response<B>) -> TapResponseBody {
+        fn rsp_open<B>(_req: &http::Response<B>) -> api::TapEvent {
             unimplemented!()
         }
 
@@ -163,7 +163,7 @@ impl tap::TapResponse for TapResponse {
     }
 }
 
-impl tap::TapBody for TapRequestBody {
+impl iface::TapBody for TapRequestBody {
     fn data<B: IntoBuf>(&mut self, _: &B::Buf) {
         unimplemented!()
     }
@@ -177,7 +177,7 @@ impl tap::TapBody for TapRequestBody {
     }
 }
 
-impl tap::TapBody for TapResponseBody {
+impl iface::TapBody for TapResponseBody {
     fn data<B: IntoBuf>(&mut self, _: &B::Buf) {
         unimplemented!()
     }

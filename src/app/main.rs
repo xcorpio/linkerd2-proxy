@@ -327,7 +327,7 @@ where
                     .push(buffer::layer())
                     .push(settings::router::layer::<Endpoint, _>())
                     .push(orig_proto_upgrade::layer())
-                    .push(tap_layer)
+                    .push(tap_layer.clone())
                     .push(metrics::layer::<_, classify::Response>(
                         endpoint_http_metrics,
                     ))
@@ -476,6 +476,7 @@ where
                 let endpoint_router = client_stack
                     .push(buffer::layer())
                     .push(settings::router::layer::<Endpoint, _>())
+                    .push(phantom_data::layer())
                     .push(tap_layer)
                     .push(http_metrics::layer::<_, classify::Response>(
                         endpoint_http_metrics,
@@ -597,7 +598,7 @@ where
                         metrics::Serve::new(report),
                     );
 
-                    rt.spawn(tap_daemon);
+                    rt.spawn(tap_daemon.map_err(|_| ()));
                     rt.spawn(serve_tap(control_listener, TapServer::new(tap_grpc)));
 
                     rt.spawn(metrics);

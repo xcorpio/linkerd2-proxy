@@ -61,15 +61,15 @@ impl tap::Inspect for Endpoint {
         req.extensions().get::<Source>().map(|s| s.remote)
     }
 
-    fn dst_addr<B>(&self, req: &http::Request<B>) -> Option<net::SocketAddr> {
+    fn dst_addr<B>(&self, _: &http::Request<B>) -> Option<net::SocketAddr> {
         Some(self.connect.addr)
     }
 
-    fn dst_labels<B>(&self, req: &http::Request<B>) -> Option<&IndexMap<String, String>> {
+    fn dst_labels<B>(&self, _: &http::Request<B>) -> Option<&IndexMap<String, String>> {
         Some(self.metadata.labels())
     }
 
-    fn is_outbound<B>(&self, req: &http::Request<B>) -> bool {
+    fn is_outbound<B>(&self, _: &http::Request<B>) -> bool {
         true
     }
 }

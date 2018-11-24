@@ -77,7 +77,7 @@ impl Match {
             Match::Not(ref not) => !not.matches(req, inspect),
             Match::Source(ref src) => inspect
                 .src_addr(req)
-                .map(|a| src.matches(a))
+                .map(|s| src.matches(s))
                 .unwrap_or(false),
             Match::Destination(ref dst) => inspect
                 .dst_addr(req)
@@ -462,11 +462,11 @@ impl fmt::Display for InvalidMatch {
             f,
             "{}",
             match self {
-                Empty => "missing required field",
-                InvalidPort => "invalid port number",
-                InvalidNetwork => "invalid network address",
-                InvalidHttpMethod => "invalid http method",
-                InvalidScheme => "invalid request scheme",
+                InvalidMatch::Empty => "missing required field",
+                InvalidMatch::InvalidPort => "invalid port number",
+                InvalidMatch::InvalidNetwork => "invalid network address",
+                InvalidMatch::InvalidHttpMethod => "invalid http method",
+                InvalidMatch::InvalidScheme => "invalid request scheme",
             }
         )
     }

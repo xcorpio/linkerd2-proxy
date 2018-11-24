@@ -1,12 +1,6 @@
-use bytes::IntoBuf;
-use futures::Stream;
 use http;
 use indexmap::IndexMap;
 use std::net;
-use std::sync::Weak;
-use tower_h2::Body as Payload;
-
-use proxy::http::HasH2Reason;
 
 mod daemon;
 mod grpc;
@@ -18,7 +12,7 @@ pub type Daemon = daemon::Daemon<grpc::Tap>;
 
 pub fn new() -> (Layer, Server, Daemon) {
     let (daemon, register, subscribe) = daemon::new();
-    let layer = service::layer(register);
+    let layer = Layer::new(register);
     let server = Server::new(subscribe);
     (layer, server, daemon)
 }
@@ -37,41 +31,51 @@ pub trait Inspect {
     }
 }
 
-trait Register {
-    type Tap: Tap;
-    type Taps: Stream<Item = Weak<Self::Tap>>;
+mod iface {
+    use bytes::IntoBuf;
+    use http;
+    use futures::Stream;
+    use std::sync::Weak;
+    use tower_h2::Body as Payload;
 
-    fn register(&mut self) -> Self::Taps;
-}
+    use proxy::http::HasH2Reason;
 
-trait Subscribe<T: Tap> {
-    fn subscribe(&mut self, tap: Weak<T>);
-}
+    pub trait Register {
+        type Tap: Tap;
+        type Taps: Stream<Item = Weak<Self::Tap>>;
 
-trait Tap {
-    type TapRequestBody: TapBody;
-    type TapResponse: TapResponse<TapBody = Self::TapResponseBody>;
-    type TapResponseBody: TapBody;
+        fn register(&mut self) -> Self::Taps;
+    }
 
-    fn tap<B: Payload, I: Inspect>(
-        &self,
-        req: &http::Request<B>,
-        inspect: &I,
-    ) -> Option<(Self::TapRequestBody, Self::TapResponse)>;
-}
+    pub trait Subscribe<T: Tap> {
+        fn subscribe(&mut self, tap: Weak<T>);
+    }
 
-trait TapBody {
-    fn data<D: IntoBuf>(&mut self, data: &D::Buf);
+    pub trait Tap {
+        type TapRequestBody: TapBody;
+        type TapResponse: TapResponse<TapBody = Self::TapResponseBody>;
+        type TapResponseBody: TapBody;
 
-    fn eos(self, headers: Option<&http::HeaderMap>);
+        fn tap<B: Payload, I: super::Inspect>(
+            &self,
+            req: &http::Request<B>,
+            inspect: &I,
+        ) -> Option<(Self::TapRequestBody, Self::TapResponse)>;
+    }
 
-    fn fail(self, error: &h2::Error);
-}
+    pub trait TapBody {
+        fn data<D: IntoBuf>(&mut self, data: &D::Buf);
 
-trait TapResponse {
-    type TapBody: TapBody;
+        fn eos(self, headers: Option<&http::HeaderMap>);
 
-    fn tap<B: Payload>(self, rsp: &http::Response<B>) -> Self::TapBody;
+        fn fail(self, error: &h2::Error);
+    }
 
-    fn fail<E: HasH2Reason>(self, error: &E);
+    pub trait TapResponse {
+        type TapBody: TapBody;
+
+        fn tap<B: Payload>(self, rsp: &http::Response<B>) -> Self::TapBody;
+
+        fn fail<E: HasH2Reason>(self, error: &E);
+    }
 }

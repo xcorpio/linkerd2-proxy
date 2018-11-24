@@ -4,7 +4,7 @@ use never::Never;
 use std::collections::VecDeque;
 use std::sync::Weak;
 
-use super::Tap;
+use super::iface::Tap;
 
 /// The number of pending registrations that may be buffered.
 const REGISTER_BUFFER_CAPACITY: usize = 16;
@@ -80,7 +80,11 @@ impl<T: Tap> Future for Daemon<T> {
             // Notify services of the new tap. If the tap can't be sent to a
             // given service, it's assumed that the service has been dropped, so
             // it is removed from the registry.
-            self.svcs.retain(|s| s.try_send(tap.clone()).is_ok());
+            for idx in (0..self.svcs.len()).rev() {
+                if self.svcs[idx].try_send(tap.clone()).is_err() {
+                    self.svcs.swap_remove_back(idx);
+                }
+            }
 
             self.taps.push_back(tap);
         }
@@ -89,7 +93,7 @@ impl<T: Tap> Future for Daemon<T> {
     }
 }
 
-impl<T: Tap> super::Register for Register<T> {
+impl<T: Tap> super::iface::Register for Register<T> {
     type Tap = T;
     type Taps = mpsc::Receiver<Weak<T>>;
 
@@ -100,7 +104,7 @@ impl<T: Tap> super::Register for Register<T> {
     }
 }
 
-impl<T: Tap> super::Subscribe<T> for Subscribe<T> {
+impl<T: Tap> super::iface::Subscribe<T> for Subscribe<T> {
     fn subscribe(&mut self, tap: Weak<T>) {
         let _ = self.0.try_send(tap);
     }
