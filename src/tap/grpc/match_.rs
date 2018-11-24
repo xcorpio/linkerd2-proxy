@@ -151,7 +151,7 @@ impl TryFrom<observe_request::match_::Label> for LabelMatch {
 // ===== impl TcpMatch ======
 
 impl TcpMatch {
-    fn matches(&self, addr: &net::SocketAddr) -> bool {
+    fn matches(&self, addr: net::SocketAddr) -> bool {
         match self {
             // If either a minimum or maximum is not specified, the range is considered to
             // be over a discrete value.

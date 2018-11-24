@@ -168,7 +168,7 @@ impl tap::TapBody for TapRequestBody {
         unimplemented!()
     }
 
-    fn end(self, _: Option<&http::HeaderMap>) {
+    fn eos(self, _: Option<&http::HeaderMap>) {
         unimplemented!()
     }
 
@@ -182,7 +182,7 @@ impl tap::TapBody for TapResponseBody {
         unimplemented!()
     }
 
-    fn end(self, _: Option<&http::HeaderMap>) {
+    fn eos(self, _: Option<&http::HeaderMap>) {
         unimplemented!()
     }
 

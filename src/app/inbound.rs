@@ -1,4 +1,5 @@
 use http;
+use indexmap::IndexMap;
 use std::fmt;
 use std::net::SocketAddr;
 
@@ -49,13 +50,22 @@ impl settings::router::HasConnect for Endpoint {
     }
 }
 
-impl From<Endpoint> for tap::Endpoint {
-    fn from(ep: Endpoint) -> Self {
-        tap::Endpoint {
-            direction: tap::Direction::In,
-            target: ep.target(),
-            labels: Default::default(),
-        }
+impl tap::Inspect for Endpoint {
+
+    fn src_addr<B>(&self, req: &http::Request<B>) -> Option<SocketAddr> {
+        req.extensions().get::<Source>().map(|s| s.remote)
+    }
+
+    fn dst_addr<B>(&self, req: &http::Request<B>) -> Option<SocketAddr> {
+        Some(self.addr)
+    }
+
+    fn dst_labels<B>(&self, req: &http::Request<B>) -> Option<&IndexMap<String, String>> {
+        None
+    }
+
+    fn is_outbound<B>(&self, req: &http::Request<B>) -> bool {
+        false
     }
 }
 

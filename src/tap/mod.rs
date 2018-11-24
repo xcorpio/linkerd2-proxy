@@ -24,8 +24,10 @@ pub fn new() -> (Layer, Server, Daemon) {
 }
 
 pub trait Inspect {
-    fn src_addr<B>(&self, req: &http::Request<B>) -> Option<&net::SocketAddr>;
-    fn dst_addr<B>(&self, req: &http::Request<B>) -> Option<&net::SocketAddr>;
+    fn src_addr<B>(&self, req: &http::Request<B>) -> Option<net::SocketAddr>;
+    //fn src_labels<B>(&self, req: &http::Request<B>) -> Option<&IndexMap<String, String>>;
+
+    fn dst_addr<B>(&self, req: &http::Request<B>) -> Option<net::SocketAddr>;
     fn dst_labels<B>(&self, req: &http::Request<B>) -> Option<&IndexMap<String, String>>;
 
     fn is_outbound<B>(&self, req: &http::Request<B>) -> bool;
@@ -61,7 +63,7 @@ trait Tap {
 trait TapBody {
     fn data<D: IntoBuf>(&mut self, data: &D::Buf);
 
-    fn end(self, headers: Option<&http::HeaderMap>);
+    fn eos(self, headers: Option<&http::HeaderMap>);
 
     fn fail(self, error: &h2::Error);
 }

@@ -159,7 +159,7 @@ where
     type Error = F::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let rsp = try_ready!(self.inner.poll().map_err(|e| self.tap_err(e)));
+        let rsp = try_ready!(self.inner.poll().map_err(|e| self.err(e)));
 
         let taps = self.taps.drain(..).map(|t| t.tap(&rsp)).collect();
         let rsp = {
@@ -179,7 +179,7 @@ where
     F::Error: HasH2Reason,
     T: TapResponse,
 {
-    fn tap_err(&mut self, error: F::Error) -> F::Error {
+    fn err(&mut self, error: F::Error) -> F::Error {
         while let Some(tap) = self.taps.pop_front() {
             tap.fail(&error);
         }
@@ -208,7 +208,7 @@ impl<B: Payload, T: TapBody> Payload for Body<B, T> {
     }
 
     fn poll_data(&mut self) -> Poll<Option<Self::Data>, h2::Error> {
-        let poll_frame = self.inner.poll_data().map_err(|e| self.tap_err(e));
+        let poll_frame = self.inner.poll_data().map_err(|e| self.err(e));
         let frame = try_ready!(poll_frame).map(|f| f.into_buf());
 
         if let Some(ref f) = frame.as_ref() {
@@ -221,20 +221,20 @@ impl<B: Payload, T: TapBody> Payload for Body<B, T> {
     }
 
     fn poll_trailers(&mut self) -> Poll<Option<http::HeaderMap>, h2::Error> {
-        let trailers = try_ready!(self.inner.poll_trailers().map_err(|e| self.tap_err(e)));
-        self.tap_eos(trailers.as_ref());
+        let trailers = try_ready!(self.inner.poll_trailers().map_err(|e| self.err(e)));
+        self.eos(trailers.as_ref());
         Ok(Async::Ready(trailers))
     }
 }
 
 impl<B: Payload, T: TapBody> Body<B, T> {
-    fn tap_eos(&mut self, trailers: Option<&http::HeaderMap>) {
+    fn eos(&mut self, trailers: Option<&http::HeaderMap>) {
         while let Some(tap) = self.taps.pop_front() {
-            tap.end(trailers);
+            tap.eos(trailers);
         }
     }
 
-    fn tap_err(&mut self, error: h2::Error) -> h2::Error {
+    fn err(&mut self, error: h2::Error) -> h2::Error {
         while let Some(tap) = self.taps.pop_front() {
             tap.fail(&error);
         }
@@ -246,6 +246,6 @@ impl<B: Payload, T: TapBody> Body<B, T> {
 impl<B: Payload, T: TapBody> Drop for Body<B, T> {
     fn drop(&mut self) {
         // TODO this should be recorded as a cancelation if the stream didn't end.
-        self.tap_eos(None);
+        self.eos(None);
     }
 }

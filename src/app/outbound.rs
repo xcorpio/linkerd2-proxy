@@ -1,4 +1,5 @@
-use std::fmt;
+use indexmap::IndexMap;
+use std::{fmt, net};
 
 use control::destination::{Metadata, ProtocolHint};
 use proxy::http::settings;
@@ -52,16 +53,27 @@ impl svc::watch::WithUpdate<tls::ConditionalClientConfig> for Endpoint {
     }
 }
 
-impl From<Endpoint> for tap::Endpoint {
-    fn from(ep: Endpoint) -> Self {
-        // TODO add route labels...
-        tap::Endpoint {
-            direction: tap::Direction::Out,
-            labels: ep.metadata.labels().clone(),
-            target: ep.connect.clone(),
-        }
+impl tap::Inspect for Endpoint {
+
+    fn src_addr<B>(&self, req: &http::Request<B>) -> Option<net::SocketAddr> {
+        use proxy::server::Source;
+
+        req.extensions().get::<Source>().map(|s| s.remote)
+    }
+
+    fn dst_addr<B>(&self, req: &http::Request<B>) -> Option<net::SocketAddr> {
+        Some(self.connect.addr)
+    }
+
+    fn dst_labels<B>(&self, req: &http::Request<B>) -> Option<&IndexMap<String, String>> {
+        Some(self.metadata.labels())
+    }
+
+    fn is_outbound<B>(&self, req: &http::Request<B>) -> bool {
+        true
     }
 }
+
 
 pub mod discovery {
     use futures::{Async, Poll};
