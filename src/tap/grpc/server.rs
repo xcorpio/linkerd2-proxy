@@ -20,6 +20,7 @@ const PER_REQUEST_BUFFER_CAPACITY: usize = 40;
 #[derive(Clone, Debug)]
 pub struct Server<T> {
     subscribe: T,
+    base_id: Arc<AtomicUsize>,
 }
 
 #[derive(Debug)]
@@ -32,6 +33,7 @@ pub struct ResponseStream {
 pub struct Tap {
     tx: mpsc::Sender<api::TapEvent>,
     match_: Match,
+    base_id: u32,
     count: AtomicUsize,
     total: usize,
 }
@@ -63,7 +65,8 @@ pub struct TapResponseBody {
 
 impl<T: iface::Subscribe<Tap>> Server<T> {
     pub(in tap) fn new(subscribe: T) -> Self {
-        Self { subscribe }
+        let base_id = Arc::new(0.into());
+        Self { base_id, subscribe }
     }
 
     fn invalid_arg(msg: http::header::HeaderValue) -> grpc::Error {
@@ -107,8 +110,12 @@ where
             }
         };
 
+        // Wrapping is okay. This is realy just to disambiguate events within a
+        // single tap stream.
+        let base_id = self.base_id.fetch_add(1, Ordering::AcqRel) as u32;
+
         let (tx, rx) = mpsc::channel(PER_REQUEST_BUFFER_CAPACITY);
-        let tap = Arc::new(Tap::new(tx, match_, total));
+        let tap = Arc::new(Tap::new(base_id, tx, match_, total));
         self.subscribe.subscribe(Arc::downgrade(&tap));
         future::ok(Response::new(ResponseStream { rx, tap }))
     }
@@ -124,10 +131,11 @@ impl Stream for ResponseStream {
 }
 
 impl Tap {
-    fn new(tx: mpsc::Sender<api::TapEvent>, match_: Match, total: usize) -> Self {
+    fn new(base_id: u32, tx: mpsc::Sender<api::TapEvent>, match_: Match, total: usize) -> Self {
         Self {
             tx,
             match_,
+            base_id,
             total,
             count: 0.into(),
         }
@@ -185,7 +193,7 @@ impl iface::Tap for Tap {
         let base_event = Self::base_event(req, inspect);
 
         let id = api::tap_event::http::StreamId {
-            base: 0,
+            base: self.base_id,
             stream: n as u64,
         };
 
@@ -257,7 +265,9 @@ impl iface::TapResponse for TapResponse {
 
     fn fail<E: HasH2Reason>(mut self, e: &E) {
         let response_end_at = clock::now();
-        let end = e.h2_reason().map(|r| api::eos::End::ResetErrorCode(r.into()));
+        let end = e
+            .h2_reason()
+            .map(|r| api::eos::End::ResetErrorCode(r.into()));
         let msg = api::TapEvent {
             event: Some(api::tap_event::Event::Http(api::tap_event::Http {
                 event: Some(api::tap_event::http::Event::ResponseEnd(
