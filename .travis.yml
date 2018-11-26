@@ -4,6 +4,8 @@ sudo: false
 
 language: rust
 cache: cargo
+env:
+  - RUSTFLAGS="-C incremental=false"
 
 branches:
   only:
